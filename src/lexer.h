@@ -32,4 +32,4 @@ struct Token
 };
 
 Token* lex_file(const char* path);
-Token* lex_source(char* source);
+Token* lex_source(char* source, const char* path);

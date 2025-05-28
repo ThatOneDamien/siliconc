@@ -3,17 +3,11 @@
 #include "file_utils.h"
 #include "lexer.h"
 
-static void print_usage(void)
-{
-    printf("Usage: sic <filename>\n");
-}
-
 int main(int argc, char* argv[])
 {
-    (void)argv;
     if(argc < 2)
     {
-        print_usage();
+        fprintf(stderr, "sic: \033[31mfatal error\033[0m");
         return EXIT_FAILURE;
     }
 

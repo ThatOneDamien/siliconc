@@ -1,45 +1,70 @@
 #include "lexer.h"
 #include "core.h"
+#include "error.h"
 #include "file_utils.h"
 
 #include <ctype.h>
+#include <string.h>
 
 static Token* create_token(TokenType type, char* start, size_t len);
 static size_t extract_num_literal(char* source);
-static size_t extract_str_literal(char* source);
+static size_t extract_identifier(char* source);
+static size_t extract_separator(char* source);
+
+static inline void lexing_error(char* location, const char* message);
+
+static const char* s_CurrentPath;
+static const char* s_CurrentSource;
+static size_t      s_CurrentLine;
+
+
 
 Token* lex_file(const char* path)
 {
     char* src = read_entire_file(path);
-    return src == NULL ? NULL : lex_source(src);
+    return src == NULL ? NULL : lex_source(src, path);
 }
 
-Token* lex_source(char* source)
+Token* lex_source(char* source, const char* path)
 {
     SIC_ASSERT(source != NULL);
 
     Token sentinel;
     Token* cur = &sentinel;
+    s_CurrentPath = path;
+    s_CurrentSource = source;
+    s_CurrentLine = 1;
 
     while(*source)
     {
-        size_t len;
-        if(*source == '\n' || isspace(*source))
+        size_t len = 0;
+        TokenType type;
+        if(*source == '\n')
+        {
+            s_CurrentLine++;
             source++;
+            continue;
+        }
+        else if(isspace(*source))
+        {
+            source++;
+            continue;
+        }
         else if((len = extract_num_literal(source)) > 0)
-        {
-            cur->next = create_token(TOKEN_NUM, source, len);
-            cur = cur->next;
-            source += len;
-        }
-        else if((len = extract_str_literal(source)) > 0)
-        {
-            cur->next = create_token(TOKEN_STR, source, len);
-            cur = cur->next;
-            source += len;
-        }
+            type = TOKEN_NUM;
+        else if((len = extract_identifier(source)) > 0)
+            type = TOKEN_IDNT;
+        else if((len = extract_separator(source)) > 0)
+            type = TOKEN_SEP;
         else
-            source++;
+        {
+            lexing_error(source, "Unknown token.");
+            exit(EXIT_FAILURE);
+        }
+
+        cur->next = create_token(type, source, len);
+        cur = cur->next;
+        source += len;
     }
 
     cur->next = create_token(TOKEN_EOF, source, 0);
@@ -67,20 +92,37 @@ static size_t extract_num_literal(char* source)
     return count;
 }
 
-static size_t extract_str_literal(char* source)
+static size_t extract_identifier(char* source)
 {
-    if(*source != '\"')
+    char* p = source;
+    if(*p != '_' && !isalpha(*p))
         return 0;
-    char* orig = source;
-    printf("%c\n", *source);
-    source++;
-    while(*source != '\"')
+
+    while(true)
     {
-        if(*source == '\0' || *source == '\n')
-            SIC_ERROR_DBG("Bad syntax");
-        if(*source == '\\')
-            source++;
-        source++;
+        if(*p != '_' && !isalnum(*p))
+            return p - source;
+        p++;
     }
-    return source - orig + 1;
+}
+
+static size_t extract_separator(char* source)
+{
+    static const char* seps[] = {
+        "==", "!=", ">=", "<=", "&&", "||",
+        "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--",
+        ">>", "<<"
+    };
+    for(size_t i = 0; i < sizeof(seps) / sizeof(seps[0]); ++i)
+    {
+        size_t len = strlen(seps[i]);
+        if(strncmp(source, seps[i], len) == 0)
+            return len;
+    }
+    return ispunct(*source) ? 1 : 0;
+}
+
+static inline void lexing_error(char* location, const char* message)
+{
+    sic_error(s_CurrentPath, s_CurrentLine, s_CurrentSource, location, message);
 }

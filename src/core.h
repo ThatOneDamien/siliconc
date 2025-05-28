@@ -47,9 +47,3 @@
     #define GEM_ASSERT_MSG(cond, msg)
     #define GEM_ASSERT_ARGS(cond, msg, ...)
 #endif
-
-#ifdef __GNUC__
-    #define alignas(alignment) __attribute__((packed,aligned(alignment)))
-#else
-    #define alignas(alignment) 
-#endif
