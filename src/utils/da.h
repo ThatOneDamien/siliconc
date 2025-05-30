@@ -1,5 +1,5 @@
 #pragma once
-#include "core.h"
+#include "core/core.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -79,8 +79,9 @@
         (da)->size = (new_size);        \
     }
 
-
 #define da_free_data(da) { free((da)->data); }
+
+
 
 typedef struct StringBuilder StringBuilder;
 struct StringBuilder
@@ -97,3 +98,17 @@ struct StringArray
     size_t size;
     size_t capacity;
 };
+
+static inline void sb_append(StringBuilder* sb, const char* str)
+{
+    size_t len = strlen(str);
+    da_append_arr(sb, str, len);
+}
+
+static inline void sb_append_null(StringBuilder* sb)
+{
+    da_append(sb, '\0');
+}
+
+__attribute__((format(printf, 2, 3)))
+void sb_appendf(StringBuilder* sb, const char* restrict format, ...);

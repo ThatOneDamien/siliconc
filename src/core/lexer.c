@@ -1,7 +1,7 @@
 #include "lexer.h"
 #include "core.h"
-#include "error.h"
-#include "file_utils.h"
+#include "utils/error.h"
+#include "utils/file_utils.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -21,8 +21,11 @@ static size_t      s_CurrentLine;
 
 Token* lex_file(const char* path)
 {
+    SIC_ASSERT(path != NULL);
     char* src = read_entire_file(path);
-    return src == NULL ? NULL : lex_source(src, path);
+    if(src == NULL)
+        sic_error_fatal("File '%s' was unable to be opened.", path);
+    return lex_source(src, path);
 }
 
 Token* lex_source(char* source, const char* path)
@@ -69,6 +72,14 @@ Token* lex_source(char* source, const char* path)
 
     cur->next = create_token(TOKEN_EOF, source, 0);
     return sentinel.next;
+}
+
+bool tok_equal(Token* token, const char* str)
+{
+    SIC_ASSERT(token != NULL);
+    SIC_ASSERT(str != NULL);
+    SIC_ASSERT(token->type != TOKEN_NONE);
+    return token->type != TOKEN_EOF && strcmp(token->ref, str) == 0;
 }
 
 static Token* create_token(TokenType type, char* start, size_t len)
@@ -126,3 +137,4 @@ static inline void lexing_error(char* location, const char* message)
 {
     sic_error(s_CurrentPath, s_CurrentLine, s_CurrentSource, location, message);
 }
+

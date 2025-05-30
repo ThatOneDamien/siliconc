@@ -1,12 +1,14 @@
 #pragma once
 #include "type.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 typedef enum
 {
-    TOKEN_IDNT = 0,
+    TOKEN_NONE = 0,
+    TOKEN_IDNT,
     TOKEN_SEP,
     TOKEN_KEYWORD,
     TOKEN_STR,
@@ -33,3 +35,4 @@ struct Token
 
 Token* lex_file(const char* path);
 Token* lex_source(char* source, const char* path);
+bool   tok_equal(Token* token, const char* str);

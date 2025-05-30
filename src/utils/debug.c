@@ -1,9 +1,10 @@
 #ifdef SI_DEBUG
 
 #include "debug.h"
-#include "core.h"
+#include "core/core.h"
 
 static const char* tok_type_names[] = {
+    "NULL           ",
     "Identifier     ",
     "Separator      ",
     "Keyword        ",
@@ -11,12 +12,6 @@ static const char* tok_type_names[] = {
     "Numeric Literal",
     "End Of File    "
 };
-
-void print_token(const Token* tok)
-{
-    SIC_ASSERT(tok != NULL);
-    // printf("Token \'%s\': Type - %s\n", tok->ref);
-}
 
 void print_all_tokens(const Token* tok)
 {

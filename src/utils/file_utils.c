@@ -1,9 +1,12 @@
 #include "file_utils.h"
-#include "core.h"
+#include "error.h"
+#include "core/core.h"
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+#include <string.h>
 
 #define FILE_FOUND 0
 
@@ -66,4 +69,21 @@ char* read_entire_file(const char* path)
 end:
     close(fd);
     return res;
+}
+
+FileType get_filetype(const char* filename)
+{
+    const char* ext = strrchr(filename, '.');
+    if(ext == NULL)
+        return FT_NONE;
+    if(strcmp(ext, ".s") == 0 ||
+       strcmp(ext, ".asm") == 0)
+        return FT_ASM;
+    if(strcmp(ext, ".o") == 0)
+        return FT_OBJ;
+    if(strcmp(ext, ".si") == 0)
+        return FT_SI;
+
+    sic_error_fatal("Unrecognized file extension: '%s'", ext);
+    return FT_NONE;
 }

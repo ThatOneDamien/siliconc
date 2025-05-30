@@ -1,13 +1,20 @@
-#include "error.h"
-#include "core.h"
+#include "utils/error.h"
+#include "core/core.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <string.h>
 
-void sic_error_fatal(const char* message)
+void sic_error_fatal(const char* restrict message, ...)
 {
     SIC_ASSERT(message != NULL);
-    fprintf(stderr, "sic: \033[31merror:\033[0m %s\n", message); 
+    va_list va;
+    va_start(va, message);
+    fprintf(stderr, "sic: \033[31mfatal error:\033[0m "); 
+    vfprintf(stderr, message, va);
+    putc('\n', stderr);
+    va_end(va);
+    exit(EXIT_FAILURE);
 }
 
 void sic_error(const char* filepath, size_t line,
