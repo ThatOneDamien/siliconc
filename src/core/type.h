@@ -4,6 +4,7 @@
 
 typedef enum
 {
+    TYPE_NONE = 0,
     TYPE_VOID,
     TYPE_U8,
     TYPE_S8,
@@ -20,6 +21,7 @@ typedef enum
     TYPE_F32,
     TYPE_F64,
     TYPE_F128,
+    TYPE_FUNCPTR,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;

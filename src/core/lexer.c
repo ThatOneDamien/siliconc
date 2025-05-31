@@ -32,8 +32,8 @@ Token* lex_source(char* source, const char* path)
 {
     SIC_ASSERT(source != NULL);
 
-    Token sentinel;
-    Token* cur = &sentinel;
+    Token head;
+    Token* cur = &head;
     s_CurrentPath = path;
     s_CurrentSource = source;
     s_CurrentLine = 1;
@@ -71,15 +71,14 @@ Token* lex_source(char* source, const char* path)
     }
 
     cur->next = create_token(TOKEN_EOF, source, 0);
-    return sentinel.next;
+    return head.next;
 }
 
 bool tok_equal(Token* token, const char* str)
 {
     SIC_ASSERT(token != NULL);
     SIC_ASSERT(str != NULL);
-    SIC_ASSERT(token->type != TOKEN_NONE);
-    return token->type != TOKEN_EOF && strcmp(token->ref, str) == 0;
+    return token->type != TOKEN_EOF && memcmp(token->ref, str, token->len) == 0;
 }
 
 static Token* create_token(TokenType type, char* start, size_t len)

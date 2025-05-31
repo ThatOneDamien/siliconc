@@ -1,5 +1,5 @@
 CC     ?= clang
-CFLAGS := -Wall -Wextra -Werror -pedantic -std=c99
+CFLAGS := -Wall -Wextra -Werror -pedantic -std=c11
 LIBS   := 
 INC    = -Isrc
 
@@ -12,13 +12,16 @@ HEADERS := $(shell find $(SRC_DIR) -name "*.h")
 DEBUG_OBJS := $(patsubst $(SRC_DIR)/%.c, $(INT_DIR)/debug/%.o, $(SRCS))
 RELEASE_OBJS := $(patsubst $(SRC_DIR)/%.c, $(INT_DIR)/release/%.o, $(SRCS))
 
-.PHONY: all debug release clean
+.PHONY: debug release all test clean 
 
 debug: $(BUILD_DIR)/sicdb
 
 release: $(BUILD_DIR)/sic
 
 all: debug release
+
+test: debug
+	$(BUILD_DIR)/sicdb test/test.si
 
 clean:
 	rm -rf $(BUILD_DIR)
