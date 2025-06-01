@@ -3,16 +3,18 @@
 
 #include <stdarg.h>
 
-static StringBuilder* output;
+static FILE* s_output;
 
+__attribute__((format(printf, 1, 2)))
+static void add_line(const char* restrict format, ...);
 static void generate_func(Object* program);
 
-void gasx86_64_codegen(StringBuilder* out, Object* program, char* filename)
+void gasx86_64_codegen(FILE* out_file, Object* program, char* filename)
 {
-    SIC_ASSERT(out != NULL);
+    SIC_ASSERT(out_file != NULL);
     SIC_ASSERT(program != NULL);
-    output = out;
-    sb_appendf(output, "\t.file\t\"%s\"\n", filename);
+    s_output = out_file;
+    add_line("\t.file\t\"%s\"", filename);
 
     for(; program != NULL; program = program->next)
     {
@@ -22,30 +24,35 @@ void gasx86_64_codegen(StringBuilder* out, Object* program, char* filename)
             continue;
     }
 
-    sb_append_null(output);
     return;
+}
+
+static void add_line(const char* restrict format, ...)
+{
+    va_list va;
+    va_start(va, format);
+    vfprintf(s_output, format, va);
+    putc('\n', s_output);
+    va_end(va);
 }
 
 static void generate_func(Object* func)
 {
+    int sym_len = (int)func->symbol->len;
+    char* sym = func->symbol->ref;
     // Metadata + header
-    sb_appendf(output, "\t.text\n");
-    sb_appendf(output, "\t.global\t%.*s\n", (int)func->symbol->len, func->symbol->ref);
-    sb_appendf(output, "\t.type\t%.*s, @function\n", (int)func->symbol->len, func->symbol->ref);
-    sb_appendf(output, "%.*s:\n", (int)func->symbol->len, func->symbol->ref);
-
-    // Object* param = func->comps.func.params;
-    // for(size_t i = 0; i < func->comps.func.param_cnt; ++i)
-    // {
-    //     printf("PARAM %lu: TYPE: %u SYMBOL: %.*s\n", 
-    //            i,
-    //            param->comps.var.type->kind,
-    //            (int)param->symbol->len,
-    //            param->symbol->ref);
-    //     param = param->next;
-    // }
+    add_line("\t.text");
+    add_line("\t.global\t%.*s", sym_len, sym);
+    add_line("\t.type\t%.*s, @function", sym_len, sym);
+    add_line("%.*s:", sym_len, sym);
 
     // Function Prologue
-    sb_appendf(output, "\tpushq\t%%rbp\n");
-    sb_appendf(output, "\tmovq\t%%rsp, %%rbp\n");
+    add_line("\tpushq\t%%rbp");
+    add_line("\tmovq\t%%rsp, %%rbp");
+
+    // FUnction Epilogue
+    add_line("\tmovl\t$0, %%eax");
+    add_line("\tpopq\t%%rbp");
+    add_line("\tret");
+    add_line("\t.size\t%.*s, .-%.*s", sym_len, sym, sym_len, sym);
 }

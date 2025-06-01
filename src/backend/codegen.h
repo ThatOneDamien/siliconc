@@ -2,4 +2,4 @@
 #include "core/parser.h"
 #include "utils/da.h"
 
-StringBuilder gen_intermediate_rep(Object* program, char* filename);
+void gen_intermediate_rep(FILE* out_file, Object* program, char* filename);

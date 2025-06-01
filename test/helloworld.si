@@ -1,0 +1,6 @@
+extern void puts(char* str);
+
+u32 main()
+{
+    puts("Hello, World!\n");
+}

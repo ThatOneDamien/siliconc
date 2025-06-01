@@ -13,6 +13,7 @@ typedef enum
     NODE_BLOCK,
     NODE_VAR,
     NODE_NUM,
+    NODE_RETURN,
 } NodeType;
 
 struct FuncComps

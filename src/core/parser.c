@@ -21,14 +21,15 @@ typedef enum
 } ObjAttr;
 
 // Global check and add functions
-static bool function_definition(Token** token, Type* ret_type, ObjAttr* func_attr);
+static bool function_definition(Type* ret_type, ObjAttr* func_attr);
 
 // Grammar parsing
-static void     parse_type_prefix(Token** token, Type** type, ObjAttr* attr);
-static void     parse_func_params(Token** token, Object** params, size_t* count);
-static ASTNode* parse_expr_statement(Token** token);
-static ASTNode* parse_assignment(Token** token);
-static ASTNode* parse_identity(Token** token);
+static void     parse_type_prefix(Type** type, ObjAttr* attr);
+static void     parse_func_params(Object** params, size_t* count);
+static ASTNode* parse_stmt_block(void);
+static ASTNode* parse_stmt(void);
+static ASTNode* parse_assignment(void);
+static ASTNode* parse_identity(void);
 // static 
 
 // Scope and symbol defining/finding functions
@@ -37,16 +38,18 @@ static void    exit_scope(void);
 static Object* create_obj_in_scope(Token* symbol, bool global);
 static Object* get_var(Token* symbol);
 
-// Token Helpers
-static bool consume(Token** token, char* expected);
-static void expect(Token** token, char* expected);
+// Token/Node Helpers
+static bool     consume(Token** token, char* expected);
+static void     expect(Token** token, char* expected);
+static ASTNode* create_node(NodeType type, Token* token);
 
-static Object* global_objs;
-static Object* local_objs;
-static Scope*  current_scope;
-static Scope   filewide_scope;
-static Object* current_func;
-static HashMap type_kw_map;
+static Object* s_globals;
+static Object* s_locals;
+static Scope*  s_curscope;
+static Scope   s_file_scope;
+static Object* s_curfunc;
+static HashMap s_kw_map;
+static Token*  s_token;
 
 void init_parser(void)
 {
@@ -57,85 +60,95 @@ void init_parser(void)
     };
 
     size_t kw_cnt = sizeof(keywords) / sizeof(keywords[0]);
-    hashmap_initn(&type_kw_map, kw_cnt);
+    hashmap_initn(&s_kw_map, kw_cnt);
 
     for(size_t i = 0; i < kw_cnt; ++i)
-        hashmap_put(&type_kw_map, keywords[i], SET_EXISTS);
+        hashmap_put(&s_kw_map, keywords[i], SET_EXISTS);
 
-    hashmap_init(&filewide_scope.vars);
-    global_objs   = NULL;
-    local_objs    = NULL;
-    current_scope = NULL;
-    current_func  = NULL;
+    hashmap_init(&s_file_scope.vars);
+    s_globals   = NULL;
+    s_locals    = NULL;
+    s_curscope = NULL;
+    s_curfunc  = NULL;
 }
 
 Object* parse_tokens(Token* tokens)
 {
     SIC_ASSERT(tokens != NULL);
-    global_objs = NULL;
-    current_scope = &filewide_scope;
-    filewide_scope.parent = NULL;
-    hashmap_clear(&current_scope->vars);
-    while(tokens->type != TOKEN_EOF)
+    s_globals = NULL;
+    s_locals = NULL;
+    s_file_scope.parent = NULL;
+    s_curscope = &s_file_scope;
+    hashmap_clear(&s_curscope->vars);
+
+    s_token = tokens;
+
+    while(s_token->type != TOKEN_EOF)
     {
         Type* type;
         ObjAttr attr;
-        parse_type_prefix(&tokens, &type, &attr);
-        if(function_definition(&tokens, type, &attr))
+        parse_type_prefix(&type, &attr);
+        if(type == NULL)
+            sic_error_fatal("Missing type specifier."); // TODO: Change this to be non fatal error with line printing and such
+
+        if(function_definition(type, &attr))
              continue;
         tokens = tokens->next;
     }
-    return global_objs;
+    return s_globals;
 }
 
-static bool function_definition(Token** token, Type* ret_type, ObjAttr* func_attr)
+static bool function_definition(Type* ret_type, ObjAttr* func_attr)
 {
     (void)func_attr;
-    Token* t = *token;
-    if(t->type != TOKEN_IDNT ||
-       !tok_equal(t->next, "("))
+    if(s_token->type != TOKEN_IDNT ||
+       !tok_equal(s_token->next, "("))
         return false;
 
 
-    Object* func = create_obj_in_scope(t, true);
+    Object* func = create_obj_in_scope(s_token, true);
+    FuncComps* func_comps = &func->comps.func;
     func->is_function = true;
-    func->comps.func.ret_type = ret_type;
-    func->symbol = t;
+    func_comps->ret_type = ret_type;
+    func->symbol = s_token;
 
-    t = t->next->next;
-    parse_func_params(&t, &func->comps.func.params, &func->comps.func.param_cnt);
+    s_token = s_token->next->next;
+    parse_func_params(&func_comps->params, &func_comps->param_cnt);
 
-    current_func = func;
-    local_objs = NULL;
+    s_curfunc = func;
+    s_locals = NULL;
     enter_scope();
 
-    expect(&t, "{");
-
-    while(!tok_equal(t, "}"))
+    s_locals = func_comps->params;
+    for(size_t i = 0; i < func_comps->param_cnt; ++i)
     {
-        if(t->type == TOKEN_EOF)
-            sic_error_fatal("No closing }.");
-        printf("IN BODY: %.*s\n", (int)t->len, t->ref);
-        t = t->next;
+        if(s_locals->symbol)
+            hashmap_putn(&s_curscope->vars, s_locals->symbol->ref, s_locals->symbol->len, s_locals);
+        s_locals = s_locals->next;
     }
+    s_locals = func_comps->params;
 
-    t = t->next;
+    expect(&s_token, "{");
+
+    ASTNode* body_block = parse_stmt_block();
+    func_comps->body = body_block->children;
+    free(body_block);
+
+    func_comps->local_objs = s_locals;
     exit_scope();
 
-    *token = t;
     return true;
 }
 
-static void parse_type_prefix(Token** token, Type** type, ObjAttr* attr)
+static void parse_type_prefix(Type** type, ObjAttr* attr)
 {
     const bool storage_class_allowed = attr != NULL;
     bool seen_type = false;
     Type* ty = NULL;
-    Token* t = *token;
 
-    while(hashmap_getn(&type_kw_map, t->ref, t->len) != NULL)
+    while(hashmap_getn(&s_kw_map, s_token->ref, s_token->len) != NULL)
     {
-        if(tok_equal(t, "extern"))
+        if(tok_equal(s_token, "extern"))
         {
             if(!storage_class_allowed)
                 sic_error_fatal("Storage class specification not allowed in this context.");
@@ -143,48 +156,81 @@ static void parse_type_prefix(Token** token, Type** type, ObjAttr* attr)
         }
         else if(seen_type)
             sic_error_fatal("Cannot combine multiple types.");
-        else if(tok_equal(t, "void"))
+        else if(tok_equal(s_token, "void"))
         {
             ty = t_void;
             seen_type = true;
         }
-        else if(tok_equal(t, "u8"))
+        else if(tok_equal(s_token, "u8"))
         {
             ty = t_u8;
             seen_type = true;
         }
-        t = t->next;
+        else if(tok_equal(s_token, "s8"))
+        {
+            ty = t_s8;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "u16"))
+        {
+            ty = t_u16;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "s16"))
+        {
+            ty = t_s16;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "u32"))
+        {
+            ty = t_u32;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "s32"))
+        {
+            ty = t_s32;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "u64"))
+        {
+            ty = t_u64;
+            seen_type = true;
+        }
+        else if(tok_equal(s_token, "s64"))
+        {
+            ty = t_s64;
+            seen_type = true;
+        }
+        s_token = s_token->next;
     }
     
-    if(ty == NULL)
-        sic_error_fatal("Missing type specifier."); // TODO: Change this to be non fatal error with line printing and such
 
     *type = ty;
-    *token = t;
 }
 
-static void parse_func_params(Token** token, Object** params, size_t* count)
+static void parse_func_params(Object** params, size_t* count)
 {
-    Token* t = *token;
     Object head;
     head.next = NULL;
     Object* cur_param = &head;
     size_t cnt = 0;
 
-    while(!tok_equal(t, ")"))
+    while(!tok_equal(s_token, ")"))
     {
-        if(t->type == TOKEN_EOF)
+        if(s_token->type == TOKEN_EOF)
             sic_error_fatal("No closing parentheses.");
         
         cnt++;
         if(cur_param != &head)
-            expect(&t, ",");
+            expect(&s_token, ",");
 
 
         Type* type;
-        parse_type_prefix(&t, &type, NULL);
+        parse_type_prefix(&type, NULL);
+        if(type == NULL)
+            sic_error_fatal("Missing type specifier.");
 
-        if(t->type != TOKEN_IDNT)
+        if(s_token->type != TOKEN_IDNT)
             sic_error_fatal("Paramater does not have name.");
 
         cur_param->next = malloc(sizeof(Object));
@@ -192,66 +238,114 @@ static void parse_func_params(Token** token, Object** params, size_t* count)
         cur_param->is_function = false;
         cur_param->next = NULL;
         cur_param->comps.var.type = type;
-        cur_param->symbol = t;
+        cur_param->symbol = s_token;
 
-        t = t->next;
+        s_token = s_token->next;
     }
     
-    *token = t->next;
+    s_token = s_token->next;
     *params = head.next;
     *count = cnt;
 }
 
-static ASTNode* parse_expr_statement(Token** token)
+static ASTNode* parse_stmt_block(void)
 {
-    Token* t = *token;
-    if(tok_equal(t, ";"))
+    ASTNode* block = malloc(sizeof(ASTNode));
+    block->type = NODE_BLOCK;
+    block->token = s_token;
+    
+    ASTNode head;
+    head.next = NULL;
+    ASTNode* cur_expr = &head;
+
+    while(!tok_equal(s_token, "}"))
     {
-        *token = t->next;
-        return NULL;
+        if(s_token->type == TOKEN_EOF)
+            sic_error_fatal("No closing }.");
+        Type* type;
+        ObjAttr attr;
+        parse_type_prefix(&type, &attr);
+
+        if(type == NULL)
+        {
+            cur_expr->next = parse_stmt();
+            cur_expr = cur_expr->next;
+        }
+        else
+            s_token = s_token->next;
     }
+
+    block->children = head.next;
+    s_token = s_token->next;
+    return block;
 }
 
-static ASTNode* parse_assignment(Token** token)
+static ASTNode* parse_stmt(void)
 {
-    ASTNode* node = parse_identity(token);
-    Token* t = *token;
-
-    if(tok_equal(t, "="))
+    if(tok_equal(s_token, ";"))
     {
-        ASTNode* new_node = malloc(sizeof(ASTNode));
-        new_node->type = NODE_ASSIGN;
-        new_node->token = t;
+        s_token = s_token->next;
+        return NULL;
+    }
+
+    if(tok_equal(s_token, "return"))
+    {
+        ASTNode* new_node = create_node(NODE_RETURN, s_token);
+        Type* ret_type = s_curfunc->comps.func.ret_type;
+        s_token = s_token->next;
+        if(consume(&s_token, ";"))
+        {
+            if(ret_type != t_void)
+                sic_error_fatal("Non-void function should return a value.");
+            return new_node;
+        }
+
+        ASTNode* ret_expr = parse_assignment();
+        expect(&s_token, ";");
+
+        new_node->children = ret_expr;
+        return new_node;
+    }
+
+    ASTNode* res = parse_assignment();
+    expect(&s_token, ";");
+    return res;
+}
+
+static ASTNode* parse_assignment(void)
+{
+    ASTNode* node = parse_identity();
+
+    if(tok_equal(s_token, "="))
+    {
+        ASTNode* new_node = create_node(NODE_ASSIGN, s_token);
         new_node->children = node;
-        node->next = parse_identity(token);
+        s_token = s_token->next;
+        node->next = parse_identity();
+        return new_node;
     }
 
     return node;
 }
 
-static ASTNode* parse_identity(Token** token)
+static ASTNode* parse_identity(void)
 {
-    Token* t = *token;
-    if(t->type == TOKEN_IDNT)
+    if(s_token->type == TOKEN_IDNT)
     {
-        Object* var = get_var(t);
+        Object* var = get_var(s_token);
         if(var)
         {
-            ASTNode* new_node = malloc(sizeof(ASTNode));
-            new_node->type = NODE_VAR;
-            new_node->token = t;
+            ASTNode* new_node = create_node(NODE_VAR, s_token);
             new_node->var = var;
-            *token = t->next;
+            s_token = s_token->next;
             return new_node;
         }
-        sic_error_fatal("Undefined variable \'%.*s\'.", (int)t->len, t->ref);
+        sic_error_fatal("Undefined variable \'%.*s\'.", (int)s_token->len, s_token->ref);
     }
-    else if(t->type == TOKEN_NUM)
+    else if(s_token->type == TOKEN_NUM)
     {
-        ASTNode* new_node = malloc(sizeof(ASTNode));
-        new_node->type = NODE_NUM;
-        new_node->token = t;
-        *token = t->next;
+        ASTNode* new_node = create_node(NODE_NUM, s_token);
+        s_token = s_token->next;
         return new_node;
     }
 
@@ -262,16 +356,16 @@ static ASTNode* parse_identity(Token** token)
 static void enter_scope(void)
 {
     Scope* new_scope = malloc(sizeof(Scope));
-    new_scope->parent = current_scope;
+    new_scope->parent = s_curscope;
     hashmap_init(&new_scope->vars);
-    current_scope = new_scope;
+    s_curscope = new_scope;
 }
 
 static void exit_scope(void)
 {
-    hashmap_free(&current_scope->vars);
-    Scope* prev = current_scope;
-    current_scope = current_scope->parent;
+    hashmap_free(&s_curscope->vars);
+    Scope* prev = s_curscope;
+    s_curscope = s_curscope->parent;
     free(prev);
 }
 
@@ -281,21 +375,21 @@ static Object* create_obj_in_scope(Token* symbol, bool global)
     obj->symbol = symbol;
     if(global)
     {
-        obj->next = global_objs;
-        global_objs = obj;
+        obj->next = s_globals;
+        s_globals = obj;
     }
     else
     {
-        obj->next = local_objs;
-        local_objs = obj;
+        obj->next = s_locals;
+        s_locals = obj;
     }
-    hashmap_putn(&current_scope->vars, symbol->ref, symbol->len, obj);
+    hashmap_putn(&s_curscope->vars, symbol->ref, symbol->len, obj);
     return obj;
 }
 
 static Object* get_var(Token* symbol)
 {
-    for(Scope* s = current_scope; s != NULL; s = s->parent)
+    for(Scope* s = s_curscope; s != NULL; s = s->parent)
     {
         Object* var = hashmap_getn(&s->vars, symbol->ref, symbol->len);
         if(var != NULL)
@@ -317,4 +411,14 @@ static void expect(Token** token, char* expected)
 {
     if(!consume(token, expected))
         sic_error_fatal("Expected token \'%s\'.", expected);
+}
+
+static ASTNode* create_node(NodeType type, Token* token)
+{
+    ASTNode* res = malloc(sizeof(ASTNode));
+    res->type = type;
+    res->token = token;
+    res->next = NULL;
+    res->children = NULL;
+    return res;
 }
