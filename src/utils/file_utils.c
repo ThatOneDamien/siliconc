@@ -71,16 +71,59 @@ end:
     return res;
 }
 
+FILE* open_out_file(const char* path)
+{
+    SIC_ASSERT(path != NULL);
+    FILE* fp = fopen(path, "w");
+    if(!fp)
+        sic_error_fatal("Unable to open/create output file \'%s\'.", path);
+    return fp;
+}
+
+char* convert_ext_to(const char* orig_path, FileType desired)
+{
+    static const char* ft_to_ext[] = {
+        NULL, "", ".s", ".o", ".a", ".so", ".si"
+    };
+    
+    SIC_ASSERT(orig_path != NULL);
+    SIC_ASSERT(desired != FT_NONE);
+    const char* filename_start = strrchr(orig_path, '/');
+    if(filename_start == NULL)
+        filename_start = orig_path;
+    else
+        filename_start++;
+
+    const char* ext_start = strrchr(filename_start, '.');
+    size_t filename_len;
+    if(ext_start == NULL)
+        filename_len = strlen(filename_start);
+    else
+        filename_len = ext_start - filename_start;
+
+    const char* ext = ft_to_ext[desired];
+    size_t ext_len = strlen(ext);
+    char* new_name = malloc(filename_len + ext_len + 1);
+    strncpy(new_name, orig_path, filename_len);
+    strncpy(new_name + filename_len, ext, ext_len);
+    new_name[filename_len + ext_len] = '\0';
+    return new_name;
+}
+
 FileType get_filetype(const char* filename)
 {
     const char* ext = strrchr(filename, '.');
     if(ext == NULL)
-        return FT_NONE;
+        return FT_EXEC;
     if(strcmp(ext, ".s") == 0 ||
        strcmp(ext, ".asm") == 0)
         return FT_ASM;
     if(strcmp(ext, ".o") == 0)
         return FT_OBJ;
+    if(strcmp(ext, ".a") == 0)
+        return FT_STATIC;
+    if(strcmp(ext, ".so") == 0)
+        return FT_SHARED;
     if(strcmp(ext, ".si") == 0)
         return FT_SI;
 

@@ -87,7 +87,7 @@
 typedef struct StringBuilder StringBuilder;
 struct StringBuilder
 {
-    char* data;
+    char*  data;
     size_t size;
     size_t capacity;
 };

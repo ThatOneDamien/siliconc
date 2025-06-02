@@ -31,7 +31,8 @@ typedef struct Cmdline Cmdline;
 struct Cmdline
 {
     StringArray     input_files;
-    const char*     output_file;
+    char*           output_file;
+
     CompileMode     mode;
     TargetArch      target;
     IntermediateRep inter_rep;

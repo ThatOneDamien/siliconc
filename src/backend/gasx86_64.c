@@ -9,12 +9,23 @@ __attribute__((format(printf, 1, 2)))
 static void add_line(const char* restrict format, ...);
 static void generate_func(Object* program);
 
-void gasx86_64_codegen(FILE* out_file, Object* program, char* filename)
+void gasx86_64_codegen(Object* program, char* input_path, FILE* out_file)
 {
-    SIC_ASSERT(out_file != NULL);
     SIC_ASSERT(program != NULL);
+    SIC_ASSERT(input_path != NULL);
+    SIC_ASSERT(out_file != NULL);
+
+
+    char* input_filename = strrchr(input_path, '/');
+
+    if(input_filename == NULL)
+        input_filename = input_path;
+    else
+        input_filename++;
+
+
     s_output = out_file;
-    add_line("\t.file\t\"%s\"", filename);
+    add_line("\t.file\t\"%s\"", input_filename);
 
     for(; program != NULL; program = program->next)
     {
@@ -25,6 +36,14 @@ void gasx86_64_codegen(FILE* out_file, Object* program, char* filename)
     }
 
     return;
+}
+
+void gasx86_64_assemble(char* input_path, char* out_path)
+{
+    SIC_ASSERT(out_path != NULL);
+    SIC_ASSERT(input_path != NULL);
+    char *cmd[] = { "as", "-o", out_path, "-c", input_path, NULL };
+    run_subprocess(cmd);
 }
 
 static void add_line(const char* restrict format, ...)
@@ -56,3 +75,4 @@ static void generate_func(Object* func)
     add_line("\tret");
     add_line("\t.size\t%.*s, .-%.*s", sym_len, sym, sym_len, sym);
 }
+

@@ -47,3 +47,5 @@
     #define GEM_ASSERT_MSG(cond, msg)
     #define GEM_ASSERT_ARGS(cond, msg, ...)
 #endif
+
+void run_subprocess(char** cmd);
