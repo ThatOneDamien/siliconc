@@ -36,6 +36,8 @@ struct Cmdline
     CompileMode     mode;
     TargetArch      target;
     IntermediateRep inter_rep;
+
+    bool            hash_hash_hash;
 };
 
 extern Cmdline args;

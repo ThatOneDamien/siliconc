@@ -42,7 +42,22 @@ Token* lex_source(char* source, const char* path)
     {
         size_t len = 0;
         TokenType type;
-        if(*source == '\n')
+        if(source[0] == '/' && source[1] == '/')
+        {
+            source += 2;
+            while(*source != '\0' && *source != '\n')
+                source++;
+            continue;
+        }
+        else if(source[0] == '/' && source[1] == '*')
+        {
+            char* block_comment_end = strstr(source + 2, "*/");
+            if(block_comment_end == NULL)
+                lexing_error(source, "Unclosed block comment.");
+            source = block_comment_end + 2;
+            continue;
+        }
+        else if(*source == '\n')
         {
             s_CurrentLine++;
             source++;
@@ -134,6 +149,6 @@ static size_t extract_separator(char* source)
 
 static inline void lexing_error(char* location, const char* message)
 {
-    sic_error(s_CurrentPath, s_CurrentLine, s_CurrentSource, location, message);
+    sic_error_in_src(s_CurrentPath, s_CurrentLine, s_CurrentSource, location, message);
 }
 

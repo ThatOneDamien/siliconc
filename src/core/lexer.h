@@ -27,7 +27,7 @@ struct Token
 
     union
     {
-        uint64_t i;
+        int64_t  i;
         double   f;
         char*    s;
     } val;

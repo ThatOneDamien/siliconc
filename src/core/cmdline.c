@@ -43,6 +43,8 @@ void process_cmdln_args(int argc, char* argv[])
             i++;
             args.output_file = argv[i];
         }
+        else if(strcmp(arg, "###") == 0)
+            args.hash_hash_hash = true;
     }
 
     if(args.mode == MODE_NONE)

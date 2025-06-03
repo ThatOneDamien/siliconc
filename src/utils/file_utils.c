@@ -82,9 +82,6 @@ FILE* open_out_file(const char* path)
 
 char* convert_ext_to(const char* orig_path, FileType desired)
 {
-    static const char* ft_to_ext[] = {
-        NULL, "", ".s", ".o", ".a", ".so", ".si"
-    };
     
     SIC_ASSERT(orig_path != NULL);
     SIC_ASSERT(desired != FT_NONE);
@@ -101,7 +98,7 @@ char* convert_ext_to(const char* orig_path, FileType desired)
     else
         filename_len = ext_start - filename_start;
 
-    const char* ext = ft_to_ext[desired];
+    const char* ext = ft_to_extension(desired);
     size_t ext_len = strlen(ext);
     char* new_name = malloc(filename_len + ext_len + 1);
     strncpy(new_name, orig_path, filename_len);
@@ -129,4 +126,18 @@ FileType get_filetype(const char* filename)
 
     sic_error_fatal("Unrecognized file extension: '%s'", ext);
     return FT_NONE;
+}
+
+const char* ft_to_extension(FileType ft)
+{
+    static const char* ft_to_ext[] = {
+        NULL, 
+        [FT_EXEC]   = "", 
+        [FT_ASM]    = ".s", 
+        [FT_OBJ]    = ".o", 
+        [FT_STATIC] = ".a", 
+        [FT_SHARED] = ".so", 
+        [FT_SI]     = ".si"
+    };
+    return ft_to_ext[ft];
 }

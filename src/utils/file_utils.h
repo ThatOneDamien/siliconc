@@ -14,8 +14,9 @@ typedef enum
     FT_EXEC,     // ELF Executable
 } FileType;
 
-bool     file_exists(const char* path);
-char*    read_entire_file(const char* path);
-FILE*    open_out_file(const char* path);
-char*    convert_ext_to(const char* orig_path, FileType desired);
-FileType get_filetype(const char* filename);
+bool        file_exists(const char* path);
+char*       read_entire_file(const char* path);
+FILE*       open_out_file(const char* path);
+char*       convert_ext_to(const char* orig_path, FileType desired);
+FileType    get_filetype(const char* filename);
+const char* ft_to_extension(FileType ft);

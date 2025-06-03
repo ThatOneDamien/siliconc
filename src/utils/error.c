@@ -5,6 +5,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+static bool s_has_error = false;
+
 void sic_error_fatal(const char* restrict message, ...)
 {
     SIC_ASSERT(message != NULL);
@@ -17,9 +19,21 @@ void sic_error_fatal(const char* restrict message, ...)
     exit(EXIT_FAILURE);
 }
 
-void sic_error(const char* filepath, size_t line,
-               const char* source_start, const char* err_loc, 
-               const char* message)
+void sic_error(const char* restrict message, ...)
+{
+    SIC_ASSERT(message != NULL);
+    va_list va;
+    va_start(va, message);
+    fprintf(stderr, "sic: \033[31merror:\033[0m "); 
+    vfprintf(stderr, message, va);
+    putc('\n', stderr);
+    va_end(va);
+    s_has_error = true;
+}
+
+void sic_error_in_src(const char* filepath, size_t line,
+                      const char* source_start, const char* err_loc, 
+                      const char* message)
 {
     SIC_ASSERT(source_start != NULL);
     SIC_ASSERT(err_loc != NULL);
@@ -49,4 +63,11 @@ void sic_error(const char* filepath, size_t line,
             putc(' ', stderr);
     }
     fprintf(stderr, "^\n");
+}
+
+bool sic_has_error(void)
+{
+    bool err = s_has_error;
+    s_has_error = false;
+    return err;
 }

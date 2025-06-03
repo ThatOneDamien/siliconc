@@ -6,12 +6,14 @@
 
 #define SET_EXISTS ((void*)true)
 
-typedef struct Scope         Scope;
+typedef struct Scope Scope;
 
 struct Scope
 {
     Scope*  parent;
+
     HashMap vars;
+    HashMap types;
 };
 
 typedef enum
@@ -28,8 +30,24 @@ static void     parse_type_prefix(Type** type, ObjAttr* attr);
 static void     parse_func_params(Object** params, size_t* count);
 static ASTNode* parse_stmt_block(void);
 static ASTNode* parse_stmt(void);
+static ASTNode* parse_declaration(void);
 static ASTNode* parse_assignment(void);
-static ASTNode* parse_identity(void);
+static ASTNode* parse_ternary(void);
+static ASTNode* parse_logical_or(void);
+static ASTNode* parse_logical_and(void);
+static ASTNode* parse_bitwise_or(void);
+static ASTNode* parse_bitwise_xor(void);
+static ASTNode* parse_bitwise_and(void);
+static ASTNode* parse_logical_equality(void);
+static ASTNode* parse_relational(void);
+static ASTNode* parse_bitwise_shift(void);
+static ASTNode* parse_add_and_sub(void);
+static ASTNode* parse_mul_div_and_mod(void);
+static ASTNode* parse_cast(void);
+static ASTNode* parse_unary(void);
+static ASTNode* parse_postfix(void);
+static ASTNode* parse_func_call(void);
+static ASTNode* parse_primary_expr(void);
 // static 
 
 // Scope and symbol defining/finding functions
@@ -146,6 +164,9 @@ static void parse_type_prefix(Type** type, ObjAttr* attr)
     bool seen_type = false;
     Type* ty = NULL;
 
+    // TODO: Make the kw map hold values depending on whether the kw is a typename or not to
+    //       make this function better. Furthermore it could be used to remove the string comparisons
+    //       making the process quicker.
     while(hashmap_getn(&s_kw_map, s_token->ref, s_token->len) != NULL)
     {
         if(tok_equal(s_token, "extern"))
@@ -284,8 +305,11 @@ static ASTNode* parse_stmt(void)
 {
     if(tok_equal(s_token, ";"))
     {
+        ASTNode* new_node = create_node(NODE_NOP, s_token);
         s_token = s_token->next;
-        return NULL;
+        new_node->next = NULL;
+        new_node->children = NULL;
+        return new_node;
     }
 
     if(tok_equal(s_token, "return"))
@@ -312,23 +336,373 @@ static ASTNode* parse_stmt(void)
     return res;
 }
 
+static UNUSED ASTNode* parse_declaration(void)
+{
+    ASTNode head;
+    head.next = NULL;
+    // ASTNode* cur = &head;
+
+    Type* type;
+    ObjAttr attr;
+    parse_type_prefix(&type, &attr);
+    if(type == t_void)
+        sic_error_fatal("Variables cannot be declared as type void.");
+
+    if(s_token->type == TOKEN_IDNT)
+    {
+        Object* new_var = create_obj_in_scope(s_token, false);
+        new_var->is_function = false;
+        new_var->comps.var.type = type;
+        if(tok_equal(s_token, "="))
+        {
+            // ASTNode* var_node = create_node(NODE_VAR, new_var->symbol);
+            // ASTNode* assign = create_node(NODE_ASSIGN, s_token);
+            // s_token = s_token->next;
+            // ASTNode* rhs = parse_assignment();
+        }
+    }
+    else
+        sic_error_fatal("Expected identifier.");
+    return head.next;
+}
+
 static ASTNode* parse_assignment(void)
 {
-    ASTNode* node = parse_identity();
-
+    ASTNode* node = parse_ternary(); // TODO: Change this to look ahead for unary.
     if(tok_equal(s_token, "="))
     {
         ASTNode* new_node = create_node(NODE_ASSIGN, s_token);
         new_node->children = node;
         s_token = s_token->next;
-        node->next = parse_identity();
+        node->next = parse_assignment();
         return new_node;
     }
 
     return node;
 }
 
-static ASTNode* parse_identity(void)
+static ASTNode* parse_ternary(void)
+{
+    ASTNode* condition = parse_logical_or();
+
+    if(!tok_equal(s_token, "?"))
+        return condition;
+
+    ASTNode* tern = create_node(NODE_TERNARY, s_token);
+    s_token = s_token->next;
+    ASTNode* true_node = parse_assignment();
+    expect(&s_token, ":");
+    ASTNode* false_node = parse_ternary();
+    condition->next = true_node;
+    true_node->next = false_node;
+    false_node->next = NULL;
+    tern->children = condition;
+    return tern;
+}
+
+static ASTNode* parse_logical_or(void)
+{
+    ASTNode* node = parse_logical_and();
+    while(tok_equal(s_token, "||"))
+    {
+        ASTNode* new_node = create_node(NODE_LOG_OR, s_token);
+        s_token = s_token->next;
+        ASTNode* rhs = parse_logical_and();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+    return node;
+}
+
+static ASTNode* parse_logical_and(void)
+{
+    ASTNode* node = parse_bitwise_or();
+    while(tok_equal(s_token, "&&"))
+    {
+        ASTNode* new_node = create_node(NODE_LOG_AND, s_token);
+        s_token = s_token->next;
+        ASTNode* rhs = parse_bitwise_or();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+    return node;
+}
+
+static ASTNode* parse_bitwise_or(void)
+{
+    ASTNode* node = parse_bitwise_xor();
+    while(tok_equal(s_token, "|"))
+    {
+        ASTNode* new_node = create_node(NODE_BIT_OR, s_token);
+        s_token = s_token->next;
+        ASTNode* rhs = parse_bitwise_xor();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+    return node;
+
+}
+
+static ASTNode* parse_bitwise_xor(void)
+{
+    ASTNode* node = parse_bitwise_and();
+    while(tok_equal(s_token, "^"))
+    {
+        ASTNode* new_node = create_node(NODE_BIT_XOR, s_token);
+        s_token = s_token->next;
+        ASTNode* rhs = parse_bitwise_and();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+    return node;
+
+}
+
+static ASTNode* parse_bitwise_and(void)
+{
+    ASTNode* node = parse_logical_equality();
+    while(tok_equal(s_token, "&"))
+    {
+        ASTNode* new_node = create_node(NODE_BIT_AND, s_token);
+        s_token = s_token->next;
+        ASTNode* rhs = parse_logical_equality();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+    return node;
+
+}
+
+static ASTNode* parse_logical_equality(void)
+{
+    ASTNode* node = parse_relational();
+    while(true)
+    {
+        ASTNode* new_node;
+        if(tok_equal(s_token, "=="))
+            new_node = create_node(NODE_EQ, s_token);
+        else if(tok_equal(s_token, "!="))
+            new_node = create_node(NODE_NE, s_token);
+        else
+            return node;
+
+        s_token = s_token->next;
+        ASTNode* rhs = parse_relational();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+}
+
+static ASTNode* parse_relational(void)
+{
+    ASTNode* node = parse_bitwise_shift();
+    while(true)
+    {
+        ASTNode* new_node;
+        bool reverse = false;
+        if(tok_equal(s_token, "<"))
+            new_node = create_node(NODE_LT, s_token);
+        else if(tok_equal(s_token, "<="))
+            new_node = create_node(NODE_LE, s_token);
+        else if(tok_equal(s_token, ">"))
+        {
+            reverse = true;
+            new_node = create_node(NODE_LT, s_token);
+        }
+        else if(tok_equal(s_token, ">="))
+        {
+            reverse = true;
+            new_node = create_node(NODE_LE, s_token);
+        }
+        else
+            return node;
+
+        s_token = s_token->next;
+        ASTNode* other = parse_bitwise_shift();
+        if(reverse)
+        {
+            other->next = node;
+            node->next = NULL;
+            new_node->children = other;
+        }
+        else
+        {
+            node->next = other;
+            other->next = NULL;
+            new_node->children = node;
+        }
+        node = new_node;
+    }
+
+}
+
+static ASTNode* parse_bitwise_shift(void)
+{
+    ASTNode* node = parse_add_and_sub();
+    while(true)
+    {
+        ASTNode* new_node;
+        if(tok_equal(s_token, "<<"))
+            new_node = create_node(NODE_SHL, s_token);
+        else if(tok_equal(s_token, ">>"))
+            new_node = create_node(NODE_SHR, s_token);
+        else
+            return node;
+
+        s_token = s_token->next;
+        ASTNode* rhs = parse_add_and_sub();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+}
+
+static ASTNode* parse_add_and_sub(void)
+{
+    ASTNode* node = parse_mul_div_and_mod();
+    while(true)
+    {
+        ASTNode* new_node;
+        if(tok_equal(s_token, "+"))
+            new_node = create_node(NODE_ADD, s_token);
+        else if(tok_equal(s_token, "-"))
+            new_node = create_node(NODE_SUB, s_token);
+        else
+            return node;
+
+        s_token = s_token->next;
+        ASTNode* rhs = parse_mul_div_and_mod();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+
+}
+
+static ASTNode* parse_mul_div_and_mod(void)
+{
+    ASTNode* node = parse_cast();
+    while(true)
+    {
+        ASTNode* new_node;
+        if(tok_equal(s_token, "*"))
+            new_node = create_node(NODE_MUL, s_token);
+        else if(tok_equal(s_token, "/"))
+            new_node = create_node(NODE_DIV, s_token);
+        else if(tok_equal(s_token, "%"))
+            new_node = create_node(NODE_MOD, s_token);
+        else
+            return node;
+
+        s_token = s_token->next;
+        ASTNode* rhs = parse_cast();
+        node->next = rhs;
+        rhs->next = NULL;
+        new_node->children = node;
+        node = new_node;
+    }
+}
+
+static ASTNode* parse_cast(void)
+{
+    if(tok_equal(s_token, "(") && hashmap_getn(&s_kw_map, s_token->next->ref, s_token->next->len) != NULL)
+    {
+        sic_error_fatal("Casts not implemented yet.");
+        // Token* cast_tok = s_token;
+        // Type* type;
+        // parse_type_prefix(&type, NULL);
+        // expect(&s_token, ")");
+        // ASTNode* node = create_node(NODE_CAST, cast_tok);
+        // node->next = NULL;
+        // node->children = parse_cast();
+    }
+    return parse_unary();
+}
+
+static ASTNode* parse_unary(void)
+{
+    if(tok_equal(s_token, "-"))
+    {
+        ASTNode* node = create_node(NODE_NEG, s_token);
+        s_token = s_token->next;
+        node->next = NULL;
+        node->children = parse_cast();
+        return node;
+    }
+    
+    if(tok_equal(s_token, "&"))
+    {
+        ASTNode* node = create_node(NODE_ADDR_OF, s_token);
+        s_token = s_token->next;
+        node->next = NULL;
+        node->children = parse_cast();
+        return node;
+    }
+
+    if(tok_equal(s_token, "*"))
+    {
+        ASTNode* node = create_node(NODE_DEREF, s_token);
+        s_token = s_token->next;
+        node->next = NULL;
+        node->children = parse_cast();
+        return node;
+    }
+
+    if(tok_equal(s_token, "!"))
+    {
+        ASTNode* node = create_node(NODE_LOG_NOT, s_token);
+        s_token = s_token->next;
+        node->next = NULL;
+        node->children = parse_cast();
+        return node;
+    }
+
+    if(tok_equal(s_token, "~"))
+    {
+        ASTNode* node = create_node(NODE_BIT_NOT, s_token);
+        s_token = s_token->next;
+        node->next = NULL;
+        node->children = parse_cast();
+        return node;
+    }
+    return parse_postfix();
+}
+
+
+static ASTNode* parse_postfix(void)
+{
+    ASTNode* node = parse_primary_expr();
+    while(true)
+    {
+        if(tok_equal(s_token, "("))
+        {
+            parse_func_call();
+        }
+
+        return node;
+    }
+}
+
+static ASTNode* parse_func_call(void)
+{
+    sic_error_fatal("Function calls are unimplemented.");
+}
+
+static ASTNode* parse_primary_expr(void)
 {
     if(s_token->type == TOKEN_IDNT)
     {

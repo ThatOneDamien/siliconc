@@ -1,5 +1,10 @@
+// This is a comment, it should not appear in the lexer's output
+/* 
+ * This is a multiline comment.
+ * This should also not appear in the lexer's output.
+ */
 u32 main(u32 a, u32 b)
 {
-    a = 8;
+    a = 8 * 2 + b;
     return 10;
 }
