@@ -7,7 +7,7 @@
 
 #define INITIAL_CAP (1 << 12)
 
-void gen_intermediate_rep(Object* program, char* input_path, char* out_path)
+void gen_intermediate_rep(Object* program, const char* input_path, const char* out_path)
 {
     SIC_ASSERT(program != NULL);
     SIC_ASSERT(input_path != NULL);
@@ -30,7 +30,7 @@ void gen_intermediate_rep(Object* program, char* input_path, char* out_path)
     fclose(out_file);
 }
 
-void assemble_intermediate(char* input_path, char* out_path)
+void assemble_intermediate(const char* input_path, const char* out_path)
 {
     SIC_ASSERT(out_path != NULL);
     SIC_ASSERT(input_path != NULL);

@@ -25,7 +25,7 @@ char* read_entire_file(const char* path)
     int fd = open(path, O_RDONLY);
 
     if(fd == -1)
-        return NULL;
+        goto end;
 
     long size = lseek(fd, 0, SEEK_END);
     if(size <= 0)
@@ -45,19 +45,12 @@ char* read_entire_file(const char* path)
         if(bytes_read == 0)
             break;
         if(bytes_read < 0)
-        {
-            free(res);
-            res = NULL;
             goto end;
-        }
         total_read += bytes_read;
     }
 
     if(total_read != size)
-    {
-        free(res);
-        res = NULL;
-    }
+        goto end;
     else if(res[size - 1] == '\n')
         res[size] = '\0';
     else
@@ -66,9 +59,12 @@ char* read_entire_file(const char* path)
         res[size + 1] = '\0';
     }
 
-end:
-    close(fd);
     return res;
+end:
+    if(fd != -1)
+        close(fd);
+    sic_error_fatal("Failed to open file \'%s\'", path);
+    return NULL;
 }
 
 FILE* open_out_file(const char* path)

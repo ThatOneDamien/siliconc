@@ -1,13 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include "cmdline.h"
-#include "core.h"
-#include "lexer.h"
-#include "parser.h"
+#include "internal.h"
 #include "backend/codegen.h"
 #include "utils/debug.h"
 #include "utils/error.h"
 #include "utils/file_utils.h"
-#include "utils/hash.h"
+#include "utils/lib.h"
 
 #include <errno.h>
 #include <glob.h>
@@ -16,7 +14,7 @@
 #include <sys/wait.h>
 
 static void  output_preprocessed(Token* preprocessed, char* output_path);
-static char* compile(Token* preprocessed, char* input_path);
+// static char* compile(Lexer* lexer);
 static char* assemble(char* input_path);
 static char* create_tempfile(FileType ft);
 static void  close_tempfiles(void);
@@ -36,7 +34,8 @@ int main(int argc, char* argv[])
         if(!file_exists(args.input_files.data[i]))
             sic_error_fatal("File named '%s' not found.", args.input_files.data[i]);
 
-    init_parser();
+    sym_map_init();
+    // parser_init();
     da_init(&s_tempfiles, args.input_files.size);
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
 
@@ -54,24 +53,25 @@ int main(int argc, char* argv[])
         if(ft == FT_SI)
         {
             printf("\n\033[35;1mLEXER:\033[0m\n");
-            Token* tokens = lex_file(cur_input_path);
-            print_all_tokens(tokens);
+            Lexer lexer;
+            lexer_init_file(&lexer, cur_input_path);
+            print_all_tokens(lexer);
 
-            if(tokens->type == TOKEN_EOF)
-            {
-                fprintf(stderr, "Ignoring translation unit \'%s\' because it was empty.\n", cur_input_path);
-                continue;
-            }
+            // if(tokens->type == TOKEN_EOF)
+            // {
+            //     fprintf(stderr, "Ignoring translation unit \'%s\' because it was empty.\n", cur_input_path);
+            //     continue;
+            // }
 
-            if(args.mode == MODE_PREPROCESS)
-            {
-                output_preprocessed(tokens, args.output_file);
-                continue;
-            }
+            // if(args.mode == MODE_PREPROCESS)
+            // {
+            //     output_preprocessed(&lexer, args.output_file);
+            //     continue;
+            // }
 
-            cur_output_path = compile(tokens, cur_input_path);
-            if(args.mode >= MODE_ASSEMBLE && !sic_has_error())
-                cur_output_path = assemble(cur_output_path);
+            // cur_output_path = compile(&lexer);
+            // if(args.mode >= MODE_ASSEMBLE && !sic_has_error())
+            //     cur_output_path = assemble(cur_output_path);
         }
         else if(ft == FT_ASM)
         {
@@ -172,7 +172,7 @@ void run_subprocess(char** cmd)
         exit(status);
 }
 
-static void output_preprocessed(Token* preprocessed, char* output_path)
+static void UNUSED output_preprocessed(Token* preprocessed, char* output_path)
 {
     (void)preprocessed;
     (void)output_path;
@@ -180,26 +180,27 @@ static void output_preprocessed(Token* preprocessed, char* output_path)
     // fclose(out_file);
 }
 
-static char* compile(Token* preprocessed, char* input_path)
-{
-    SIC_ASSERT(args.mode >= MODE_COMPILE);
-    char* output_path;
-    if(args.mode == MODE_COMPILE)
-        output_path = args.output_file == NULL ? 
-                        convert_ext_to(input_path, FT_ASM) : 
-                        args.output_file;
-    else
-        output_path = create_tempfile(FT_ASM);
-
-
-    printf("\n\033[35;1mPARSER:\033[0m\n");
-    Object* program = parse_tokens(preprocessed);
-    print_program(program);
-
-    printf("\n\033[35;1mCODEGEN:\033[0m\n");
-    gen_intermediate_rep(program, input_path, output_path);
-    return output_path;
-}
+// static char* compile(UNUSED Lexer* lexer)
+// {
+    // SIC_ASSERT(args.mode >= MODE_COMPILE);
+    // char* output_path;
+    // if(args.mode == MODE_COMPILE)
+    //     output_path = args.output_file == NULL ? 
+    //                     convert_ext_to(lexer->file_name, FT_ASM) : 
+    //                     args.output_file;
+    // else
+    //     output_path = create_tempfile(FT_ASM);
+    //
+    //
+    // printf("\n\033[35;1mPARSER:\033[0m\n");
+    // Object* program = parse_unit(lexer);
+    // print_program(program);
+    //
+    // printf("\n\033[35;1mCODEGEN:\033[0m\n");
+    // gen_intermediate_rep(program, lexer->file_name, output_path);
+    // return output_path;
+//     return NULL;
+// }
 
 static char* assemble(char* input_path)
 {

@@ -1,4 +1,4 @@
-#include "hash.h"
+#include "lib.h"
 #include "core/core.h"
 
 #include <stdint.h>
@@ -6,23 +6,23 @@
 
 #define INITIAL_HASH_CAP 16
 
-#define LOAD_FACTOR_HI 75ull
-#define LOAD_FACTOR_LO 50ull
+#define LOAD_FACTOR_C  4u
+#define LOAD_FACTOR_HI 3u
+#define LOAD_FACTOR_LO 2u
 
 static HashEntry* get_entry(HashMap* map, const char* key, size_t len, HashEntry** bucket);
 static void       rehash(HashMap* map);
 static uint64_t   fnv_hash(const char* str, size_t len);
 
-void hashmap_initn(HashMap* map, size_t entry_cnt)
+void hashmap_initn(HashMap* map, uint32_t entry_cnt)
 {
     SIC_ASSERT(map != NULL);
-    size_t cap = INITIAL_HASH_CAP;
-    while((entry_cnt * 100) / cap >= LOAD_FACTOR_LO)
-        cap *= 2;
+    uint32_t cap = MIN(INITIAL_HASH_CAP, next_pow_of_2(entry_cnt * LOAD_FACTOR_C / LOAD_FACTOR_LO));
 
-    map->bucket_cnt = (size_t)cap;
+    map->bucket_cnt = cap;
     map->buckets = calloc(map->bucket_cnt, sizeof(HashEntry));
     map->entry_cnt = 0;
+    map->max_load = cap * LOAD_FACTOR_HI / LOAD_FACTOR_C;
 }
 
 void hashmap_free(HashMap* map)
@@ -32,13 +32,12 @@ void hashmap_free(HashMap* map)
     free(map->buckets);
 }
 
-void  hashmap_putn(HashMap* map, const char* key, size_t len, void* val)
+void hashmap_putn(HashMap* map, const char* key, size_t len, void* val)
 {
     SIC_ASSERT(map != NULL);
     SIC_ASSERT(key != NULL);
     SIC_ASSERT(map->buckets != NULL);
-    size_t load_factor = (map->entry_cnt * 100) / map->bucket_cnt;
-    if(load_factor > LOAD_FACTOR_HI)
+    if(map->entry_cnt >= map->max_load)
         rehash(map);
 
     HashEntry* bucket;
@@ -128,16 +127,13 @@ static HashEntry* get_entry(HashMap* map, const char* key, size_t len, HashEntry
 static void rehash(HashMap* map)
 {
     SIC_ASSERT(map->buckets != NULL);
-    size_t new_cap = map->bucket_cnt;
-    while((map->bucket_cnt * 100) / new_cap >= LOAD_FACTOR_LO)
-        new_cap *= 2;
+    uint32_t new_cap = next_pow_of_2(map->entry_cnt * LOAD_FACTOR_C / LOAD_FACTOR_LO);
 
-    printf("here\n");
     HashMap new_map;
     new_map.bucket_cnt = (size_t)new_cap;
     new_map.buckets = calloc(new_map.bucket_cnt, sizeof(HashEntry));
     new_map.entry_cnt = map->entry_cnt;
-    for(size_t i = 0; i < map->bucket_cnt; ++i)
+    for(uint32_t i = 0; i < map->bucket_cnt; ++i)
     {
         HashEntry* bucket = map->buckets[i].next;
         while(bucket != NULL)
@@ -164,21 +160,4 @@ static uint64_t fnv_hash(const char* str, size_t len)
         hash ^= (uint8_t)str[i];
     }
     return hash;
-}
-
-char* format(const char* restrict fmt, ...)
-{
-    char *buf;
-    va_list va;
-    va_start(va, fmt);
-    int size = vsnprintf(NULL, 0, fmt, va);
-    va_end(va);
-    buf = malloc(size + 1);
-
-    va_start(va, fmt);
-    vsnprintf(buf, size + 1, fmt, va);
-    va_end(va);
-    buf[size] = '\0';
-
-    return buf;
 }

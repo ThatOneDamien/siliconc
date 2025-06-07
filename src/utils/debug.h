@@ -2,10 +2,9 @@
 
 #ifdef SI_DEBUG
 
-#include "core/lexer.h"
-#include "core/parser.h"
+#include "core/internal.h"
 
-void print_all_tokens(const Token* tok);
+void print_all_tokens(Lexer lexer);
 void print_program(const Object* program);
 
 #endif // SI_DEBUG

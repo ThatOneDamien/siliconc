@@ -1,4 +1,5 @@
-#include "codegen.h"
+#include "gasx86_64.h"
+#include "x86_globals.h"
 #include "core/core.h"
 #include "utils/error.h"
 
@@ -16,14 +17,14 @@ static void generate_statement(ASTNode* node);
 static void generate_expr(ASTNode* node);
 static void assign_offsets(Object* func);
 
-void gasx86_64_codegen(Object* program, char* input_path, FILE* out_file)
+void gasx86_64_codegen(Object* program, const char* input_path, FILE* out_file)
 {
     SIC_ASSERT(program != NULL);
     SIC_ASSERT(input_path != NULL);
     SIC_ASSERT(out_file != NULL);
 
 
-    char* input_filename = strrchr(input_path, '/');
+    const char* input_filename = strrchr(input_path, '/');
 
     if(input_filename == NULL)
         input_filename = input_path;
@@ -44,11 +45,11 @@ void gasx86_64_codegen(Object* program, char* input_path, FILE* out_file)
     return;
 }
 
-void gasx86_64_assemble(char* input_path, char* out_path)
+void gasx86_64_assemble(const char* input_path, const char* out_path)
 {
     SIC_ASSERT(out_path != NULL);
     SIC_ASSERT(input_path != NULL);
-    char *cmd[] = { "as", "--64", "-c", input_path, "-o", out_path, NULL };
+    char *cmd[] = { "as", "--64", "-c", (char*)input_path, "-o", (char*)out_path, NULL };
     run_subprocess(cmd);
 }
 
@@ -66,7 +67,7 @@ static void generate_func(Object* func)
     s_cur_func = func;
     assign_offsets(func);
     int sym_len = (int)func->symbol->len;
-    char* sym = func->symbol->ref;
+    const char* sym = func->symbol->loc;
     FuncComps* comps = &func->comps.func;
     // Metadata + header
     add_line("\t.text");
@@ -75,7 +76,6 @@ static void generate_func(Object* func)
     add_line("%.*s:", sym_len, sym);
 
     // Function Prologue
-    add_line(".L.return.%.*s:", sym_len, sym);
     add_line("\tpushq\t%%rbp");
     add_line("\tmovq\t%%rsp, %%rbp");
     if(comps->stack_size > 0)
@@ -90,6 +90,7 @@ static void generate_func(Object* func)
 
     // Function Epilogue
 
+    add_line(".L.return.%.*s:", sym_len, sym);
     if(comps->stack_size > 0)
         add_line("\tmovq\t%%rbp, %%rsp");
     add_line("\tpopq\t%%rbp");
@@ -99,12 +100,12 @@ static void generate_func(Object* func)
 
 static UNUSED void generate_statement(ASTNode* node)
 {
-    switch(node->type)
+    switch(node->kind)
     {
     case NODE_RETURN: {
         if(node->children)
             generate_expr(node->children);
-        add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol->len, s_cur_func->symbol->ref);
+        add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol->len, s_cur_func->symbol->loc);
         break;
     }
     default:
@@ -114,7 +115,7 @@ static UNUSED void generate_statement(ASTNode* node)
 
 static void generate_expr(ASTNode* node)
 {
-    switch(node->type)
+    switch(node->kind)
     {
     case NODE_NUM: {
         // switch(node->)

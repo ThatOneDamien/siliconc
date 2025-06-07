@@ -32,26 +32,28 @@ void sic_error(const char* restrict message, ...)
 }
 
 void sic_error_in_src(const char* filepath, size_t line,
-                      const char* source_start, const char* err_loc, 
-                      const char* message)
+                      const char* line_start, const char* err_loc, 
+                      const char* restrict message, ...)
 {
-    SIC_ASSERT(source_start != NULL);
+    SIC_ASSERT(filepath != NULL);
+    SIC_ASSERT(line_start != NULL);
     SIC_ASSERT(err_loc != NULL);
     SIC_ASSERT(message != NULL);
-    const char* line_start = err_loc;
-    while(line_start >= source_start && *line_start != '\n')
-        line_start--;
-    line_start++;
     char* next_line = strchr(line_start, '\n');
     int line_size = next_line == NULL ? 
                         strlen(line_start) :
                         (uintptr_t)next_line - (uintptr_t)line_start;
 
-    fprintf(stderr, "%s:%lu: \033[31merror:\033[0m %s\n", 
+    fprintf(stderr, "%s:%lu: \033[31merror:\033[0m ", 
             filepath, 
-            line, 
-            message);
-    fprintf(stderr, "%4lu | %.*s\n     | ", 
+            line);
+    
+    va_list va;
+    va_start(va, message);
+    vfprintf(stderr, message, va);
+    va_end(va);
+
+    fprintf(stderr, "\n%4lu | %.*s\n     | ", 
             line, 
             line_size,
             line_start);
