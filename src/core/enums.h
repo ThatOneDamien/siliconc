@@ -56,8 +56,9 @@ typedef enum
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
+    TOKEN_EXTERN,
+    TOKEN_KEYWORD_START = TOKEN_EXTERN,
     TOKEN_RETURN,
-    TOKEN_KEYWORD_START = TOKEN_RETURN,
 
     // Built-in/Primitive type names (Still part of keywords)
     TOKEN_VOID,

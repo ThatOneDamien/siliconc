@@ -28,17 +28,17 @@ static inline Token* next_token_loc(Lexer* lexer);
 static inline bool   extract_identifier(Lexer* lexer, Token* t);
 static inline bool   extract_num_literal(Lexer* lexer, Token* t);
 
-void lexer_init_file(Lexer* lexer, const char* path)
+void lexer_init_file(Lexer* lexer, const SIFile* input)
 {
     SIC_ASSERT(lexer != NULL);
-    SIC_ASSERT(path != NULL);
-    lexer->file_name  = path;
-    lexer->src_start  = read_entire_file(path);
+    SIC_ASSERT(input != NULL);
+    lexer->file_name  = input->full_path;
+    lexer->src_start  = read_entire_file(input);
     lexer->cur_pos    = lexer->src_start;
     lexer->cur_line   = 1;
     lexer->line_start = lexer->src_start;
     memset(&lexer->la_buf, 0, sizeof(LookAhead));
-    for(size_t i = 0; i < LOOK_AHEAD_SIZE; ++i)
+    for(size_t i = 0; i < LOOK_AHEAD_SIZE - 1; ++i)
         lexer_advance(lexer);
 }
 

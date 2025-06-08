@@ -12,7 +12,7 @@ void process_cmdln_args(int argc, char* argv[])
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] != '-') // Not an argument, only an input file.
-            da_append(&args.input_files, argv[i]);
+            da_append(&args.input_files, sifile_new(argv[i]));
 
         if(argv[i][1] == '\0') // Gcc accepts the argument '-' to mean
             continue;          // take the input from stdin, but sic won't use that.

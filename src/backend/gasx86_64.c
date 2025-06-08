@@ -7,8 +7,9 @@
 
 #define align_up(x, alignment) (((x) + (alignment) - 1) / (alignment) * (alignment))
 
-static FILE*   s_output;
-static Object* s_cur_func;
+static FILE*    s_output;
+static Object*  s_cur_func;
+static ASTNode* s_last_node;
 
 __attribute__((format(printf, 1, 2)))
 static void add_line(const char* restrict format, ...);
@@ -17,24 +18,14 @@ static void generate_statement(ASTNode* node);
 static void generate_expr(ASTNode* node);
 static void assign_offsets(Object* func);
 
-void gasx86_64_codegen(Object* program, const char* input_path, FILE* out_file)
+void gasx86_64_codegen(const TranslationUnit* unit, FILE* out_file)
 {
-    SIC_ASSERT(program != NULL);
-    SIC_ASSERT(input_path != NULL);
     SIC_ASSERT(out_file != NULL);
 
-
-    const char* input_filename = strrchr(input_path, '/');
-
-    if(input_filename == NULL)
-        input_filename = input_path;
-    else
-        input_filename++;
-
-
     s_output = out_file;
-    add_line("\t.file\t\"%s\"", input_filename);
+    add_line("\t.file\t\"%s\"", unit->file.file_name);
 
+    Object* program = unit->program;
     while(program != NULL)
     {
         if(program->is_function)
@@ -66,8 +57,8 @@ static void generate_func(Object* func)
 {
     s_cur_func = func;
     assign_offsets(func);
-    int sym_len = (int)func->symbol->len;
-    const char* sym = func->symbol->loc;
+    int sym_len = (int)func->symbol.len;
+    const char* sym = func->symbol.loc;
     FuncComps* comps = &func->comps.func;
     // Metadata + header
     add_line("\t.text");
@@ -90,6 +81,9 @@ static void generate_func(Object* func)
 
     // Function Epilogue
 
+    for(ASTNode* b = comps->body; b != NULL; b = b->next)
+        generate_statement(b);
+
     add_line(".L.return.%.*s:", sym_len, sym);
     if(comps->stack_size > 0)
         add_line("\tmovq\t%%rbp, %%rsp");
@@ -98,27 +92,29 @@ static void generate_func(Object* func)
     add_line("\t.size\t%.*s, .-%.*s", sym_len, sym, sym_len, sym);
 }
 
-static UNUSED void generate_statement(ASTNode* node)
+static void generate_statement(ASTNode* node)
 {
+    s_last_node = node;
     switch(node->kind)
     {
     case NODE_RETURN: {
         if(node->children)
             generate_expr(node->children);
-        add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol->len, s_cur_func->symbol->loc);
+        add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol.len, s_cur_func->symbol.loc);
         break;
     }
     default:
-        sic_error_fatal("Unimplemented node type.");
+        generate_expr(node);
     }
 }
 
 static void generate_expr(ASTNode* node)
 {
+    s_last_node = node;
     switch(node->kind)
     {
     case NODE_NUM: {
-        // switch(node->)
+        // switch(node->var)
         break;
     }
     case NODE_ASSIGN:

@@ -2,9 +2,9 @@
 
 static const char* s_tok_strs[] = {
     [TOKEN_INVALID]         = NULL,
-    [TOKEN_IDENT]           = NULL,
-    [TOKEN_STR]             = NULL,
-    [TOKEN_NUM]             = NULL,
+    [TOKEN_IDENT]           = "Identifier",
+    [TOKEN_STR]             = "String Literal",
+    [TOKEN_NUM]             = "Numeric Literal",
     [TOKEN_AMP]             = "&",
     [TOKEN_ASTERISK]        = "*",
     [TOKEN_LOG_NOT]         = "!",
@@ -49,6 +49,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_SHL_ASSIGN]      = "<<=",
     [TOKEN_INCREM]          = "++",
     [TOKEN_DECREM]          = "--",
+    [TOKEN_EXTERN]          = "extern",
     [TOKEN_RETURN]          = "return",
     [TOKEN_VOID]            = "void",
     [TOKEN_U8]              = "u8",

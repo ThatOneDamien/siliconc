@@ -7,20 +7,17 @@
 
 #define INITIAL_CAP (1 << 12)
 
-void gen_intermediate_rep(Object* program, const char* input_path, const char* out_path)
+void gen_intermediate_rep(const TranslationUnit* unit, const SIFile* output)
 {
-    SIC_ASSERT(program != NULL);
-    SIC_ASSERT(input_path != NULL);
-    SIC_ASSERT(out_path != NULL);
+    SIC_ASSERT(output != NULL);
+    SIC_ASSERT(output->full_path != NULL);
 
-    FILE* out_file = open_out_file(out_path);
-    if(out_file == NULL)
-        sic_error_fatal("Unable to open/create file \'%s\'.", out_path);
+    FILE* out_file = open_out_file(output);
 
     switch(args.inter_rep)
     {
     case INTER_GAS_ASM: {
-        gasx86_64_codegen(program, input_path, out_file);
+        gasx86_64_codegen(unit, out_file);
         break;
     }
     case INTER_NONE:

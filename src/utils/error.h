@@ -1,5 +1,7 @@
 #pragma once
+#include "core/internal.h"
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -9,9 +11,15 @@ void sic_error_fatal(const char* restrict message, ...);
 __attribute__((format(printf, 1, 2)))
 void sic_error(const char* restrict message, ...);
 
-__attribute__((format(printf, 5, 6)))
-void sic_error_in_src(const char* filepath, size_t line,
-                      const char* line_start, const char* err_loc, 
-                      const char* restrict message, ...);
+void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va);
 
-bool sic_has_error(void);
+__attribute__((format(printf, 3, 4)))
+static inline void sic_error_at(const char* filepath, const Token* t, const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_error_atv(filepath, t, message, va);
+    va_end(va);
+}
+
+int sic_error_cnt(void);

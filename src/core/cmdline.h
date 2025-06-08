@@ -1,6 +1,9 @@
 #pragma once
 #include "utils/da.h"
+#include "utils/file_utils.h"
 
+typedef struct SIFileDA SIFileDA;
+typedef struct Cmdline  Cmdline;
 typedef enum
 {
     MODE_NONE = 0,   // NULL Mode
@@ -27,10 +30,16 @@ typedef enum
     TARGET_x86_64
 } TargetArch;
 
-typedef struct Cmdline Cmdline;
+struct SIFileDA
+{
+    SIFile* data;
+    size_t  capacity;
+    size_t  size;
+};
+
 struct Cmdline
 {
-    StringArray     input_files;
+    SIFileDA        input_files;
     char*           output_file;
 
     CompileMode     mode;

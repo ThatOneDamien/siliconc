@@ -1,21 +1,23 @@
 #pragma once
 #include "core.h"
 #include "enums.h"
+#include "utils/file_utils.h"
 #include "utils/lib.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct Token     Token;
-typedef struct LookAhead LookAhead;
-typedef struct Lexer     Lexer;
-typedef struct FuncComps FuncComps;
-typedef struct VarComps  VarComps;
-typedef struct Object    Object;
-typedef struct ASTNode   ASTNode;
-typedef struct Type      Type;
-typedef struct Scope     Scope;
+typedef struct Token           Token;
+typedef struct LookAhead       LookAhead;
+typedef struct Lexer           Lexer;
+typedef struct FuncComps       FuncComps;
+typedef struct VarComps        VarComps;
+typedef struct Object          Object;
+typedef struct ASTNode         ASTNode;
+typedef struct Type            Type;
+typedef struct Scope           Scope;
+typedef struct TranslationUnit TranslationUnit;
 
 struct Token
 {
@@ -71,7 +73,7 @@ struct VarComps
 struct Object
 {
     Object*  next;
-    Token*   symbol;
+    Token    symbol;
     bool     is_function;
     bool     is_defined; // If this is false, the Object is only a declaration
 
@@ -86,7 +88,7 @@ struct Object
 struct ASTNode
 {
     NodeKind kind;
-    Token*   token;
+    Token    token;
     Object*  var;
     ASTNode* children;
     ASTNode* next;
@@ -107,6 +109,12 @@ struct Scope
     HashMap types;
 };
 
+struct TranslationUnit
+{
+    SIFile  file;
+    Object* program;
+};
+
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
 extern Type* g_type_u8;
@@ -125,7 +133,7 @@ extern Type* g_type_f128;
 const char* tok_kind_to_str(TokenKind kind);
 
 // Lexer functions
-void   lexer_init_file(Lexer* lexer, const char* path);
+void   lexer_init_file(Lexer* lexer, const SIFile* input);
 bool   lexer_advance(Lexer* lexer);
 Token* lexer_look_ahead(Lexer* lexer, uint32_t count); // count < LOOK_AHEAD_SIZE
 

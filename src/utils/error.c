@@ -5,7 +5,7 @@
 #include <stdarg.h>
 #include <string.h>
 
-static bool s_has_error = false;
+static int s_error_cnt = 0;
 
 void sic_error_fatal(const char* restrict message, ...)
 {
@@ -28,48 +28,46 @@ void sic_error(const char* restrict message, ...)
     vfprintf(stderr, message, va);
     putc('\n', stderr);
     va_end(va);
-    s_has_error = true;
+    s_error_cnt++;
 }
 
-void sic_error_in_src(const char* filepath, size_t line,
-                      const char* line_start, const char* err_loc, 
-                      const char* restrict message, ...)
+void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va)
 {
     SIC_ASSERT(filepath != NULL);
-    SIC_ASSERT(line_start != NULL);
-    SIC_ASSERT(err_loc != NULL);
+    SIC_ASSERT(t != NULL);
+    SIC_ASSERT(t->loc != NULL);
     SIC_ASSERT(message != NULL);
-    char* next_line = strchr(line_start, '\n');
-    int line_size = next_line == NULL ? 
-                        strlen(line_start) :
-                        (uintptr_t)next_line - (uintptr_t)line_start;
+    char* next_line = strchr(t->loc, '\n');
+    const char* loc_end = t->loc + t->len;
+    int before_size = (uintptr_t)t->loc - (uintptr_t)t->line_start;
+    int after_size = next_line == NULL ? strlen(loc_end) : (uintptr_t)next_line - (uintptr_t)loc_end;
 
-    fprintf(stderr, "%s:%lu: \033[31merror:\033[0m ", 
+    fprintf(stderr, "%s:%u: \033[31merror:\033[0m ", 
             filepath, 
-            line);
+            t->line_num);
     
-    va_list va;
-    va_start(va, message);
     vfprintf(stderr, message, va);
-    va_end(va);
 
-    fprintf(stderr, "\n%4lu | %.*s\n     | ", 
-            line, 
-            line_size,
-            line_start);
-    for(; line_start < err_loc; ++line_start)
+    fprintf(stderr, "\n%4u | %.*s\033[31m%.*s\033[0m%.*s\n     | ", 
+            t->line_num, 
+            before_size, t->line_start,
+            (int)t->len, t->loc,
+            after_size,  loc_end);
+    for(const char* s = t->line_start; s < t->loc; ++s)
     {
-        if(isspace(*line_start))
-            putc(*line_start, stderr);
+        if(isspace(*s))
+            putc(*s, stderr);
         else
             putc(' ', stderr);
     }
-    fprintf(stderr, "^\n");
+    fprintf(stderr, "\033[31m^");
+    for(uint32_t i = 1; i < t->len; ++i)
+        putc('~', stderr);
+    fprintf(stderr, "\033[0m\n");
+    s_error_cnt++;
 }
 
-bool sic_has_error(void)
+int sic_error_cnt(void)
 {
-    bool err = s_has_error;
-    s_has_error = false;
-    return err;
+    return s_error_cnt;
 }

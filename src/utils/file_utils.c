@@ -10,6 +10,27 @@
 
 #define FILE_FOUND 0
 
+SIFile sifile_new(const char* path)
+{
+    SIC_ASSERT(path != NULL);
+    SIFile file;
+    file.full_path = path;
+    file.file_name = path;
+    if(*path == '\0')
+        sic_error_fatal("Tried to use file with empty path.");
+    
+    for(const char* s = path; *s != '\0'; ++s)
+        if(*s == '/')
+        {
+            if(s[1] == '\0')
+                sic_error_fatal("File path ends with /. (Indicates directory)");
+            file.file_name = s + 1;
+        }
+
+    file.type = get_filetype(file.file_name);
+    return file;
+}
+
 bool file_exists(const char* path)
 {
     SIC_ASSERT(path != NULL);
@@ -17,12 +38,13 @@ bool file_exists(const char* path)
     return stat(path, &st) == FILE_FOUND;
 }
 
-char* read_entire_file(const char* path)
+char* read_entire_file(const SIFile* file)
 {
-    SIC_ASSERT(path != NULL);
+    SIC_ASSERT(file != NULL);
+    SIC_ASSERT(file->full_path != NULL);
 
     char* res = NULL;
-    int fd = open(path, O_RDONLY);
+    int fd = open(file->full_path, O_RDONLY);
 
     if(fd == -1)
         goto end;
@@ -63,51 +85,49 @@ char* read_entire_file(const char* path)
 end:
     if(fd != -1)
         close(fd);
-    sic_error_fatal("Failed to open file \'%s\'", path);
+    sic_error_fatal("Failed to open file \'%s\'", file->full_path);
     return NULL;
 }
 
-FILE* open_out_file(const char* path)
+FILE* open_out_file(const SIFile* file)
 {
-    SIC_ASSERT(path != NULL);
-    FILE* fp = fopen(path, "w");
+    SIC_ASSERT(file != NULL);
+    SIC_ASSERT(file->full_path != NULL);
+    FILE* fp = fopen(file->full_path, "w");
     if(!fp)
-        sic_error_fatal("Unable to open/create output file \'%s\'.", path);
+        sic_error_fatal("Unable to open/create output file \'%s\'.", file->full_path);
     return fp;
 }
 
-char* convert_ext_to(const char* orig_path, FileType desired)
+SIFile convert_ext_to(const SIFile* file, FileType desired)
 {
-    
-    SIC_ASSERT(orig_path != NULL);
-    SIC_ASSERT(desired != FT_NONE);
-    const char* filename_start = strrchr(orig_path, '/');
-    if(filename_start == NULL)
-        filename_start = orig_path;
-    else
-        filename_start++;
+    SIC_ASSERT(file != NULL);
+    SIC_ASSERT(file->full_path != NULL);
+    SIC_ASSERT(desired != FT_UNKNOWN);
 
-    const char* ext_start = strrchr(filename_start, '.');
-    size_t filename_len;
-    if(ext_start == NULL)
-        filename_len = strlen(filename_start);
-    else
-        filename_len = ext_start - filename_start;
+    size_t filename_len = 0;
+    for(const char* s = file->file_name; *s != '\0' && *s != '.'; ++s)
+        filename_len++;
 
     const char* ext = ft_to_extension(desired);
     size_t ext_len = strlen(ext);
     char* new_name = malloc(filename_len + ext_len + 1);
-    strncpy(new_name, orig_path, filename_len);
+    memcpy(new_name, file->file_name, filename_len);
     strncpy(new_name + filename_len, ext, ext_len);
     new_name[filename_len + ext_len] = '\0';
-    return new_name;
+
+    SIFile new_file;
+    new_file.full_path = new_name;
+    new_file.file_name = new_file.full_path;
+    new_file.type = desired;
+    return new_file;
 }
 
 FileType get_filetype(const char* filename)
 {
     const char* ext = strrchr(filename, '.');
     if(ext == NULL)
-        return FT_EXEC;
+        return FT_UNKNOWN;
     if(strcmp(ext, ".s") == 0 ||
        strcmp(ext, ".asm") == 0)
         return FT_ASM;
@@ -120,20 +140,18 @@ FileType get_filetype(const char* filename)
     if(strcmp(ext, ".si") == 0)
         return FT_SI;
 
-    sic_error_fatal("Unrecognized file extension: '%s'", ext);
-    return FT_NONE;
+    return FT_UNKNOWN;
 }
 
 const char* ft_to_extension(FileType ft)
 {
     static const char* ft_to_ext[] = {
         NULL, 
-        [FT_EXEC]   = "", 
+        [FT_SI]     = ".si",
         [FT_ASM]    = ".s", 
         [FT_OBJ]    = ".o", 
         [FT_STATIC] = ".a", 
         [FT_SHARED] = ".so", 
-        [FT_SI]     = ".si"
     };
     return ft_to_ext[ft];
 }

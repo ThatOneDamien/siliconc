@@ -17,7 +17,7 @@ static uint64_t   fnv_hash(const char* str, size_t len);
 void hashmap_initn(HashMap* map, uint32_t entry_cnt)
 {
     SIC_ASSERT(map != NULL);
-    uint32_t cap = MIN(INITIAL_HASH_CAP, next_pow_of_2(entry_cnt * LOAD_FACTOR_C / LOAD_FACTOR_LO));
+    uint32_t cap = MAX(INITIAL_HASH_CAP, next_pow_of_2(entry_cnt * LOAD_FACTOR_C / LOAD_FACTOR_LO));
 
     map->bucket_cnt = cap;
     map->buckets = calloc(map->bucket_cnt, sizeof(HashEntry));
@@ -70,8 +70,9 @@ bool hashmap_deleten(HashMap* map, const char* key, size_t len)
     SIC_ASSERT(map != NULL);
     SIC_ASSERT(key != NULL);
     SIC_ASSERT(map->buckets != NULL);
+    SIC_ASSERT(is_pow_of_2(map->bucket_cnt));
     uint64_t hash = fnv_hash(key, len);
-    HashEntry* prev = map->buckets + (hash % map->bucket_cnt);
+    HashEntry* prev = map->buckets + (hash & (uint64_t)(map->bucket_cnt - 1));
     HashEntry* cur = prev->next;
     while(cur != NULL)
     {
@@ -110,8 +111,9 @@ void hashmap_clear(HashMap* map)
 
 static HashEntry* get_entry(HashMap* map, const char* key, size_t len, HashEntry** obucket)
 {
+    SIC_ASSERT(is_pow_of_2(map->bucket_cnt));
     uint64_t hash = fnv_hash(key, len);
-    HashEntry* bucket = map->buckets + (hash % map->bucket_cnt);
+    HashEntry* bucket = map->buckets + (hash & (uint64_t)(map->bucket_cnt - 1));
     if(obucket != NULL)
         *obucket = bucket;
     HashEntry* cur = bucket->next;
