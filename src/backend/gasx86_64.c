@@ -114,7 +114,7 @@ static void generate_expr(ASTNode* node)
     switch(node->kind)
     {
     case NODE_NUM: {
-        // switch(node->var)
+        add_line("\tmov $%.*s, %%rax", (int)node->token.len, node->token.loc);
         break;
     }
     case NODE_ASSIGN:
@@ -137,7 +137,8 @@ static void assign_offsets(Object* func)
     for(Object* lvar = comps->params; lvar != NULL; lvar = lvar->next)
     {
         VarComps* vcomp = &lvar->comps.var;
-        stack_size = align_up(stack_size + vcomp->type->size, vcomp->type->alignment);
+        uint32_t size = type_size(vcomp->type);
+        stack_size = align_up(stack_size + size, size);
         vcomp->offset = -stack_size;
     }
     comps->stack_size = align_up(stack_size, 16);

@@ -3,10 +3,12 @@
 #include "utils/lib.h"
 
 // Global check and add functions
-static bool     function_definition(Lexer* l, Type* ret_type, ObjAttr* func_attr);
+static bool     function_declaration(Lexer* l, Type* ret_type, StorageClass* func_storage);
 
 // Grammar parsing
-static void     parse_type_prefix(Lexer* l, Type** type, ObjAttr* attr);
+static bool     parse_storage_class(Lexer* l, StorageClass* storage);
+static bool     parse_type_qualifier(Lexer* l, TypeQualifier* qual);
+static void     parse_type_prefix(Lexer* l, Type** type, StorageClass* storage);
 static bool     parse_func_params(Lexer* l, Object** params, size_t* count);
 static ASTNode* parse_stmt_block(Lexer* l);
 static ASTNode* parse_stmt(Lexer* l);
@@ -34,6 +36,7 @@ static void     enter_scope(void);
 static void     exit_scope(void);
 static Object*  create_obj_in_scope(Token* symbol, bool global);
 static Object*  get_var(Token* symbol);
+static Type*    get_type(Token* tok);
 static ASTNode* create_node(NodeKind kind, Token* token);
 
 // Inline helpers
@@ -143,26 +146,31 @@ Object* parse_unit(Lexer* lexer)
     while(lexer_advance(lexer))
     {
         Type* type;
-        ObjAttr attr;
-        parse_type_prefix(lexer, &type, &attr);
+        StorageClass storage = STORAGE_DEFAULT;
+        parse_type_prefix(lexer, &type, &storage);
         
         bool recovery_needed = type == NULL;
 
         if(type == NULL)
             parser_error(lexer, "Missing type specifier.");
-        else if(function_definition(lexer, type, &attr))
+        else if(function_declaration(lexer, type, &storage))
              continue;
         else
             recovery_needed = true;
         
         if(recovery_needed)
         {
+            printf("recovering.\n");
             while(true)
             {
                 Token* t = peek_forw(lexer, 1);
+                if(t->kind == TOKEN_EOF)
+                {
+                    advance(lexer);
+                    break;
+                }
                 if(t->loc == t->line_start &&
-                   (t->kind == TOKEN_EOF ||
-                    t->kind == TOKEN_IDENT ||
+                    (t->kind == TOKEN_IDENT ||
                     (t->kind >= TOKEN_KEYWORD_START &&
                      t->kind <= TOKEN_KEYWORD_END)))
                     break;
@@ -173,9 +181,10 @@ Object* parse_unit(Lexer* lexer)
     return s_globals;
 }
 
-static bool function_definition(Lexer* l, Type* ret_type, ObjAttr* func_attr)
+// function_declaration -> type_prefix identifier "(" func_params (";" | "{" stmt_block)
+static bool function_declaration(Lexer* l, Type* ret_type, StorageClass* func_storage)
 {
-    (void)func_attr;
+    (void)func_storage;
     if(!tok_equal(l, TOKEN_IDENT)||
        !tok_equal_forw(l, 1, TOKEN_LPAREN))
         return false;
@@ -216,68 +225,128 @@ static bool function_definition(Lexer* l, Type* ret_type, ObjAttr* func_attr)
     return true;
 }
 
-static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attr)
+static bool parse_storage_class(Lexer* l, StorageClass* storage)
 {
-    bool seen_type = false;
-    Type* ty = NULL;
+    StorageClass temp;
+    switch(peek(l)->kind)
+    {
+    case TOKEN_EXTERN:
+        temp = STORAGE_EXTERN;
+        break;
+    default:
+        temp = STORAGE_DEFAULT;
+        break;
+    }
 
+    if(temp != STORAGE_DEFAULT)
+    {
+        if(storage == NULL)
+            parser_error(l, "Storage class not allowed in this context.");
+        else if(*storage == temp) {} // This would be where we warn for duplicate storage class
+        else if(*storage != STORAGE_DEFAULT)
+            parser_error(l, "Multiple storage classes cannot be combined.");
+        else
+            *storage = temp;
+        advance(l);
+        return true;
+    }
+    return false;
+}
+
+static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
+{
+    TypeQualifier temp;
+    switch(peek(l)->kind)
+    {
+    case TOKEN_CONST:
+        temp = QUALIFIER_CONST;
+        break;
+    default:
+        temp = QUALIFIER_NONE;
+        break;
+    }
+
+    if(temp != QUALIFIER_NONE)
+    {
+        // This would be where we warn for duplicate type qualifier
+        if(*qual & temp) {}
+        *qual |= temp;
+        advance(l);
+        return true;
+    }
+    return false;
+
+}
+
+// storage_class -> "extern"
+// type_qualifier -> "const" TODO: NOT IMPLEMENTED YET!!!
+// type_name -> "void" | "u8" | "s8" | "u16" | "s16" |
+//              "u32" | "s32" | "u64" | "s64" | "f32" | 
+//              "f64" | identifier
+// type_suffix -> "(" func_params type_qualifier* |
+//                "[" array_dims | TODO: NOT IMPLEMENTED YET!!!
+//                "*" type_qualifier* |
+// type_prefix -> (storage_class | type_qualifier | type_name)* type_suffix*
+// NOTE: You are only allowed to specify one storage class and one type name
+//       per type prefix. You can have multiple qualifiers, but if any one
+//       qualifier is duplicated a warning will be raised.
+static void parse_type_prefix(Lexer* l, Type** type, StorageClass* storage)
+{
+    Type* ty = NULL;
+    TypeQualifier qual = QUALIFIER_NONE;
     // TODO: Make the kw map hold values depending on whether the kw is a typename or not to
     //       make this function better. Furthermore it could be used to remove the string comparisons
     //       making the process quicker.
     while(true)
     {
-        if(tok_equal(l, TOKEN_EXTERN))
+        if(parse_storage_class(l, storage))
+            continue;
+        if(parse_type_qualifier(l, &qual))
+            continue;
+        Type* t = get_type(peek(l));
+        if(t != NULL)
         {
-            *attr |= OBJ_ATTR_EXTERN;
+            if(ty != NULL)
+                parser_error(l, "Two or more data types in type prefix");
+            ty = t;
             advance(l);
             continue;
         }
 
-        bool prev = seen_type;
-
-        switch(peek(l)->kind)
-        {
-        case TOKEN_U8:
-            ty = g_type_u8;
-            break;
-        case TOKEN_S8:
-            ty = g_type_u8;
-            break;
-        case TOKEN_U16:
-            ty = g_type_u16;
-            break;
-        case TOKEN_S16:
-            ty = g_type_s16;
-            break;
-        case TOKEN_U32:
-            ty = g_type_u32;
-            break;
-        case TOKEN_S32:
-            ty = g_type_s32;
-            break;
-        case TOKEN_U64:
-            ty = g_type_u64;
-            break;
-        case TOKEN_S64:
-            ty = g_type_s64;
-            break;
-        case TOKEN_F32:
-            ty = g_type_f32;
-            break;
-        case TOKEN_F64:
-            ty = g_type_f64;
-            break;
-        default:
-            *type = ty;
-            return;
-        }
-        seen_type = true;
-        if(prev)
-            parser_error(l, "Two or more data types in type prefix");
-        advance(l);
+        break;
     }
-    
 
+    // APPLY TYPE QUALIFIERS
+
+    while(true)
+    {
+
+        if(tok_equal(l, TOKEN_LBRACKET))
+            sic_error_fatal("Array types not implemented yet.");
+
+
+        if(tok_equal(l, TOKEN_LPAREN))
+        {
+            sic_error_fatal("Function pointer types not implemented yet.");
+            // Object* params;
+            // size_t count;
+            // if(!parse_func_params(l, &params, &count))
+            //     return;
+        }
+        else if(tok_equal(l, TOKEN_ASTERISK))
+        {
+            printf("pointer\n");
+            advance(l);
+        }
+        else
+            break;
+
+        qual = QUALIFIER_NONE;
+        while(parse_type_qualifier(l, &qual)) {}
+        // APPLY TYPE QUALIFIERS
+    }
+
+    *type = ty;
 }
 
 static bool parse_func_params(Lexer* l, Object** params, size_t* count)
@@ -335,8 +404,8 @@ static ASTNode* parse_stmt_block(Lexer* l)
         if(tok_equal(l, TOKEN_EOF))
             parser_error(l, "No closing }.");
         Type* type;
-        ObjAttr attr;
-        parse_type_prefix(l, &type, &attr);
+        StorageClass storage;
+        parse_type_prefix(l, &type, &storage);
 
         if(type == NULL)
         {
@@ -394,8 +463,8 @@ static UNUSED ASTNode* parse_declaration(Lexer* l)
     // ASTNode* cur = &head;
 
     Type* type;
-    ObjAttr attr;
-    parse_type_prefix(l, &type, &attr);
+    StorageClass storage;
+    parse_type_prefix(l, &type, &storage);
     if(type == g_type_void)
         sic_error_fatal("Variables cannot be declared as type void.");
 
@@ -821,6 +890,18 @@ static Object* get_var(Token* symbol)
         if(var != NULL)
             return var;
     }
+    return NULL;
+}
+
+static Type* get_type(Token* tok)
+{
+    if(tok->kind >= TOKEN_TYPENAME_START && tok->kind <= TOKEN_TYPENAME_END)
+        return builtin_type(tok->kind);
+    else if(tok->kind == TOKEN_IDENT)
+    {
+        // Search through scopes for typedef
+    }
+
     return NULL;
 }
 

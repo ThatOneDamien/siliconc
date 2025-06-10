@@ -11,6 +11,9 @@ void sic_error_fatal(const char* restrict message, ...);
 __attribute__((format(printf, 1, 2)))
 void sic_error(const char* restrict message, ...);
 
+__attribute__((format(printf, 1, 2)))
+void sic_error_weak(const char* restrict message, ...);
+
 void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va);
 
 __attribute__((format(printf, 3, 4)))

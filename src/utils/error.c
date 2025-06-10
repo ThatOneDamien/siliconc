@@ -31,6 +31,17 @@ void sic_error(const char* restrict message, ...)
     s_error_cnt++;
 }
 
+void sic_error_weak(const char* restrict message, ...)
+{
+    SIC_ASSERT(message != NULL);
+    va_list va;
+    va_start(va, message);
+    fprintf(stderr, "sic: \033[31merror:\033[0m "); 
+    vfprintf(stderr, message, va);
+    putc('\n', stderr);
+    va_end(va);
+}
+
 void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va)
 {
     SIC_ASSERT(filepath != NULL);

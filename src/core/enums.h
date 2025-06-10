@@ -56,8 +56,9 @@ typedef enum
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
+    TOKEN_CONST,
+    TOKEN_KEYWORD_START = TOKEN_CONST,
     TOKEN_EXTERN,
-    TOKEN_KEYWORD_START = TOKEN_EXTERN,
     TOKEN_RETURN,
 
     // Built-in/Primitive type names (Still part of keywords)
@@ -119,24 +120,45 @@ typedef enum
 
 typedef enum
 {
-    TYPE_NONE = 0,
+    TYPE_INVALID = 0,
     TYPE_VOID,
+    TYPE_BUILTIN_START = TYPE_VOID,
     TYPE_U8,
-    TYPE_S8,
+    TYPE_UNSIGNED_START = TYPE_U8,
     TYPE_U16,
-    TYPE_S16,
     TYPE_U32,
-    TYPE_S32,
     TYPE_U64,
+    TYPE_UNSIGNED_END = TYPE_U64,
+    TYPE_S8,
+    TYPE_SIGNED_START = TYPE_S8,
+    TYPE_S16,
+    TYPE_S32,
     TYPE_S64,
+    TYPE_SIGNED_END = TYPE_S64,
     TYPE_F32,
+    TYPE_FLOAT_START = TYPE_F32,
     TYPE_F64,
+    TYPE_FLOAT_END = TYPE_F64,
+    TYPE_BUILTIN_END = TYPE_F64,
+
+    TYPE_POINTER,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;
 
 typedef enum
 {
-    OBJ_ATTR_NONE   = 0,
-    OBJ_ATTR_EXTERN = (1 << 0),
-} ObjAttr;
+    STORAGE_DEFAULT = 0,
+    STORAGE_GLOBAL,
+    STORAGE_EXTERN
+} StorageClass;
+
+typedef enum
+{
+    QUALIFIER_NONE = 0,
+    QUALIFIER_CONST = (1 << 0),
+    // QUALIFIER_VOLATILE = (1 << 1),
+    // QUALIFIER_RESTRICT = (1 << 2),
+} TypeQualifier;
+
+

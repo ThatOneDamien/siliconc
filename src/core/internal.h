@@ -15,6 +15,7 @@ typedef struct FuncComps       FuncComps;
 typedef struct VarComps        VarComps;
 typedef struct Object          Object;
 typedef struct ASTNode         ASTNode;
+typedef struct TypeBuiltin     TypeBuiltin;
 typedef struct Type            Type;
 typedef struct Scope           Scope;
 typedef struct TranslationUnit TranslationUnit;
@@ -72,10 +73,11 @@ struct VarComps
 
 struct Object
 {
-    Object*  next;
-    Token    symbol;
-    bool     is_function;
-    bool     is_defined; // If this is false, the Object is only a declaration
+    Object*      next;
+    Token        symbol;
+    StorageClass storage;
+    bool         is_function;
+    bool         is_declaration;
 
     union
     {
@@ -94,11 +96,22 @@ struct ASTNode
     ASTNode* next;
 };
 
+struct TypeBuiltin
+{
+    uint32_t size;
+};
+
 struct Type
 {
     TypeKind kind;
-    uint32_t size;
-    uint32_t alignment;
+    Token    symbol;
+    bool     is_const;
+
+    union
+    {
+        TypeBuiltin builtin;
+        Type*       pointer_base;
+    } v;
 };
 
 struct Scope
@@ -141,6 +154,21 @@ Token* lexer_look_ahead(Lexer* lexer, uint32_t count); // count < LOOK_AHEAD_SIZ
 void    parser_init(void);
 Object* parse_unit(Lexer* lexer);
 
+// Symbol map functions
 void      sym_map_init(void);
 TokenKind sym_map_get(const char* str);
 TokenKind sym_map_getn(const char* str, size_t len);
+
+// Type functions
+Type* builtin_type(TokenKind type_token);
+static inline uint32_t type_size(Type* ty)
+{
+    SIC_ASSERT(ty != NULL);
+    if(ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END)
+        return ty->v.builtin.size;
+    if(ty->kind == TYPE_POINTER)
+        return 8;
+
+    SIC_ERROR_DBG("Unimplemented type.");
+    return 0;
+}
