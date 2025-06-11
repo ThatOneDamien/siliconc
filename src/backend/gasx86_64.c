@@ -15,7 +15,7 @@ __attribute__((format(printf, 1, 2)))
 static void add_line(const char* restrict format, ...);
 static void generate_func(Object* program);
 static void generate_statement(ASTNode* node);
-static void generate_expr(ASTNode* node);
+static void generate_expr(ASTNode* node, x86Reg out_reg);
 static void assign_offsets(Object* func);
 
 void gasx86_64_codegen(const TranslationUnit* unit, FILE* out_file)
@@ -28,7 +28,7 @@ void gasx86_64_codegen(const TranslationUnit* unit, FILE* out_file)
     Object* program = unit->program;
     while(program != NULL)
     {
-        if(program->is_function)
+        if(program->kind == OBJ_FUNC)
             generate_func(program);
         program = program->next;
     }
@@ -59,7 +59,7 @@ static void generate_func(Object* func)
     assign_offsets(func);
     int sym_len = (int)func->symbol.len;
     const char* sym = func->symbol.loc;
-    FuncComps* comps = &func->comps.func;
+    ObjFunc* comps = &func->func;
     // Metadata + header
     add_line("\t.text");
     add_line("\t.global\t%.*s", sym_len, sym);
@@ -99,26 +99,33 @@ static void generate_statement(ASTNode* node)
     {
     case NODE_RETURN: {
         if(node->children)
-            generate_expr(node->children);
+            generate_expr(node->children, x86_RAX);
         add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol.len, s_cur_func->symbol.loc);
         break;
     }
     default:
-        generate_expr(node);
+        generate_expr(node, x86_RAX);
     }
 }
 
-static void generate_expr(ASTNode* node)
+static void generate_expr(ASTNode* node, x86Reg out_reg)
 {
     s_last_node = node;
     switch(node->kind)
     {
     case NODE_NUM: {
-        add_line("\tmov $%.*s, %%rax", (int)node->token.len, node->token.loc);
+        add_line("\tmovq\t$%.*s, %%%s", (int)node->token.len, node->token.loc, x86_64_64bitreg[out_reg]);
         break;
     }
-    case NODE_ASSIGN:
+    case NODE_ASSIGN: {
+        generate_expr(node->children->next, x86_RAX);
+        add_line("\tmovq\t%%rax, %d(%%rbp)", node->children->var->var.offset);
         break;
+    }
+    case NODE_VAR: {
+        add_line("\tmovq\t%d(%%rbp), %%%s", node->var->var.offset, x86_64_64bitreg[out_reg]);
+        break;
+    }
     default:
         sic_error_fatal("Unimplemented node type.");
     }
@@ -126,7 +133,7 @@ static void generate_expr(ASTNode* node)
 
 static void assign_offsets(Object* func)
 {
-    FuncComps* comps = &func->comps.func;
+    ObjFunc* comps = &func->func;
     // TODO: Assign offsets to parameters passed on stack.
     // for(Object* param = comps->params; param != NULL; param = param->next)
     // {
@@ -134,9 +141,9 @@ static void assign_offsets(Object* func)
     // }
 
     int stack_size = 0;
-    for(Object* lvar = comps->params; lvar != NULL; lvar = lvar->next)
+    for(Object* lvar = comps->local_objs; lvar != NULL; lvar = lvar->next)
     {
-        VarComps* vcomp = &lvar->comps.var;
+        ObjVar* vcomp = &lvar->var;
         uint32_t size = type_size(vcomp->type);
         stack_size = align_up(stack_size + size, size);
         vcomp->offset = -stack_size;

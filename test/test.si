@@ -3,9 +3,9 @@
  * This is a multiline comment.
  * This should also not appear in the lexer's output.
  */
-u32* static * main(u32 a)
+u32** main(u32 a)
 {
-    a = 8 * 2;
-    return 10;
+    u8 b = 1;
+    return b;
 }
 

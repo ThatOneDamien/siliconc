@@ -1,5 +1,5 @@
 CC     ?= clang
-CFLAGS := -Wall -Wextra -Werror -pedantic -std=c11
+CFLAGS := -Wall -Wextra -Werror -std=c11
 LIBS   := 
 INC    = -Isrc
 

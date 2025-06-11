@@ -7,10 +7,9 @@ typedef struct Cmdline  Cmdline;
 typedef enum
 {
     MODE_NONE = 0,   // NULL Mode
-    MODE_PREPROCESS, // Preprocess only
-    MODE_COMPILE,    // Preprocess + Compile
-    MODE_ASSEMBLE,   // Preprocess + Compile + Assemble
-    MODE_LINK        // Preprocess + Compile + Assemble + Link
+    MODE_COMPILE,    // Compile
+    MODE_ASSEMBLE,   // Compile + Assemble
+    MODE_LINK        // Compile + Assemble + Link
 } CompileMode;
 
 // For now only GAS is going to be used, in the future nasm

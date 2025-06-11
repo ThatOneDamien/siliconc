@@ -120,6 +120,14 @@ typedef enum
 
 typedef enum
 {
+    OBJ_INVALID = 0,
+    OBJ_VAR,
+    OBJ_FUNC,
+    OBJ_TYPEDEF
+} ObjKind;
+
+typedef enum
+{
     TYPE_INVALID = 0,
     TYPE_VOID,
     TYPE_BUILTIN_START = TYPE_VOID,
@@ -148,9 +156,10 @@ typedef enum
 
 typedef enum
 {
-    STORAGE_DEFAULT = 0,
-    STORAGE_GLOBAL,
-    STORAGE_EXTERN
+    STORAGE_DEFAULT = 0, // Default storage (Different depending on context)
+    STORAGE_GLOBAL,      // Global vars
+    STORAGE_EXTERN,      // Externally defined vars
+    STORAGE_SCOPE,       // Vars with scoped lifetime
 } StorageClass;
 
 typedef enum

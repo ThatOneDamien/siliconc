@@ -8,33 +8,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct Token           Token;
-typedef struct LookAhead       LookAhead;
-typedef struct Lexer           Lexer;
-typedef struct FuncComps       FuncComps;
-typedef struct VarComps        VarComps;
-typedef struct Object          Object;
-typedef struct ASTNode         ASTNode;
-typedef struct TypeBuiltin     TypeBuiltin;
-typedef struct Type            Type;
-typedef struct Scope           Scope;
-typedef struct TranslationUnit TranslationUnit;
+typedef struct TranslationUnit  TranslationUnit;
+typedef struct Object           Object;
+typedef struct ObjFunc          ObjFunc;
+typedef struct ObjVar           ObjVar;
+typedef struct ASTNode          ASTNode;
+typedef struct ASTExpr          ASTExpr;
+typedef struct ASTReturn        ASTReturn;
+typedef struct Lexer            Lexer;
+typedef struct LookAhead        LookAhead;
+typedef struct Token            Token;
+typedef struct TypeBuiltin      TypeBuiltin;
+typedef struct Type             Type;
 
 struct Token
 {
     TokenKind   kind;
-    Type*       type;
     const char* loc;
     const char* line_start;
     uint32_t    len;
     uint32_t    line_num;
-
-    union
-    {
-        int64_t     i;
-        double      f;
-        const char* s;
-    } val;
 };
 
 #define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
@@ -55,7 +48,7 @@ struct Lexer
     LookAhead   la_buf;
 };
 
-struct FuncComps
+struct ObjFunc
 {
     Type*    ret_type;
     Object*  local_objs;
@@ -65,7 +58,7 @@ struct FuncComps
     int      stack_size;
 };
 
-struct VarComps
+struct ObjVar
 {
     Type* type;
     int   offset;
@@ -75,25 +68,39 @@ struct Object
 {
     Object*      next;
     Token        symbol;
+    ObjKind      kind;
     StorageClass storage;
-    bool         is_function;
-    bool         is_declaration;
 
     union
     {
-        FuncComps func; // Components of function
-        VarComps  var;  // Components of variable
-    } comps;
+        ObjFunc  func; // Components of function
+        ObjVar   var;  // Components of variable
+    };
 
 };
 
 struct ASTNode
 {
     NodeKind kind;
+    ASTNode* next;
     Token    token;
+
+    union
+    {
     Object*  var;
     ASTNode* children;
-    ASTNode* next;
+
+    };
+};
+
+struct ASTExpr
+{
+
+};
+
+struct ASTReturn
+{
+
 };
 
 struct TypeBuiltin
@@ -103,24 +110,16 @@ struct TypeBuiltin
 
 struct Type
 {
-    TypeKind kind;
-    Token    symbol;
-    bool     is_const;
+    TypeKind      kind;
+    TypeQualifier qualifiers;
 
     union
     {
         TypeBuiltin builtin;
         Type*       pointer_base;
-    } v;
+    };
 };
 
-struct Scope
-{
-    Scope*  parent;
-
-    HashMap vars;
-    HashMap types;
-};
 
 struct TranslationUnit
 {
@@ -144,6 +143,16 @@ extern Type* g_type_f128;
 
 // Token functions
 const char* tok_kind_to_str(TokenKind kind);
+void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va);
+
+__attribute__((format(printf, 3, 4)))
+static inline void sic_error_at(const char* filepath, const Token* t, const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_error_atv(filepath, t, message, va);
+    va_end(va);
+}
 
 // Lexer functions
 void   lexer_init_file(Lexer* lexer, const SIFile* input);
@@ -161,11 +170,13 @@ TokenKind sym_map_getn(const char* str, size_t len);
 
 // Type functions
 Type* builtin_type(TokenKind type_token);
+Type* type_copy(Type* orig);
+Type* pointer_to(Type* base);
 static inline uint32_t type_size(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
     if(ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END)
-        return ty->v.builtin.size;
+        return ty->builtin.size;
     if(ty->kind == TYPE_POINTER)
         return 8;
 

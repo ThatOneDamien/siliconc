@@ -165,7 +165,7 @@ static void print_node(const ASTNode* node, int depth)
 
 static void print_func(const Object* func)
 {
-    const FuncComps* comps = &func->comps.func;
+    const ObjFunc* comps = &func->func;
     printf("Function \'%.*s\' (returns %s):\n", 
            (int)func->symbol.len,
            func->symbol.loc,
@@ -177,7 +177,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
                param->symbol.loc,
-               type_strings[param->comps.var.type->kind]);
+               type_strings[param->var.type->kind]);
         param = param->next;
     }
 
@@ -188,7 +188,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)local->symbol.len, 
                local->symbol.loc,
-               type_strings[local->comps.var.type->kind]);
+               type_strings[local->var.type->kind]);
         local = local->next;
     }
 
@@ -206,7 +206,7 @@ void print_program(const Object* program)
 {
     while(program != NULL)
     {
-        if(program->is_function)
+        if(program->kind == OBJ_FUNC)
             print_func(program);
         program = program->next;
     }

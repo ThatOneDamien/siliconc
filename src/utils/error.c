@@ -1,5 +1,6 @@
 #include "utils/error.h"
 #include "core/core.h"
+#include "core/internal.h"
 
 #include <ctype.h>
 #include <stdarg.h>

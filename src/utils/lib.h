@@ -1,8 +1,10 @@
 #pragma once
+#include "utils/error.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
@@ -10,7 +12,12 @@
 
 typedef struct HashEntry HashEntry;
 typedef struct HashMap   HashMap;
+typedef struct MemArena  MemArena;
 
+// TODO: Rename this to something like StringMap,
+//       because I will also need a map for integral types
+//       and it will be much more efficient to have separate
+//       structs and functions than to have 1 general struct
 struct HashEntry
 {
     HashEntry*  next;
@@ -27,6 +34,13 @@ struct HashMap
     uint32_t   max_load;
 };
 
+struct MemArena
+{
+    uint8_t* base;
+    size_t   capacity;
+    size_t   allocated;
+};
+
 void  hashmap_initn(HashMap* map, uint32_t entry_cnt);
 void  hashmap_free(HashMap* map);
 void  hashmap_putn(HashMap* map, const char* key, size_t len, void* val);
@@ -34,8 +48,37 @@ void* hashmap_getn(HashMap* map, const char* key, size_t len);
 bool  hashmap_deleten(HashMap* map, const char* key, size_t len);
 void  hashmap_clear(HashMap* map);
 
-#define MALLOC(size)    malloc(size)
-#define CALLOC(n, size) calloc(n, size)
+void  global_arenas_init(void);
+void  arena_init(MemArena* arena, size_t capacity);
+void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
+void* global_arena_malloc(size_t size, uint32_t align);
+void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
+
+static inline void* cmalloc(size_t size)
+{
+    void* res = malloc(size);
+    if(res == NULL)
+        sic_error_fatal("Failed to cmalloc %zu bytes.", size);
+    return res;
+}
+
+static inline void* ccalloc(size_t nmemb, size_t size)
+{
+    void* res = calloc(nmemb, size);
+    if(res == NULL)
+        sic_error_fatal("Failed to ccalloc %zu bytes.", size);
+    return res;
+}
+
+#ifdef SIC_CMALLOC_ONLY
+#define MALLOC(size)        cmalloc(size)
+#define CALLOC(nmemb, size) ccalloc(nmemb, size)
+#else
+#define MALLOC(size)        global_arena_malloc(size, 8)
+#define CALLOC(nmemb, size) global_arena_calloc(nmemb, size, size)
+#define MALLOC_STRUCT(type) global_arena_malloc(sizeof(type), _Alignof(type))
+#define CALLOC_STRUCT(type) global_arena_calloc(1, sizeof(type), _Alignof(type))
+#endif
 
 static inline void hashmap_init(HashMap* map)
 {
@@ -103,3 +146,4 @@ static inline bool c_is_undalphanum(char c)
 {
     return c_is_alphanum(c) || c == '_';
 }
+

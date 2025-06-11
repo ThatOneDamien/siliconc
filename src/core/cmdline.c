@@ -21,13 +21,7 @@ void process_cmdln_args(int argc, char* argv[])
             continue;          // take the input from stdin, but sic won't use that.
 
         char* arg = argv[i] + 1;
-        if(strcmp(arg, "p") == 0)
-        {
-            if(args.mode != MODE_NONE)
-                sic_error_fatal("Provided multiple mode arguments.");
-            args.mode = MODE_PREPROCESS;
-        }
-        else if(strcmp(arg, "c") == 0)
+        if(strcmp(arg, "c") == 0)
         {
             if(args.mode != MODE_NONE)
                 sic_error_fatal("Provided multiple mode arguments.");

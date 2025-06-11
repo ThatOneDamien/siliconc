@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "utils/error.h"
 
-#define BUILTIN_DEF(TYPE, SIZE) { .kind = TYPE, .is_const = false, .v = { .builtin = {SIZE} } }
+#define BUILTIN_DEF(TYPE, SIZE) { .kind = TYPE, .qualifiers = QUALIFIER_NONE, .builtin = {SIZE} }
 
 static Type s_void = BUILTIN_DEF(TYPE_VOID,  0);
 static Type s_u8   = BUILTIN_DEF(TYPE_U8  ,  1);
@@ -46,4 +46,20 @@ Type* builtin_type(TokenKind type_token)
 {
     SIC_ASSERT(type_token >= TOKEN_TYPENAME_START && type_token <= TOKEN_TYPENAME_END);
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
+}
+
+Type* type_copy(Type* orig)
+{
+    Type* new_type = MALLOC(sizeof(Type));
+    memcpy(new_type, orig, sizeof(Type));
+    return new_type;
+}
+
+Type* pointer_to(Type* base)
+{
+    Type* new_type = MALLOC(sizeof(Type));
+    new_type->kind = TYPE_POINTER;
+    new_type->qualifiers = QUALIFIER_NONE;
+    new_type->pointer_base = base;
+    return new_type;
 }

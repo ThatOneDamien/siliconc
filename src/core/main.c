@@ -34,6 +34,7 @@ int main(int argc, char* argv[])
         if(!sifile_exists(args.input_files.data + i))
             sic_error_fatal("File named '%s' not found.", args.input_files.data[i].full_path);
 
+    global_arenas_init();
     sym_map_init();
     parser_init();
     da_init(&s_tempfiles, args.input_files.size);
@@ -117,17 +118,7 @@ int main(int argc, char* argv[])
     for(size_t i = 0; i < linker_inputs.size; ++i)
         da_append(&cmd, (char*)linker_inputs.data[i].full_path);
 
-    da_append(&cmd, "-lgcc");
-    da_append(&cmd, "--push-state");
-    da_append(&cmd, "--as-needed");
-    da_append(&cmd, "-lgcc_s");
-    da_append(&cmd, "--pop-state");
     da_append(&cmd, "-lc");
-    da_append(&cmd, "-lgcc");
-    da_append(&cmd, "--push-state");
-    da_append(&cmd, "--as-needed");
-    da_append(&cmd, "-lgcc_s");
-    da_append(&cmd, "--pop-state");
 
     da_append(&cmd, format_new("%s/crtendS.o", gcc_path));
     da_append(&cmd, format_new("%s/crtn.o", crt_path));
@@ -167,9 +158,6 @@ static SIFile compile(const SIFile* input)
     TranslationUnit tu;
 
     lexer_init_file(&lexer, input);
-
-    if(args.mode == MODE_PREPROCESS) // TODO: Make this do something
-        return output;
 
     if(args.mode == MODE_COMPILE)
     {

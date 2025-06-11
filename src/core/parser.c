@@ -2,8 +2,17 @@
 #include "utils/error.h"
 #include "utils/lib.h"
 
+typedef struct Scope Scope;
+struct Scope
+{
+    Scope*  parent;
+
+    HashMap vars;
+    HashMap types;
+};
+
 // Global check and add functions
-static bool     function_declaration(Lexer* l, Type* ret_type, StorageClass* func_storage);
+static bool     function_declaration(Lexer* l, Type* ret_type, StorageClass func_storage);
 
 // Grammar parsing
 static bool     parse_storage_class(Lexer* l, StorageClass* storage);
@@ -12,7 +21,7 @@ static void     parse_type_prefix(Lexer* l, Type** type, StorageClass* storage);
 static bool     parse_func_params(Lexer* l, Object** params, size_t* count);
 static ASTNode* parse_stmt_block(Lexer* l);
 static ASTNode* parse_stmt(Lexer* l);
-static ASTNode* parse_declaration(Lexer* l);
+static ASTNode* parse_declaration(Lexer* l, Type* type, StorageClass storage);
 static ASTNode* parse_assignment(Lexer* l);
 static ASTNode* parse_ternary(Lexer* l);
 static ASTNode* parse_logical_or(Lexer* l);
@@ -34,7 +43,7 @@ static ASTNode* parse_primary_expr(Lexer* l);
 // Scope and symbol defining/finding functions
 static void     enter_scope(void);
 static void     exit_scope(void);
-static Object*  create_obj_in_scope(Token* symbol, bool global);
+static Object*  scope_def_obj(Lexer* l, Token* symbol, StorageClass storage);
 static Object*  get_var(Token* symbol);
 static Type*    get_type(Token* tok);
 static ASTNode* create_node(NodeKind kind, Token* token);
@@ -124,6 +133,7 @@ static Object* s_locals;
 static Scope*  s_curscope;
 static Scope   s_file_scope;
 static Object* s_curfunc;
+static ASTNode s_badnode;
 
 void parser_init(void)
 {
@@ -153,7 +163,7 @@ Object* parse_unit(Lexer* lexer)
 
         if(type == NULL)
             parser_error(lexer, "Missing type specifier.");
-        else if(function_declaration(lexer, type, &storage))
+        else if(function_declaration(lexer, type, storage))
              continue;
         else
             recovery_needed = true;
@@ -182,44 +192,44 @@ Object* parse_unit(Lexer* lexer)
 }
 
 // function_declaration -> type_prefix identifier "(" func_params (";" | "{" stmt_block)
-static bool function_declaration(Lexer* l, Type* ret_type, StorageClass* func_storage)
+static bool function_declaration(Lexer* l, Type* ret_type, StorageClass func_storage)
 {
     (void)func_storage;
     if(!tok_equal(l, TOKEN_IDENT)||
        !tok_equal_forw(l, 1, TOKEN_LPAREN))
         return false;
 
-
-    Object* func = create_obj_in_scope(peek(l), true);
-    FuncComps* func_comps = &func->comps.func;
-    func->is_function = true;
-    func_comps->ret_type = ret_type;
+    if(func_storage == STORAGE_DEFAULT)
+        func_storage = STORAGE_GLOBAL;
+    Object* func = scope_def_obj(l, peek(l), func_storage);
+    ObjFunc* comps = &func->func;
+    func->kind = OBJ_FUNC;
+    comps->ret_type = ret_type;
     func->symbol = *peek(l);
 
     advance_many(l, 2);
-    if(!parse_func_params(l, &func_comps->params, &func_comps->param_cnt))
+    if(!parse_func_params(l, &comps->params, &comps->param_cnt))
         return false;
 
     s_curfunc = func;
     s_locals = NULL;
     enter_scope();
 
-    s_locals = func_comps->params;
-    for(size_t i = 0; i < func_comps->param_cnt; ++i)
+    s_locals = comps->params;
+    for(size_t i = 0; i < comps->param_cnt; ++i)
     {
         if(s_locals->symbol.loc)
             hashmap_putn(&s_curscope->vars, s_locals->symbol.loc, s_locals->symbol.len, s_locals);
         s_locals = s_locals->next;
     }
-    s_locals = func_comps->params;
+    s_locals = comps->params;
 
     consume(l, TOKEN_LBRACE);
 
     ASTNode* body_block = parse_stmt_block(l);
-    func_comps->body = body_block->children;
-    free(body_block);
+    comps->body = body_block->children;
 
-    func_comps->local_objs = s_locals;
+    comps->local_objs = s_locals;
     exit_scope();
 
     return true;
@@ -316,7 +326,11 @@ static void parse_type_prefix(Lexer* l, Type** type, StorageClass* storage)
         break;
     }
 
-    // APPLY TYPE QUALIFIERS
+    if(qual != QUALIFIER_NONE)
+    {
+        ty = type_copy(ty);
+        ty->qualifiers = qual;
+    }
 
     while(true)
     {
@@ -335,15 +349,14 @@ static void parse_type_prefix(Lexer* l, Type** type, StorageClass* storage)
         }
         else if(tok_equal(l, TOKEN_ASTERISK))
         {
-            printf("pointer\n");
+            ty = pointer_to(ty);
             advance(l);
         }
         else
             break;
 
-        qual = QUALIFIER_NONE;
-        while(parse_type_qualifier(l, &qual)) {}
-        // APPLY TYPE QUALIFIERS
+        ty->qualifiers = QUALIFIER_NONE;
+        while(parse_type_qualifier(l, &ty->qualifiers)) {}
     }
 
     *type = ty;
@@ -373,11 +386,11 @@ static bool parse_func_params(Lexer* l, Object** params, size_t* count)
 
         EXPECT_OR_RET(false, l, TOKEN_IDENT);
 
-        cur_param->next = malloc(sizeof(Object));
+        cur_param->next = MALLOC(sizeof(Object));
         cur_param = cur_param->next;
-        cur_param->is_function = false;
+        cur_param->kind = OBJ_VAR;
         cur_param->next = NULL;
-        cur_param->comps.var.type = type;
+        cur_param->var.type = type;
         cur_param->symbol = *peek(l);
 
         advance(l);
@@ -391,7 +404,7 @@ static bool parse_func_params(Lexer* l, Object** params, size_t* count)
 
 static ASTNode* parse_stmt_block(Lexer* l)
 {
-    ASTNode* block = malloc(sizeof(ASTNode));
+    ASTNode* block = MALLOC(sizeof(ASTNode));
     block->kind = NODE_BLOCK;
     block->token = *peek(l);
     
@@ -408,12 +421,14 @@ static ASTNode* parse_stmt_block(Lexer* l)
         parse_type_prefix(l, &type, &storage);
 
         if(type == NULL)
-        {
             cur_expr->next = parse_stmt(l);
-            cur_expr = cur_expr->next;
-        }
         else
-            advance(l);
+        {
+            cur_expr->next = parse_declaration(l, type, storage);
+            if(cur_expr->next == NULL)
+                continue;
+        }
+        cur_expr = cur_expr->next;
     }
 
     block->children = head.next;
@@ -435,7 +450,7 @@ static ASTNode* parse_stmt(Lexer* l)
     if(tok_equal(l, TOKEN_RETURN))
     {
         ASTNode* new_node = create_node(NODE_RETURN, peek(l));
-        Type* ret_type = s_curfunc->comps.func.ret_type;
+        Type* ret_type = s_curfunc->func.ret_type;
         advance(l);
         if(try_consume(l, TOKEN_SEMI))
         {
@@ -456,33 +471,38 @@ static ASTNode* parse_stmt(Lexer* l)
     return res;
 }
 
-static UNUSED ASTNode* parse_declaration(Lexer* l)
+static ASTNode* parse_declaration(Lexer* l, Type* type, StorageClass storage)
 {
     ASTNode head;
     head.next = NULL;
-    // ASTNode* cur = &head;
+    ASTNode* cur = &head;
 
-    Type* type;
-    StorageClass storage;
-    parse_type_prefix(l, &type, &storage);
     if(type == g_type_void)
         sic_error_fatal("Variables cannot be declared as type void.");
 
-    if(tok_equal(l, TOKEN_IDENT))
+    while(expect(l, TOKEN_IDENT))
     {
-        Object* new_var = create_obj_in_scope(peek(l), false);
-        new_var->is_function = false;
-        new_var->comps.var.type = type;
+        if(storage == STORAGE_DEFAULT)
+            storage = STORAGE_SCOPE;
+        Object* new_var = scope_def_obj(l, peek(l), storage);
+        new_var->kind = OBJ_VAR;
+        new_var->var.type = type;
+        advance(l);
         if(tok_equal(l, TOKEN_ASSIGN))
         {
-            // ASTNode* var_node = create_node(NODE_VAR, new_var->symbol);
-            // ASTNode* assign = create_node(NODE_ASSIGN, peek(l));
-            // advance(l);
-            // ASTNode* rhs = parse_assignment(l);
+            ASTNode* assign = create_node(NODE_ASSIGN, peek(l));
+            assign->children = create_node(NODE_VAR, &new_var->symbol);
+            assign->children->var = new_var;
+            advance(l);
+            assign->children->next = parse_assignment(l);
+            cur->next = assign;
+            cur = cur->next;
         }
+        if(try_consume(l, TOKEN_COMMA))
+            continue;
+        consume(l, TOKEN_SEMI);
+        break;
     }
-    else
-        sic_error_fatal("Expected identifier.");
     return head.next;
 }
 
@@ -835,7 +855,7 @@ static ASTNode* parse_primary_expr(Lexer* l)
             advance(l);
             return new_node;
         }
-        sic_error_fatal("Undefined variable \'%.*s\'.", (int)peek(l)->len, peek(l)->loc);
+        sic_error("Undefined variable \'%.*s\'.", (int)peek(l)->len, peek(l)->loc);
     }
     else if(tok_equal(l, TOKEN_NUM))
     {
@@ -843,14 +863,15 @@ static ASTNode* parse_primary_expr(Lexer* l)
         advance(l);
         return new_node;
     }
-
-    sic_error_fatal("Expected an expression.");
-    return NULL;
+    else
+        sic_error("Expected an expression.");
+    advance(l);
+    return &s_badnode;
 }
 
 static void enter_scope(void)
 {
-    Scope* new_scope = malloc(sizeof(Scope));
+    Scope* new_scope = MALLOC(sizeof(Scope));
     new_scope->parent = s_curscope;
     hashmap_init(&new_scope->vars);
     s_curscope = new_scope;
@@ -859,24 +880,28 @@ static void enter_scope(void)
 static void exit_scope(void)
 {
     hashmap_free(&s_curscope->vars);
-    Scope* prev = s_curscope;
     s_curscope = s_curscope->parent;
-    free(prev);
 }
 
-static Object* create_obj_in_scope(Token* symbol, bool global)
+static Object*  scope_def_obj(Lexer* l, Token* symbol, StorageClass storage)
 {
-    Object* obj = malloc(sizeof(Object));
-    obj->symbol = *symbol;
-    if(global)
+    Object* old = hashmap_getn(&s_curscope->vars, symbol->loc, symbol->len);
+    if(old != NULL)
     {
-        obj->next = s_globals;
-        s_globals = obj;
+        sic_error_at(l->file_name, symbol, "Redefinition of symbol \'%.*s\'", (int)symbol->len, symbol->loc);
+        return old;
     }
-    else
+    Object* obj = MALLOC(sizeof(Object));
+    obj->symbol = *symbol;
+    if(storage == STORAGE_SCOPE)
     {
         obj->next = s_locals;
         s_locals = obj;
+    }
+    else
+    {
+        obj->next = s_globals;
+        s_globals = obj;
     }
     hashmap_putn(&s_curscope->vars, symbol->loc, symbol->len, obj);
     return obj;
@@ -907,7 +932,7 @@ static Type* get_type(Token* tok)
 
 static ASTNode* create_node(NodeKind kind, Token* token)
 {
-    ASTNode* res = malloc(sizeof(ASTNode));
+    ASTNode* res = MALLOC(sizeof(ASTNode));
     res->kind = kind;
     res->token = *token;
     res->next = NULL;
