@@ -5,8 +5,11 @@ typedef enum
     TOKEN_INVALID = 0,
 
     TOKEN_IDENT,            // Identifier
-    TOKEN_STR,              // String Literal
-    TOKEN_NUM,              // Numeric Literal (including chars)
+    TOKEN_INT_LITERAL,
+    TOKEN_CHAR_LITERAL,
+    TOKEN_FLOAT_LITERAL,
+    TOKEN_STRING_LITERAL,
+
 
     TOKEN_AMP,              // &
     TOKEN_ASTERISK,         // *
@@ -37,8 +40,8 @@ typedef enum
     TOKEN_SHL,              // <<
     TOKEN_LOG_AND,          // &&
     TOKEN_LOG_OR,           // ||
-    TOKEN_LOG_EQUIV,        // ==
-    TOKEN_LOG_NOT_EQUIV,    // !=
+    TOKEN_EQ,               // ==
+    TOKEN_NE,               // !=
     TOKEN_LE,               // <=
     TOKEN_GE,               // >=
     TOKEN_BIT_AND_ASSIGN,   // &=
@@ -59,6 +62,9 @@ typedef enum
     TOKEN_CONST,
     TOKEN_KEYWORD_START = TOKEN_CONST,
     TOKEN_EXTERN,
+    TOKEN_PRIV,
+    TOKEN_PROT,
+    TOKEN_PUB,
     TOKEN_RETURN,
 
     // Built-in/Primitive type names (Still part of keywords)
@@ -77,45 +83,74 @@ typedef enum
     TOKEN_TYPENAME_END = TOKEN_F64,
     TOKEN_KEYWORD_END = TOKEN_F64,
 
-    TOKEN_EOF               // End Of File Token
+    TOKEN_EOF,               // End Of File Token
+    __TOKEN_COUNT
 } TokenKind;
 
 typedef enum
 {
-    NODE_INVALID = 0,
-    NODE_NOP,
-    NODE_BLOCK,
-    NODE_VAR,
-    NODE_NUM,
-    NODE_RETURN,
+    EXPR_INVALID = 0,
+    
+    EXPR_NOP,
+    EXPR_BINARY,
+    EXPR_CAST,
+    EXPR_CONSTANT,
+    EXPR_FUNC_CALL,
+    EXPR_PRE_SEMANTIC_IDENT,
+    EXPR_TERNARY,
+    EXPR_UNARY,
+} ExprKind;
 
-    NODE_ASSIGN,
-    NODE_TERNARY,
-    NODE_LOG_OR,
-    NODE_LOG_AND,
-    NODE_BIT_OR,
-    NODE_BIT_XOR,
-    NODE_BIT_AND,
-    NODE_EQ,
-    NODE_NE,
-    NODE_LT,
-    NODE_LE,
-    NODE_SHL,
-    NODE_SHR,
-    NODE_ADD,
-    NODE_SUB,
-    NODE_MUL,
-    NODE_DIV,
-    NODE_MOD,
-    NODE_CAST,
-    NODE_INC,
-    NODE_DEC,
-    NODE_NEG,
-    NODE_LOG_NOT,
-    NODE_BIT_NOT,
-    NODE_ADDR_OF,
-    NODE_FUNC_CALL,
-    NODE_DEREF,
+typedef enum
+{
+    BINARY_INVALID = 0,
+    BINARY_ADD,
+    BINARY_SUB,
+    BINARY_MUL,
+    BINARY_DIV,
+    BINARY_MOD,
+    BINARY_LOG_OR,
+    BINARY_LOG_AND,
+    BINARY_EQ,
+    BINARY_NE,
+    BINARY_LT,
+    BINARY_LE,
+    BINARY_GT,
+    BINARY_GE,
+    BINARY_SHL,
+    BINARY_SHR,
+    BINARY_BIT_OR,
+    BINARY_BIT_XOR,
+    BINARY_BIT_AND,
+    BINARY_ASSIGN,
+    BINARY_ADD_ASSIGN,
+    BINARY_SUB_ASSIGN,
+    BINARY_MUL_ASSIGN,
+    BINARY_DIV_ASSIGN,
+    BINARY_MOD_ASSIGN,
+    BINARY_BIT_OR_ASSIGN,
+    BINARY_BIT_XOR_ASSIGN,
+    BINARY_BIT_AND_ASSIGN,
+    BINARY_SHL_ASSIGN,
+    BINARY_SHR_ASSIGN,
+} BinaryOpKind;
+
+typedef enum
+{
+    UNARY_INVALID = 0,
+
+    UNARY_ADDR_OF,
+    UNARY_DEREF,
+    UNARY_NEG,
+} UnaryOpKind;
+
+typedef enum
+{
+    NODE_INVALID = 0,
+
+    NODE_BLOCK,
+    NODE_EXPR_STMT,
+    NODE_RETURN,
 } NodeKind;
 
 typedef enum
@@ -150,17 +185,25 @@ typedef enum
     TYPE_BUILTIN_END = TYPE_F64,
 
     TYPE_POINTER,
+    TYPE_DEF_UNRESOLVED,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;
 
 typedef enum
 {
-    STORAGE_DEFAULT = 0, // Default storage (Different depending on context)
-    STORAGE_GLOBAL,      // Global vars
-    STORAGE_EXTERN,      // Externally defined vars
-    STORAGE_SCOPE,       // Vars with scoped lifetime
-} StorageClass;
+    ACCESS_PRIVATE,     // Accessible only to compilation unit
+    ACCESS_PROTECTED,   // Accessible only to module (default behavior)
+    ACCESS_PUBLIC,      // Accessible to all modules that import this module
+
+    ACCESS_DEFAULT = ACCESS_PROTECTED,
+} ObjAccess;
+
+typedef enum
+{
+    ATTR_NONE   = 0,
+    ATTR_EXTERN = (1 << 0),
+} ObjAttr;
 
 typedef enum
 {
@@ -170,4 +213,20 @@ typedef enum
     // QUALIFIER_RESTRICT = (1 << 2),
 } TypeQualifier;
 
-
+typedef enum
+{
+    PREC_NONE = 0,
+    PREC_ASSIGN,
+    PREC_TERNARY,
+    PREC_LOG_OR,
+    PREC_LOG_AND,
+    PREC_BIT_OR,
+    PREC_BIT_XOR,
+    PREC_BIT_AND,
+    PREC_RELATIONAL,
+    PREC_ADD_SUB,
+    PREC_SHIFTS,
+    PREC_MUL_DIV_MOD,
+    PREC_UNARY_PREFIX,
+    PREC_PRIMARY_POSTFIX
+} OpPrecedence;

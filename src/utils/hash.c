@@ -44,7 +44,7 @@ void hashmap_putn(HashMap* map, const char* key, size_t len, void* val)
     HashEntry* entry = get_entry(map, key, len, &bucket);
     if(entry == NULL)
     {
-        entry = malloc(sizeof(HashEntry));
+        entry = cmalloc(sizeof(HashEntry));
         entry->key     = key;
         entry->key_len = len;
         entry->value   = val;
@@ -133,7 +133,7 @@ static void rehash(HashMap* map)
 
     HashMap new_map;
     new_map.bucket_cnt = (size_t)new_cap;
-    new_map.buckets = calloc(new_map.bucket_cnt, sizeof(HashEntry));
+    new_map.buckets = ccalloc(new_map.bucket_cnt, sizeof(HashEntry));
     new_map.entry_cnt = map->entry_cnt;
     for(uint32_t i = 0; i < map->bucket_cnt; ++i)
     {

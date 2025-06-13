@@ -1,9 +1,6 @@
 #pragma once
 #include "core/core.h"
 
-#include <stdbool.h>
-#include <stdio.h>
-
 typedef struct SIFile SIFile;
 
 typedef enum
@@ -30,6 +27,8 @@ FILE*       open_out_file(const SIFile* file);
 SIFile      convert_ext_to(const SIFile* file, FileType desired);
 FileType    get_filetype(const char* filename);
 const char* ft_to_extension(FileType ft);
+SIFile      create_tempfile(FileType ft);
+void        close_tempfiles(void);
 
 static inline bool sifile_exists(const SIFile* file)
 {

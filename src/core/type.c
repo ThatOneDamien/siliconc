@@ -44,7 +44,7 @@ static Type* builtin_type_lookup[] = {
 
 Type* builtin_type(TokenKind type_token)
 {
-    SIC_ASSERT(type_token >= TOKEN_TYPENAME_START && type_token <= TOKEN_TYPENAME_END);
+    SIC_ASSERT(is_builtin_type(type_token));
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 

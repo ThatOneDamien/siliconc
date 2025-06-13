@@ -4,11 +4,15 @@
 #include "core/core.h"
 #include "core/internal.h"
 
+#define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
+
 static const char* s_tok_names[] = {
     [TOKEN_INVALID]         = "Invalid",
     [TOKEN_IDENT]           = "Identifier",
-    [TOKEN_STR]             = "String Literal",
-    [TOKEN_NUM]             = "Numeric Literal",
+    [TOKEN_INT_LITERAL]     = "Integer Literal",
+    [TOKEN_CHAR_LITERAL]    = "Char Literal",
+    [TOKEN_FLOAT_LITERAL]   = "Float Literal",
+    [TOKEN_STRING_LITERAL]  = "String Literal",
     [TOKEN_AMP]             = "Ampersand",
     [TOKEN_ASTERISK]        = "Asterisk",
     [TOKEN_LOG_NOT]         = "Logical Not",
@@ -37,8 +41,8 @@ static const char* s_tok_names[] = {
     [TOKEN_SHL]             = "Shift Left",
     [TOKEN_LOG_AND]         = "Logical And",
     [TOKEN_LOG_OR]          = "Logical Or",
-    [TOKEN_LOG_EQUIV]       = "Equivalent",
-    [TOKEN_LOG_NOT_EQUIV]   = "Not Equivalent",
+    [TOKEN_EQ]              = "Equal",
+    [TOKEN_NE]              = "Not Equal",
     [TOKEN_LE]              = "Less Than Or Equal",
     [TOKEN_GE]              = "Greater Than Or Equal",
     [TOKEN_BIT_AND_ASSIGN]  = "Bitwise And Assign",
@@ -53,6 +57,10 @@ static const char* s_tok_names[] = {
     [TOKEN_SHL_ASSIGN]      = "Shift Left Assign",
     [TOKEN_INCREM]          = "Increment",
     [TOKEN_DECREM]          = "Decrement",
+    [TOKEN_EXTERN]          = "extern",
+    [TOKEN_PUB]             = "pub",
+    [TOKEN_PRIV]            = "priv",
+    [TOKEN_PROT]            = "prot",
     [TOKEN_RETURN]          = "return",
     [TOKEN_VOID]            = "void",
     [TOKEN_U8]              = "u8",
@@ -68,7 +76,7 @@ static const char* s_tok_names[] = {
     [TOKEN_EOF]             = "End Of File",
 };
 
-static const char* type_strings[] = {
+static const char* s_type_strings[] = {
     [TYPE_INVALID]  = "Invalid", 
     [TYPE_VOID]     = "void", 
     [TYPE_U8]       = "u8", 
@@ -81,40 +89,21 @@ static const char* type_strings[] = {
     [TYPE_S64]      = "s64", 
     [TYPE_F32]      = "f32", 
     [TYPE_F64]      = "f64", 
+    [TYPE_POINTER]  = "pointer",
 };
-static const char* node_type_names[] = {
+
+
+static const char* s_node_type_names[] = {
     [NODE_INVALID]   = "Invalid",
     [NODE_BLOCK]     = "Block",
-    [NODE_VAR]       = "Variable",
-    [NODE_NUM]       = "Number Literal",
-    [NODE_RETURN]    = "Return",
-    [NODE_ASSIGN]    = "Assign",
-    [NODE_TERNARY]   = "Ternary",
-    [NODE_LOG_OR]    = "Logical Or",
-    [NODE_LOG_AND]   = "Logical And",
-    [NODE_BIT_OR]    = "Bitwise Or",
-    [NODE_BIT_XOR]   = "Bitwise Exclusive Or",
-    [NODE_BIT_AND]   = "Bitwise And",
-    [NODE_EQ]        = "Equal",
-    [NODE_NE]        = "Not Equal",
-    [NODE_LT]        = "Less Than",
-    [NODE_LE]        = "Less Than Or Equal To",
-    [NODE_SHL]       = "Shift Left",
-    [NODE_SHR]       = "Shift Right",
-    [NODE_ADD]       = "Add",
-    [NODE_SUB]       = "Subtract",
-    [NODE_MUL]       = "Multiply",
-    [NODE_DIV]       = "Divide",
-    [NODE_MOD]       = "Mod",
-    [NODE_CAST]      = "Cast",
-    [NODE_INC]       = "Increment",
-    [NODE_DEC]       = "Decrement",
-    [NODE_NEG]       = "Negate",
-    [NODE_LOG_NOT]   = "Logical Not",
-    [NODE_BIT_NOT]   = "Bitwise Not",
-    [NODE_ADDR_OF]   = "Address Of",
-    [NODE_FUNC_CALL] = "Function Call",
-    [NODE_DEREF]     = "Dereference"
+    [NODE_EXPR_STMT] = "Expression Statement",
+    [NODE_RETURN]    = "Return Statement",
+};
+
+static const char* s_access_strs[] = {
+    [ACCESS_PUBLIC]     = "public",
+    [ACCESS_PROTECTED]  = "protected",
+    [ACCESS_PRIVATE]    = "private",
 };
 
 void print_all_tokens(Lexer lexer)
@@ -130,46 +119,70 @@ void print_all_tokens(Lexer lexer)
     }
 }
 
+static void print_expr(const ASTExpr* expr, int depth)
+{
+    if(expr == NULL)
+        return;
+    PRINT_DEPTH(depth);
+    printf("(%s", s_tok_names[expr->token.kind]);
+    switch(expr->kind)
+    {
+    case EXPR_BINARY:
+        printf(")\n");
+        print_expr(expr->expr.binary.lhs, depth + 1);
+        print_expr(expr->expr.binary.rhs, depth + 1);
+        break;
+    case EXPR_CONSTANT:
+        printf(")\n");
+        break;
+    case EXPR_UNARY:
+        printf(")\n");
+        print_expr(expr->expr.unary.child, depth + 1);
+        break;
+    default:
+        printf(")\n");
+        break;
+    }
+}
+
 static void print_node(const ASTNode* node, int depth)
 {
     if(node == NULL)
         return;
 
-    size_t child_cnt = 0;
-    ASTNode* child = node->children;
-    while(child != NULL)
+    PRINT_DEPTH(depth);
+    printf("(%s)\n", s_node_type_names[node->kind]);
+    switch(node->kind)
     {
-        child_cnt++;
-        child = child->next;
+    case NODE_BLOCK: {
+        ASTNode* cur = node->stmt.block.body;
+        while(cur != NULL)
+        {
+            print_node(cur, depth + 1);
+            cur = cur->next;
+        }
+        break;
     }
-
-    child = node->children;
-    for(size_t i = 0; i < (child_cnt + 1) / 2; ++i, child = child->next)
-        ;
-    for(size_t i = 0; i < child_cnt / 2; ++i, child = child->next)
-        print_node(child, depth + 1);
-
-    for(int i = 0; i < depth; ++i)
-        printf("  ");
-
-    printf("(%.*s Type: %s)\n", 
-           (int)node->token.len, 
-           node->token.loc, 
-           node_type_names[node->kind]);
-
-    child = node->children;
-    for(size_t i = 0; i < (child_cnt + 1) / 2; ++i, child = child->next)
-        print_node(child, depth + 1);
+    case NODE_EXPR_STMT:
+        print_expr(node->stmt.expr, depth + 1);
+        break;
+    case NODE_RETURN:
+        print_expr(node->stmt.return_.ret_expr, depth + 1);
+        break;
+    default:
+        break;
+    }
 
 }
 
 static void print_func(const Object* func)
 {
     const ObjFunc* comps = &func->func;
-    printf("Function \'%.*s\' (returns %s):\n", 
+    printf("Function \'%.*s\' %s (returns %s):\n", 
            (int)func->symbol.len,
            func->symbol.loc,
-           type_strings[comps->ret_type->kind]);
+           s_access_strs[func->access],
+           s_type_strings[comps->ret_type->kind]);
     printf("  Params (count: %lu):\n", comps->param_cnt);
     Object* param = comps->params;
     for(size_t i = 0; i < comps->param_cnt; ++i)
@@ -177,7 +190,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
                param->symbol.loc,
-               type_strings[param->var.type->kind]);
+               s_type_strings[param->var.type->kind]);
         param = param->next;
     }
 
@@ -188,7 +201,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)local->symbol.len, 
                local->symbol.loc,
-               type_strings[local->var.type->kind]);
+               s_type_strings[local->var.type->kind]);
         local = local->next;
     }
 
@@ -202,14 +215,12 @@ static void print_func(const Object* func)
     printf("\n");
 }
 
-void print_program(const Object* program)
+void print_unit(const CompilationUnit* unit)
 {
-    while(program != NULL)
-    {
-        if(program->kind == OBJ_FUNC)
-            print_func(program);
-        program = program->next;
-    }
+    SIC_ASSERT(unit != NULL);
+    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", unit->file.full_path, unit->funcs.size, unit->vars.size);
+    for(size_t i = 0; i < unit->funcs.size; ++i)
+        print_func(unit->funcs.data[i]);
 }
 
 #endif // SI_DEBUG

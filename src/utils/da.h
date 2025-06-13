@@ -1,4 +1,5 @@
 #pragma once
+#include "lib.h"
 #include "core/core.h"
 
 #include <stdarg.h>
@@ -8,26 +9,27 @@
 
 #define DA_MIN_CAPACITY 16
 #define DA_ASSERT(cond) SIC_ASSERT(cond)
-#define DA_ENSURE(cond) { if(!(cond)) exit(1); }
 
 #define da_init(da, initial_cap)                                \
     {                                                           \
         (da)->capacity = (initial_cap) > DA_MIN_CAPACITY?       \
                          (initial_cap) : DA_MIN_CAPACITY;       \
         (da)->size = 0;                                         \
-        (da)->data = malloc((da)->capacity *                    \
+        (da)->data = MALLOC((da)->capacity *                    \
                             sizeof(*((da)->data)));             \
-        DA_ENSURE((da)->data != NULL);                          \
     }
 
 #define da_reserve(da, desired_cap)                                         \
     {                                                                       \
         if((da)->capacity < (desired_cap))                                  \
         {                                                                   \
-            (da)->capacity = (desired_cap) + ((desired_cap) >> 1);          \
-            (da)->data = realloc((da)->data,                                \
-                                 (da)->capacity * sizeof(*((da)->data)));   \
-            DA_ENSURE((da)->data != NULL);                                  \
+            (da)->capacity = (desired_cap) << 1;                            \
+            void* __new_da = MALLOC((da)->capacity *                        \
+                                    sizeof(*((da)->data)));                 \
+            memcpy(__new_da, (da)->data,                                    \
+                   (da)->size * sizeof(*((da)->data)));                     \
+            (da)->data = __new_da;                                          \
+                                                                            \
         }                                                                   \
     }
 
@@ -79,9 +81,6 @@
         da_reserve((da), (new_size));   \
         (da)->size = (new_size);        \
     }
-
-#define da_free_data(da) { free((da)->data); }
-
 
 
 typedef struct StringBuilder StringBuilder;

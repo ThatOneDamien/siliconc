@@ -1,32 +1,26 @@
-#define _POSIX_C_SOURCE 200809L
-#define _DEFAULT_SOURCE
 #include "cmdline.h"
 #include "internal.h"
 #include "backend/codegen.h"
 #include "utils/debug.h"
-#include "utils/error.h"
 #include "utils/file_utils.h"
 #include "utils/lib.h"
 
 #include <errno.h>
 #include <glob.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
 static SIFile compile(const SIFile* input);
 static SIFile assemble(const SIFile* input);
-static SIFile create_tempfile(FileType ft);
-static void   close_tempfiles(void);
 static void   resolve_dependency_paths(char** crt, char** gcclib);
 static char*  format_new(const char* restrict format, ...);
-
-static StringArray s_tempfiles;
 
 int main(int argc, char* argv[])
 {
     if(argc < 1)
         sic_error_fatal("Bad arguments.");
+
+    global_arenas_init();
     
     process_cmdln_args(argc, argv);
     
@@ -34,10 +28,8 @@ int main(int argc, char* argv[])
         if(!sifile_exists(args.input_files.data + i))
             sic_error_fatal("File named '%s' not found.", args.input_files.data[i].full_path);
 
-    global_arenas_init();
     sym_map_init();
     parser_init();
-    da_init(&s_tempfiles, args.input_files.size);
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
 
     SIFileDA linker_inputs;
@@ -153,12 +145,14 @@ void run_subprocess(char** cmd)
 
 static SIFile compile(const SIFile* input)
 {
-    Lexer lexer;
+    CompilationUnit unit;
+
+    unit.file = *input;
+    parse_unit(&unit);
+    if(sic_error_cnt() > 0)
+        return (SIFile){0};
+    
     SIFile output = {0};
-    TranslationUnit tu;
-
-    lexer_init_file(&lexer, input);
-
     if(args.mode == MODE_COMPILE)
     {
         if(args.output_file == NULL)
@@ -169,12 +163,10 @@ static SIFile compile(const SIFile* input)
     else
         output = create_tempfile(FT_ASM);
 
-    tu.file = *input;
-    tu.program = parse_unit(&lexer);
-    if(sic_error_cnt() > 0)
-        return (SIFile){0};
-    
-    gen_intermediate_rep(&tu, &output);
+    // TODO: Remove (TEMPORARY)
+    print_unit(&unit);
+    exit(0);
+    gen_intermediate_rep(&unit, &output);
     return output;
 }
 
@@ -201,34 +193,6 @@ static SIFile assemble(const SIFile* input)
 }
 
 
-static SIFile create_tempfile(FileType ft)
-{
-    static const char template[21] = "/tmp/siliconc-XXXXXX";
-    const char* ext = ft_to_extension(ft);
-    int ext_len = strlen(ext);
-    char* tmppath = malloc(sizeof(template) + ext_len);
-    memcpy(tmppath, template, sizeof(template) - 1);
-    memcpy(tmppath + sizeof(template) - 1, ext, ext_len + 1);
-
-    int fd = mkstemps(tmppath, ext_len);
-    if(fd == -1)
-        sic_error_fatal("Failed to create temporary file.");
-
-    close(fd);
-    da_append(&s_tempfiles, tmppath);
-
-    SIFile res;
-    res.full_path = tmppath;
-    res.file_name = tmppath + 5;
-    res.type = ft;
-    return res;
-}
-
-static void close_tempfiles(void)
-{
-    for(size_t i = 0; i < s_tempfiles.size; ++i)
-        unlink(s_tempfiles.data[i]);
-}
 
 static void resolve_dependency_paths(char** crt, char** gcclib)
 {
@@ -250,9 +214,12 @@ static void resolve_dependency_paths(char** crt, char** gcclib)
         glob(gcc_locations[i], 0, NULL, &buf);
         if (buf.gl_pathc > 0)
         {
-            *gcclib = strdup(buf.gl_pathv[buf.gl_pathc - 1]);
+            char* cur = buf.gl_pathv[buf.gl_pathc - 1];
+            size_t len = strrchr(cur, '/') - cur;
+            *gcclib = cmalloc(len + 1);
+            memcpy(*gcclib, cur, len);
+            (*gcclib)[len] = '\0';
             globfree(&buf);
-            *strrchr(*gcclib, '/') = '\0';
             return;
         }
         globfree(&buf);
@@ -267,7 +234,7 @@ static char* format_new(const char* restrict format, ...)
     int size = vsnprintf(NULL, 0, format, va);
     va_end(va);
 
-    char* buf = malloc(size + 1);
+    char* buf = cmalloc(size + 1);
 
     va_start(va, format);
     vsnprintf(buf, size + 1, format, va);

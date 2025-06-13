@@ -3,9 +3,11 @@
  * This is a multiline comment.
  * This should also not appear in the lexer's output.
  */
-u32** main(u32 a)
+pub s32 main(u32 a)
 {
-    u8 b = 1;
-    return b;
+    a = 1 % (4 + 2) * 5;
+    // return 0;
+    // u8 b = 1;
+    // return b;
 }
 

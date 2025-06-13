@@ -7,7 +7,7 @@
 
 #define INITIAL_CAP (1 << 12)
 
-void gen_intermediate_rep(const TranslationUnit* unit, const SIFile* output)
+void gen_intermediate_rep(const CompilationUnit* unit, const SIFile* output)
 {
     SIC_ASSERT(output != NULL);
     SIC_ASSERT(output->full_path != NULL);

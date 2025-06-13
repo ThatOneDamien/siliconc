@@ -5,6 +5,6 @@
 #include "core/internal.h"
 
 void print_all_tokens(Lexer lexer);
-void print_program(const Object* program);
+void print_unit(const CompilationUnit* unit);
 
 #endif // SI_DEBUG

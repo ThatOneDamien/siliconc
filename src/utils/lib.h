@@ -1,4 +1,5 @@
 #pragma once
+#include "core/core.h"
 #include "utils/error.h"
 
 #include <stdbool.h>
@@ -70,6 +71,15 @@ static inline void* ccalloc(size_t nmemb, size_t size)
     return res;
 }
 
+static inline void* crealloc(void* ptr, size_t size)
+{
+    SIC_ASSERT(ptr != NULL);
+    void* res = realloc(ptr, size);
+    if(res == NULL)
+        sic_error_fatal("Failed to ccalloc %zu bytes.", size);
+    return res;
+}
+
 #ifdef SIC_CMALLOC_ONLY
 #define MALLOC(size)        cmalloc(size)
 #define CALLOC(nmemb, size) ccalloc(nmemb, size)
@@ -86,17 +96,20 @@ static inline void hashmap_init(HashMap* map)
 }
 
 static inline void hashmap_put(HashMap* map, const char* key, void* val)
-{ 
+{
+    SIC_ASSERT(key != NULL);
     hashmap_putn(map, key, strlen(key), val); 
 }
 
 static inline void* hashmap_get(HashMap* map, const char* key)
 {
+    SIC_ASSERT(key != NULL);
     return hashmap_getn(map, key, strlen(key));
 }
 
 static inline bool hashmap_delete(HashMap* map, const char* key)
 {
+    SIC_ASSERT(key != NULL);
     return hashmap_deleten(map, key, strlen(key));
 }
 

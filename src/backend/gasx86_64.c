@@ -15,17 +15,18 @@ __attribute__((format(printf, 1, 2)))
 static void add_line(const char* restrict format, ...);
 static void generate_func(Object* program);
 static void generate_statement(ASTNode* node);
-static void generate_expr(ASTNode* node, x86Reg out_reg);
+// static void generate_expr(ASTNode* node, x86Reg out_reg);
 static void assign_offsets(Object* func);
 
-void gasx86_64_codegen(const TranslationUnit* unit, FILE* out_file)
+void gasx86_64_codegen(const CompilationUnit* unit, FILE* out_file)
 {
     SIC_ASSERT(out_file != NULL);
 
     s_output = out_file;
     add_line("\t.file\t\"%s\"", unit->file.file_name);
 
-    Object* program = unit->program;
+    // TODO: Fix this, it is incorrect, i am temporarily disabling codegen
+    Object* program = unit->funcs.data[0];
     while(program != NULL)
     {
         if(program->kind == OBJ_FUNC)
@@ -95,41 +96,41 @@ static void generate_func(Object* func)
 static void generate_statement(ASTNode* node)
 {
     s_last_node = node;
-    switch(node->kind)
-    {
-    case NODE_RETURN: {
-        if(node->children)
-            generate_expr(node->children, x86_RAX);
-        add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol.len, s_cur_func->symbol.loc);
-        break;
-    }
-    default:
-        generate_expr(node, x86_RAX);
-    }
+    // switch(node->kind)
+    // {
+    // case NODE_RETURN: {
+    //     if(node->)
+    //         generate_expr(node->children, x86_RAX);
+    //     add_line("\tjmp\t.L.return.%.*s", (int)s_cur_func->symbol.len, s_cur_func->symbol.loc);
+    //     break;
+    // }
+    // default:
+    //     generate_expr(node, x86_RAX);
+    // }
 }
 
-static void generate_expr(ASTNode* node, x86Reg out_reg)
-{
-    s_last_node = node;
-    switch(node->kind)
-    {
-    case NODE_NUM: {
-        add_line("\tmovq\t$%.*s, %%%s", (int)node->token.len, node->token.loc, x86_64_64bitreg[out_reg]);
-        break;
-    }
-    case NODE_ASSIGN: {
-        generate_expr(node->children->next, x86_RAX);
-        add_line("\tmovq\t%%rax, %d(%%rbp)", node->children->var->var.offset);
-        break;
-    }
-    case NODE_VAR: {
-        add_line("\tmovq\t%d(%%rbp), %%%s", node->var->var.offset, x86_64_64bitreg[out_reg]);
-        break;
-    }
-    default:
-        sic_error_fatal("Unimplemented node type.");
-    }
-}
+// static void generate_expr(ASTNode* node, x86Reg out_reg)
+// {
+//     s_last_node = node;
+//     switch(node->kind)
+//     {
+//     case NODE_NUM: {
+//         add_line("\tmovq\t$%.*s, %%%s", (int)node->token.len, node->token.loc, x86_64_64bitreg[out_reg]);
+//         break;
+//     }
+//     case NODE_ASSIGN: {
+//         generate_expr(node->children->next, x86_RAX);
+//         add_line("\tmovq\t%%rax, %d(%%rbp)", node->children->var->var.offset);
+//         break;
+//     }
+//     case NODE_VAR: {
+//         add_line("\tmovq\t%d(%%rbp), %%%s", node->var->var.offset, x86_64_64bitreg[out_reg]);
+//         break;
+//     }
+//     default:
+//         sic_error_fatal("Unimplemented node type.");
+//     }
+// }
 
 static void assign_offsets(Object* func)
 {

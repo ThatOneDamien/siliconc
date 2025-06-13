@@ -15,3 +15,8 @@ usable.
 
 My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
+
+## Short Term Implementation Plans
+- Create structs for parsing stage (e.g. ASTExpr, ASTIf, etc.)
+- Separate the parsing stage into a parser and semantic analyzer, currently
+  the stages are performed concurrently

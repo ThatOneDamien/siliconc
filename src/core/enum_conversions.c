@@ -1,10 +1,6 @@
 #include "internal.h"
 
 static const char* s_tok_strs[] = {
-    [TOKEN_INVALID]         = NULL,
-    [TOKEN_IDENT]           = "Identifier",
-    [TOKEN_STR]             = "String Literal",
-    [TOKEN_NUM]             = "Numeric Literal",
     [TOKEN_AMP]             = "&",
     [TOKEN_ASTERISK]        = "*",
     [TOKEN_LOG_NOT]         = "!",
@@ -33,8 +29,8 @@ static const char* s_tok_strs[] = {
     [TOKEN_SHL]             = "<<",
     [TOKEN_LOG_AND]         = "&&",
     [TOKEN_LOG_OR]          = "||",
-    [TOKEN_LOG_EQUIV]       = "==",
-    [TOKEN_LOG_NOT_EQUIV]   = "!=",
+    [TOKEN_EQ]              = "==",
+    [TOKEN_NE]              = "!=",
     [TOKEN_LE]              = "<=",
     [TOKEN_GE]              = ">=",
     [TOKEN_BIT_AND_ASSIGN]  = "&=",
@@ -51,6 +47,9 @@ static const char* s_tok_strs[] = {
     [TOKEN_DECREM]          = "--",
     [TOKEN_CONST]           = "const",
     [TOKEN_EXTERN]          = "extern",
+    [TOKEN_PRIV]            = "priv",
+    [TOKEN_PROT]            = "prot",
+    [TOKEN_PUB]             = "pub",
     [TOKEN_RETURN]          = "return",
     [TOKEN_VOID]            = "void",
     [TOKEN_U8]              = "u8",
@@ -63,10 +62,49 @@ static const char* s_tok_strs[] = {
     [TOKEN_S64]             = "s64",
     [TOKEN_F32]             = "f32",
     [TOKEN_F64]             = "f64",
-    [TOKEN_EOF]             = NULL,
 };
+
+static BinaryOpKind s_tok_to_bin_op[] = {
+    [TOKEN_AMP]             = BINARY_BIT_AND,
+    [TOKEN_ASTERISK]        = BINARY_MUL,
+    [TOKEN_BIT_OR]          = BINARY_BIT_OR,
+    [TOKEN_BIT_XOR]         = BINARY_BIT_XOR,
+    [TOKEN_ASSIGN]          = BINARY_ASSIGN,
+    [TOKEN_LT]              = BINARY_LT,
+    [TOKEN_GT]              = BINARY_GT,
+    [TOKEN_DIV]             = BINARY_DIV,
+    [TOKEN_ADD]             = BINARY_ADD,
+    [TOKEN_SUB]             = BINARY_SUB,
+    [TOKEN_MOD]             = BINARY_MOD,
+    [TOKEN_SHR]             = BINARY_SHR,
+    [TOKEN_SHL]             = BINARY_SHL,
+    [TOKEN_LOG_AND]         = BINARY_LOG_AND,
+    [TOKEN_LOG_OR]          = BINARY_LOG_OR,
+    [TOKEN_EQ]              = BINARY_EQ,
+    [TOKEN_NE]              = BINARY_NE,
+    [TOKEN_LE]              = BINARY_LE,
+    [TOKEN_GE]              = BINARY_GE,
+    [TOKEN_BIT_AND_ASSIGN]  = BINARY_BIT_AND_ASSIGN,
+    [TOKEN_BIT_OR_ASSIGN]   = BINARY_BIT_OR_ASSIGN,
+    [TOKEN_BIT_XOR_ASSIGN]  = BINARY_BIT_XOR_ASSIGN,
+    [TOKEN_ADD_ASSIGN]      = BINARY_ADD_ASSIGN,
+    [TOKEN_SUB_ASSIGN]      = BINARY_SUB_ASSIGN,
+    [TOKEN_MUL_ASSIGN]      = BINARY_MUL_ASSIGN,
+    [TOKEN_DIV_ASSIGN]      = BINARY_DIV_ASSIGN,
+    [TOKEN_MOD_ASSIGN]      = BINARY_MOD_ASSIGN,
+    [TOKEN_SHR_ASSIGN]      = BINARY_SHR_ASSIGN,
+    [TOKEN_SHL_ASSIGN]      = BINARY_SHL_ASSIGN,
+};
+
 
 const char* tok_kind_to_str(TokenKind kind)
 {
+    SIC_ASSERT(s_tok_strs[kind] != NULL);
     return s_tok_strs[kind];
+}
+
+BinaryOpKind tok_to_binary_op(TokenKind kind)
+{
+    SIC_ASSERT(s_tok_to_bin_op[kind] != BINARY_INVALID);
+    return s_tok_to_bin_op[kind];
 }

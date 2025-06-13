@@ -1,52 +1,37 @@
 #include "internal.h"
+#include "utils/da.h"
 #include "utils/error.h"
 #include "utils/lib.h"
 
-typedef struct Scope Scope;
-struct Scope
+typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
+typedef ASTExpr* (*ExprInfixFunc)(Lexer*, ASTExpr*);
+typedef struct ExprParseRule ExprParseRule;
+struct ExprParseRule
 {
-    Scope*  parent;
-
-    HashMap vars;
-    HashMap types;
+    ExprPrefixFunc prefix;
+    ExprInfixFunc  infix;
+    OpPrecedence  precedence;
 };
 
+
 // Global check and add functions
-static bool     function_declaration(Lexer* l, Type* ret_type, StorageClass func_storage);
+static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
+static ObjAccess parse_access(Lexer* l);
 
 // Grammar parsing
-static bool     parse_storage_class(Lexer* l, StorageClass* storage);
+static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
 static bool     parse_type_qualifier(Lexer* l, TypeQualifier* qual);
-static void     parse_type_prefix(Lexer* l, Type** type, StorageClass* storage);
+static void     parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs);
 static bool     parse_func_params(Lexer* l, Object** params, size_t* count);
 static ASTNode* parse_stmt_block(Lexer* l);
 static ASTNode* parse_stmt(Lexer* l);
-static ASTNode* parse_declaration(Lexer* l, Type* type, StorageClass storage);
-static ASTNode* parse_assignment(Lexer* l);
-static ASTNode* parse_ternary(Lexer* l);
-static ASTNode* parse_logical_or(Lexer* l);
-static ASTNode* parse_logical_and(Lexer* l);
-static ASTNode* parse_bitwise_or(Lexer* l);
-static ASTNode* parse_bitwise_xor(Lexer* l);
-static ASTNode* parse_bitwise_and(Lexer* l);
-static ASTNode* parse_logical_equality(Lexer* l);
-static ASTNode* parse_relational(Lexer* l);
-static ASTNode* parse_bitwise_shift(Lexer* l);
-static ASTNode* parse_add_and_sub(Lexer* l);
-static ASTNode* parse_mul_div_and_mod(Lexer* l);
-static ASTNode* parse_cast(Lexer* l);
-static ASTNode* parse_unary(Lexer* l);
-static ASTNode* parse_postfix(Lexer* l);
-static ASTNode* parse_func_call(Lexer* l);
-static ASTNode* parse_primary_expr(Lexer* l);
-
-// Scope and symbol defining/finding functions
-static void     enter_scope(void);
-static void     exit_scope(void);
-static Object*  scope_def_obj(Lexer* l, Token* symbol, StorageClass storage);
-static Object*  get_var(Token* symbol);
-static Type*    get_type(Token* tok);
-static ASTNode* create_node(NodeKind kind, Token* token);
+static ASTNode* parse_declaration(Lexer* l, Type* type, ObjAttr attribs);
+static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence);
+static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
+static ASTExpr* parse_identifier_expr(Lexer* l);
+static ASTExpr* parse_paren_expr(Lexer* l);
+static ASTExpr* parse_unary_prefix(Lexer* l);
+static ASTExpr* parse_int_literal(Lexer* l);
 
 // Inline helpers
 
@@ -76,7 +61,7 @@ static inline void parser_error(Lexer* lexer, const char* restrict message, ...)
     va_list va;
     va_start(va, message);
     Token* t = peek(lexer);
-    sic_error_atv(lexer->file_name, t, message, va);
+    sic_error_atv(lexer->unit->file.full_path, t, message, va);
     va_end(va);
 }
 
@@ -124,46 +109,49 @@ static inline bool consume(Lexer* l, TokenKind kind)
     return false;
 }
 
+static inline ASTNode* new_node(Lexer* l, NodeKind kind)
+{
+    ASTNode* node = CALLOC_STRUCT(ASTNode);
+    node->kind = kind;
+    node->token = *peek(l);
+    return node;
+}
+
+static ASTNode s_badnode = {0};
+static ASTExpr s_badexpr = {0};
+static ExprParseRule expr_rules[__TOKEN_COUNT];
+
 #define ERROR_AND_RET(ret_val, l, ...)   do { parser_error(l, __VA_ARGS__); return ret_val; } while(0)
 #define CONSUME_OR_RET(ret_val, l, kind) do { if(!consume(l, kind)) return ret_val; } while(0)
 #define EXPECT_OR_RET(ret_val, l, kind)  do { if(!expect(l, kind)) return ret_val; } while(0)
+#define BAD_NODE (&s_badnode)
+#define BAD_EXPR (&s_badexpr)
 
-static Object* s_globals;
-static Object* s_locals;
-static Scope*  s_curscope;
-static Scope   s_file_scope;
-static Object* s_curfunc;
-static ASTNode s_badnode;
 
 void parser_init(void)
 {
-    s_globals   = NULL;
-    s_locals    = NULL;
-    s_curscope = NULL;
-    s_curfunc  = NULL;
-    hashmap_init(&s_file_scope.vars);
 }
 
-Object* parse_unit(Lexer* lexer)
+void parse_unit(CompilationUnit* unit)
 {
-    SIC_ASSERT(lexer != NULL);
-    s_globals = NULL;
-    s_locals = NULL;
-    s_file_scope.parent = NULL;
-    s_curscope = &s_file_scope;
-    hashmap_clear(&s_curscope->vars);
+    SIC_ASSERT(unit != NULL);
+    Lexer l;
+    lexer_init_unit(&l, unit);
+    da_init(&unit->funcs, 0);
+    da_init(&unit->vars, 0);
 
-    while(lexer_advance(lexer))
+    while(lexer_advance(&l))
     {
+        ObjAccess access = parse_access(&l);
         Type* type;
-        StorageClass storage = STORAGE_DEFAULT;
-        parse_type_prefix(lexer, &type, &storage);
+        ObjAttr attribs = ATTR_NONE;
+        parse_type_prefix(&l, &type, &attribs);
         
         bool recovery_needed = type == NULL;
 
         if(type == NULL)
-            parser_error(lexer, "Missing type specifier.");
-        else if(function_declaration(lexer, type, storage))
+            parser_error(&l, "Missing type specifier.");
+        else if(function_declaration(&l, access, type, attribs))
              continue;
         else
             recovery_needed = true;
@@ -173,10 +161,10 @@ Object* parse_unit(Lexer* lexer)
             printf("recovering.\n");
             while(true)
             {
-                Token* t = peek_forw(lexer, 1);
+                Token* t = peek_forw(&l, 1);
                 if(t->kind == TOKEN_EOF)
                 {
-                    advance(lexer);
+                    advance(&l);
                     break;
                 }
                 if(t->loc == t->line_start &&
@@ -184,83 +172,84 @@ Object* parse_unit(Lexer* lexer)
                     (t->kind >= TOKEN_KEYWORD_START &&
                      t->kind <= TOKEN_KEYWORD_END)))
                     break;
-                advance(lexer);
+                advance(&l);
             }
         }
     }
-    return s_globals;
 }
 
 // function_declaration -> type_prefix identifier "(" func_params (";" | "{" stmt_block)
-static bool function_declaration(Lexer* l, Type* ret_type, StorageClass func_storage)
+static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs)
 {
-    (void)func_storage;
     if(!tok_equal(l, TOKEN_IDENT)||
        !tok_equal_forw(l, 1, TOKEN_LPAREN))
         return false;
 
-    if(func_storage == STORAGE_DEFAULT)
-        func_storage = STORAGE_GLOBAL;
-    Object* func = scope_def_obj(l, peek(l), func_storage);
+    Object* func = MALLOC_STRUCT(Object);
     ObjFunc* comps = &func->func;
     func->kind = OBJ_FUNC;
     comps->ret_type = ret_type;
     func->symbol = *peek(l);
+    func->access = access;
+    func->attribs = attribs;
 
     advance_many(l, 2);
     if(!parse_func_params(l, &comps->params, &comps->param_cnt))
         return false;
 
-    s_curfunc = func;
-    s_locals = NULL;
-    enter_scope();
-
-    s_locals = comps->params;
-    for(size_t i = 0; i < comps->param_cnt; ++i)
+    if(try_consume(l, TOKEN_SEMI))
     {
-        if(s_locals->symbol.loc)
-            hashmap_putn(&s_curscope->vars, s_locals->symbol.loc, s_locals->symbol.len, s_locals);
-        s_locals = s_locals->next;
+        printf("Function declaration\n");
+        return true;
     }
-    s_locals = comps->params;
-
-    consume(l, TOKEN_LBRACE);
 
     ASTNode* body_block = parse_stmt_block(l);
-    comps->body = body_block->children;
+    comps->body = body_block->stmt.block.body;
 
-    comps->local_objs = s_locals;
-    exit_scope();
-
+    da_append(&l->unit->funcs, func);
     return true;
 }
 
-static bool parse_storage_class(Lexer* l, StorageClass* storage)
+static ObjAccess parse_access(Lexer* l)
 {
-    StorageClass temp;
+    ObjAccess access = ACCESS_PROTECTED;
+    switch(peek(l)->kind)
+    {
+    case TOKEN_PRIV:
+        access = ACCESS_PRIVATE;
+        break;
+    case TOKEN_PROT:
+        break;
+    case TOKEN_PUB:
+        access = ACCESS_PUBLIC;
+        break;
+    default:
+        return access;
+    }
+    advance(l);
+    return access;
+}
+
+static bool parse_attribute(Lexer* l, ObjAttr* attribs)
+{
+    ObjAttr temp;
     switch(peek(l)->kind)
     {
     case TOKEN_EXTERN:
-        temp = STORAGE_EXTERN;
+        temp = ATTR_EXTERN;
         break;
     default:
-        temp = STORAGE_DEFAULT;
-        break;
+        return false;
     }
 
-    if(temp != STORAGE_DEFAULT)
-    {
-        if(storage == NULL)
-            parser_error(l, "Storage class not allowed in this context.");
-        else if(*storage == temp) {} // This would be where we warn for duplicate storage class
-        else if(*storage != STORAGE_DEFAULT)
-            parser_error(l, "Multiple storage classes cannot be combined.");
-        else
-            *storage = temp;
-        advance(l);
-        return true;
-    }
-    return false;
+    if(attribs == NULL)
+        parser_error(l, "Object attributes not allowed in this context.");
+    else if(*attribs & temp) {} // This would be where we warn for duplicate attribute
+    else
+        *attribs |= temp;
+
+    advance(l);
+    return true;
 }
 
 static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
@@ -288,7 +277,6 @@ static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
 
 }
 
-// storage_class -> "extern"
 // type_qualifier -> "const" TODO: NOT IMPLEMENTED YET!!!
 // type_name -> "void" | "u8" | "s8" | "u16" | "s16" |
 //              "u32" | "s32" | "u64" | "s64" | "f32" | 
@@ -296,24 +284,22 @@ static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
 // type_suffix -> "(" func_params type_qualifier* |
 //                "[" array_dims | TODO: NOT IMPLEMENTED YET!!!
 //                "*" type_qualifier* |
-// type_prefix -> (storage_class | type_qualifier | type_name)* type_suffix*
+// type_prefix -> (type_qualifier | type_name)* type_suffix*
 // NOTE: You are only allowed to specify one storage class and one type name
 //       per type prefix. You can have multiple qualifiers, but if any one
 //       qualifier is duplicated a warning will be raised.
-static void parse_type_prefix(Lexer* l, Type** type, StorageClass* storage)
+static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs)
 {
     Type* ty = NULL;
     TypeQualifier qual = QUALIFIER_NONE;
-    // TODO: Make the kw map hold values depending on whether the kw is a typename or not to
-    //       make this function better. Furthermore it could be used to remove the string comparisons
-    //       making the process quicker.
+
     while(true)
     {
-        if(parse_storage_class(l, storage))
+        if(parse_attribute(l, attribs))
             continue;
         if(parse_type_qualifier(l, &qual))
             continue;
-        Type* t = get_type(peek(l));
+        Type* t = is_builtin_type(peek(l)->kind) ? builtin_type(peek(l)->kind) : NULL; // TODO: Get type
         if(t != NULL)
         {
             if(ty != NULL)
@@ -404,35 +390,32 @@ static bool parse_func_params(Lexer* l, Object** params, size_t* count)
 
 static ASTNode* parse_stmt_block(Lexer* l)
 {
-    ASTNode* block = MALLOC(sizeof(ASTNode));
-    block->kind = NODE_BLOCK;
-    block->token = *peek(l);
-    
+    CONSUME_OR_RET(BAD_NODE, l, TOKEN_LBRACE);
+    ASTNode* block = new_node(l, NODE_BLOCK);
     ASTNode head;
     head.next = NULL;
     ASTNode* cur_expr = &head;
 
-    while(!tok_equal(l, TOKEN_RBRACE))
+    while(!try_consume(l, TOKEN_RBRACE))
     {
         if(tok_equal(l, TOKEN_EOF))
             parser_error(l, "No closing }.");
         Type* type;
-        StorageClass storage;
-        parse_type_prefix(l, &type, &storage);
+        ObjAttr attribs = ATTR_NONE;
+        parse_type_prefix(l, &type, &attribs);
 
         if(type == NULL)
             cur_expr->next = parse_stmt(l);
         else
         {
-            cur_expr->next = parse_declaration(l, type, storage);
+            cur_expr->next = parse_declaration(l, type, attribs);
             if(cur_expr->next == NULL)
                 continue;
         }
         cur_expr = cur_expr->next;
     }
 
-    block->children = head.next;
-    advance(l);
+    block->stmt.block.body = head.next;
     return block;
 }
 
@@ -440,502 +423,218 @@ static ASTNode* parse_stmt(Lexer* l)
 {
     if(tok_equal(l, TOKEN_SEMI))
     {
-        ASTNode* new_node = create_node(NODE_NOP, peek(l));
+        ASTNode* node = new_node(l, NODE_EXPR_STMT);
+        node->stmt.expr = MALLOC_STRUCT(ASTExpr);
+        node->stmt.expr->kind = EXPR_NOP;
         advance(l);
-        new_node->next = NULL;
-        new_node->children = NULL;
-        return new_node;
+        return node;
     }
+    //
+    // if(tok_equal(l, TOKEN_RETURN))
+    // {
+    //     ASTNode* new_node = create_node(NODE_RETURN, peek(l));
+    //     Type* ret_type = s_curfunc->func.ret_type;
+    //     advance(l);
+    //     if(try_consume(l, TOKEN_SEMI))
+    //     {
+    //         if(ret_type != g_type_void)
+    //             sic_error_fatal("Non-void function should return a value.");
+    //         return new_node;
+    //     }
+    //
+    //     ASTNode* ret_expr = parse_assignment(l);
+    //     consume(l, TOKEN_SEMI);
+    //
+    //     new_node->children = ret_expr;
+    //     return new_node;
+    // }
 
-    if(tok_equal(l, TOKEN_RETURN))
+    ASTNode* expr_stmt = new_node(l, NODE_EXPR_STMT);
+    expr_stmt->stmt.expr = parse_expr(l, PREC_ASSIGN);
+    if(expr_stmt->stmt.expr == NULL || expr_stmt->stmt.expr->kind == EXPR_INVALID)
     {
-        ASTNode* new_node = create_node(NODE_RETURN, peek(l));
-        Type* ret_type = s_curfunc->func.ret_type;
         advance(l);
-        if(try_consume(l, TOKEN_SEMI))
-        {
-            if(ret_type != g_type_void)
-                sic_error_fatal("Non-void function should return a value.");
-            return new_node;
-        }
-
-        ASTNode* ret_expr = parse_assignment(l);
-        consume(l, TOKEN_SEMI);
-
-        new_node->children = ret_expr;
-        return new_node;
+        return BAD_NODE;
     }
-
-    ASTNode* res = parse_assignment(l);
     consume(l, TOKEN_SEMI);
-    return res;
+    return expr_stmt;
 }
 
-static ASTNode* parse_declaration(Lexer* l, Type* type, StorageClass storage)
+static ASTNode* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
 {
+    (void)l;
+    (void)attribs;
     ASTNode head;
     head.next = NULL;
-    ASTNode* cur = &head;
+    // ASTNode* cur = &head;
 
     if(type == g_type_void)
         sic_error_fatal("Variables cannot be declared as type void.");
 
-    while(expect(l, TOKEN_IDENT))
-    {
-        if(storage == STORAGE_DEFAULT)
-            storage = STORAGE_SCOPE;
-        Object* new_var = scope_def_obj(l, peek(l), storage);
-        new_var->kind = OBJ_VAR;
-        new_var->var.type = type;
-        advance(l);
-        if(tok_equal(l, TOKEN_ASSIGN))
-        {
-            ASTNode* assign = create_node(NODE_ASSIGN, peek(l));
-            assign->children = create_node(NODE_VAR, &new_var->symbol);
-            assign->children->var = new_var;
-            advance(l);
-            assign->children->next = parse_assignment(l);
-            cur->next = assign;
-            cur = cur->next;
-        }
-        if(try_consume(l, TOKEN_COMMA))
-            continue;
-        consume(l, TOKEN_SEMI);
-        break;
-    }
+    // while(expect(l, TOKEN_IDENT))
+    // {
+    //     Object* new_var = scope_def_obj(l, peek(l), storage);
+    //     new_var->kind = OBJ_VAR;
+    //     new_var->var.type = type;
+    //     advance(l);
+    //     if(tok_equal(l, TOKEN_ASSIGN))
+    //     {
+    //         ASTNode* assign = create_node(NODE_ASSIGN, peek(l));
+    //         assign->children = create_node(NODE_VAR, &new_var->symbol);
+    //         assign->children->var = new_var;
+    //         advance(l);
+    //         assign->children->next = parse_assignment(l);
+    //         cur->next = assign;
+    //         cur = cur->next;
+    //     }
+    //     if(try_consume(l, TOKEN_COMMA))
+    //         continue;
+    //     consume(l, TOKEN_SEMI);
+    //     break;
+    // }
     return head.next;
 }
 
-static ASTNode* parse_assignment(Lexer* l)
+static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence)
 {
-    ASTNode* node = parse_ternary(l); // TODO: Change this to look ahead for unary.
-    if(tok_equal(l, TOKEN_ASSIGN))
-    {
-        ASTNode* new_node = create_node(NODE_ASSIGN, peek(l));
-        new_node->children = node;
-        advance(l);
-        node->next = parse_assignment(l);
-        return new_node;
-    }
+    ExprPrefixFunc prefix = expr_rules[peek(l)->kind].prefix;
+    if(prefix == NULL)
+        ERROR_AND_RET(BAD_EXPR, l, "Expected an expression.");
 
-    return node;
+    ASTExpr* left = prefix(l);
+    while(true)
+    {
+        TokenKind kind = peek(l)->kind;
+        if(expr_rules[kind].precedence < precedence)
+            break;
+        if(left == NULL || left->kind == EXPR_INVALID)
+            return left;
+
+        ExprInfixFunc infix = expr_rules[kind].infix;
+        if(infix == NULL)
+            ERROR_AND_RET(BAD_EXPR, l, "Left side of operator is invalid.");
+        left = infix(l, left);
+    }
+    return left;
 }
 
-static ASTNode* parse_ternary(Lexer* l)
+static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 {
-    ASTNode* condition = parse_logical_or(l);
-
-    if(!tok_equal(l, TOKEN_QUESTION))
-        return condition;
-
-    ASTNode* tern = create_node(NODE_TERNARY, peek(l));
+    Token tok = *peek(l);
     advance(l);
-    ASTNode* true_node = parse_assignment(l);
-    consume(l, TOKEN_COLON);
-    ASTNode* false_node = parse_ternary(l);
-    condition->next = true_node;
-    true_node->next = false_node;
-    false_node->next = NULL;
-    tern->children = condition;
-    return tern;
+
+    ASTExpr* rhs;
+    OpPrecedence rhs_pref = expr_rules[tok.kind].precedence;
+    if(rhs_pref != PREC_ASSIGN)
+        rhs_pref++;
+
+    rhs = parse_expr(l, rhs_pref);
+    if(rhs == NULL || rhs->kind == EXPR_INVALID)
+        return BAD_EXPR;
+
+    ASTExpr* binary = MALLOC_STRUCT(ASTExpr);
+    binary->kind = EXPR_BINARY;
+    binary->token = tok;
+    binary->expr.binary.lhs = lhs;
+    binary->expr.binary.rhs = rhs;
+    binary->expr.binary.kind = tok_to_binary_op(tok.kind);
+    return binary;
 }
 
-static ASTNode* parse_logical_or(Lexer* l)
+static ASTExpr* parse_identifier_expr(Lexer* l)
 {
-    ASTNode* node = parse_logical_and(l);
-    while(tok_equal(l, TOKEN_LOG_OR))
-    {
-        ASTNode* new_node = create_node(NODE_LOG_OR, peek(l));
-        advance(l);
-        ASTNode* rhs = parse_logical_and(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-    return node;
-}
-
-static ASTNode* parse_logical_and(Lexer* l)
-{
-    ASTNode* node = parse_bitwise_or(l);
-    while(tok_equal(l, TOKEN_LOG_AND))
-    {
-        ASTNode* new_node = create_node(NODE_LOG_AND, peek(l));
-        advance(l);
-        ASTNode* rhs = parse_bitwise_or(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-    return node;
-}
-
-static ASTNode* parse_bitwise_or(Lexer* l)
-{
-    ASTNode* node = parse_bitwise_xor(l);
-    while(tok_equal(l, TOKEN_BIT_OR))
-    {
-        ASTNode* new_node = create_node(NODE_BIT_OR, peek(l));
-        advance(l);
-        ASTNode* rhs = parse_bitwise_xor(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-    return node;
-
-}
-
-static ASTNode* parse_bitwise_xor(Lexer* l)
-{
-    ASTNode* node = parse_bitwise_and(l);
-    while(tok_equal(l, TOKEN_BIT_XOR))
-    {
-        ASTNode* new_node = create_node(NODE_BIT_XOR, peek(l));
-        advance(l);
-        ASTNode* rhs = parse_bitwise_and(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-    return node;
-
-}
-
-static ASTNode* parse_bitwise_and(Lexer* l)
-{
-    ASTNode* node = parse_logical_equality(l);
-    while(tok_equal(l, TOKEN_AMP))
-    {
-        ASTNode* new_node = create_node(NODE_BIT_AND, peek(l));
-        advance(l);
-        ASTNode* rhs = parse_logical_equality(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-    return node;
-
-}
-
-static ASTNode* parse_logical_equality(Lexer* l)
-{
-    ASTNode* node = parse_relational(l);
-    while(true)
-    {
-        ASTNode* new_node;
-        if(tok_equal(l, TOKEN_LOG_EQUIV))
-            new_node = create_node(NODE_EQ, peek(l));
-        else if(tok_equal(l, TOKEN_LOG_NOT_EQUIV))
-            new_node = create_node(NODE_NE, peek(l));
-        else
-            return node;
-
-        advance(l);
-        ASTNode* rhs = parse_relational(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-}
-
-static ASTNode* parse_relational(Lexer* l)
-{
-    ASTNode* node = parse_bitwise_shift(l);
-    while(true)
-    {
-        ASTNode* new_node;
-        bool reverse = false;
-        if(tok_equal(l, TOKEN_LT))
-            new_node = create_node(NODE_LT, peek(l));
-        else if(tok_equal(l, TOKEN_LE))
-            new_node = create_node(NODE_LE, peek(l));
-        else if(tok_equal(l, TOKEN_GT))
-        {
-            reverse = true;
-            new_node = create_node(NODE_LT, peek(l));
-        }
-        else if(tok_equal(l, TOKEN_GE))
-        {
-            reverse = true;
-            new_node = create_node(NODE_LE, peek(l));
-        }
-        else
-            return node;
-
-        advance(l);
-        ASTNode* other = parse_bitwise_shift(l);
-        if(reverse)
-        {
-            other->next = node;
-            node->next = NULL;
-            new_node->children = other;
-        }
-        else
-        {
-            node->next = other;
-            other->next = NULL;
-            new_node->children = node;
-        }
-        node = new_node;
-    }
-
-}
-
-static ASTNode* parse_bitwise_shift(Lexer* l)
-{
-    ASTNode* node = parse_add_and_sub(l);
-    while(true)
-    {
-        ASTNode* new_node;
-        if(tok_equal(l, TOKEN_SHL))
-            new_node = create_node(NODE_SHL, peek(l));
-        else if(tok_equal(l, TOKEN_SHR))
-            new_node = create_node(NODE_SHR, peek(l));
-        else
-            return node;
-
-        advance(l);
-        ASTNode* rhs = parse_add_and_sub(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-}
-
-static ASTNode* parse_add_and_sub(Lexer* l)
-{
-    ASTNode* node = parse_mul_div_and_mod(l);
-    while(true)
-    {
-        ASTNode* new_node;
-        if(tok_equal(l, TOKEN_ADD))
-            new_node = create_node(NODE_ADD, peek(l));
-        else if(tok_equal(l, TOKEN_SUB))
-            new_node = create_node(NODE_SUB, peek(l));
-        else
-            return node;
-
-        advance(l);
-        ASTNode* rhs = parse_mul_div_and_mod(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-
-}
-
-static ASTNode* parse_mul_div_and_mod(Lexer* l)
-{
-    ASTNode* node = parse_cast(l);
-    while(true)
-    {
-        ASTNode* new_node;
-        if(tok_equal(l, TOKEN_ASTERISK))
-            new_node = create_node(NODE_MUL, peek(l));
-        else if(tok_equal(l, TOKEN_DIV))
-            new_node = create_node(NODE_DIV, peek(l));
-        else if(tok_equal(l, TOKEN_MOD))
-            new_node = create_node(NODE_MOD, peek(l));
-        else
-            return node;
-
-        advance(l);
-        ASTNode* rhs = parse_cast(l);
-        node->next = rhs;
-        rhs->next = NULL;
-        new_node->children = node;
-        node = new_node;
-    }
-}
-
-static ASTNode* parse_cast(Lexer* l)
-{
-    // if(tok_equal(l, ) && 
-    // {
-    //     sic_error_fatal("Casts not implemented yet.");
-        // Token* cast_tok = s_token;
-        // Type* type;
-        // parse_type_prefix(&type, NULL);
-        // expect(&s_token, ")");
-        // ASTNode* node = create_node(NODE_CAST, cast_tok);
-        // node->next = NULL;
-        // node->children = parse_cast(l);
-    // }
-    return parse_unary(l);
-}
-
-static ASTNode* parse_unary(Lexer* l)
-{
-    if(tok_equal(l, TOKEN_SUB))
-    {
-        ASTNode* node = create_node(NODE_NEG, peek(l));
-        advance(l);
-        node->next = NULL;
-        node->children = parse_cast(l);
-        return node;
-    }
-    
-    if(tok_equal(l, TOKEN_AMP))
-    {
-        ASTNode* node = create_node(NODE_ADDR_OF, peek(l));
-        advance(l);
-        node->next = NULL;
-        node->children = parse_cast(l);
-        return node;
-    }
-
-    if(tok_equal(l, TOKEN_ASTERISK))
-    {
-        ASTNode* node = create_node(NODE_DEREF, peek(l));
-        advance(l);
-        node->next = NULL;
-        node->children = parse_cast(l);
-        return node;
-    }
-
-    if(tok_equal(l, TOKEN_LOG_NOT))
-    {
-        ASTNode* node = create_node(NODE_LOG_NOT, peek(l));
-        advance(l);
-        node->next = NULL;
-        node->children = parse_cast(l);
-        return node;
-    }
-
-    if(tok_equal(l, TOKEN_BIT_NOT))
-    {
-        ASTNode* node = create_node(NODE_BIT_NOT, peek(l));
-        advance(l);
-        node->next = NULL;
-        node->children = parse_cast(l);
-        return node;
-    }
-    return parse_postfix(l);
-}
-
-
-static ASTNode* parse_postfix(Lexer* l)
-{
-    ASTNode* node = parse_primary_expr(l);
-    while(true)
-    {
-        if(tok_equal(l, TOKEN_LPAREN))
-        {
-            parse_func_call(l);
-        }
-
-        return node;
-    }
-}
-
-static ASTNode* parse_func_call(Lexer* l)
-{
-    (void)l;
-    sic_error_fatal("Function calls are unimplemented.");
-}
-
-static ASTNode* parse_primary_expr(Lexer* l)
-{
-    if(tok_equal(l, TOKEN_IDENT))
-    {
-        Object* var = get_var(peek(l));
-        if(var)
-        {
-            ASTNode* new_node = create_node(NODE_VAR, peek(l));
-            new_node->var = var;
-            advance(l);
-            return new_node;
-        }
-        sic_error("Undefined variable \'%.*s\'.", (int)peek(l)->len, peek(l)->loc);
-    }
-    else if(tok_equal(l, TOKEN_NUM))
-    {
-        ASTNode* new_node = create_node(NODE_NUM, peek(l));
-        advance(l);
-        return new_node;
-    }
-    else
-        sic_error("Expected an expression.");
+    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
+    expr->kind = EXPR_PRE_SEMANTIC_IDENT;
+    expr->token = *peek(l);
     advance(l);
-    return &s_badnode;
+    return expr;
 }
 
-static void enter_scope(void)
+static ASTExpr* parse_paren_expr(Lexer* l)
 {
-    Scope* new_scope = MALLOC(sizeof(Scope));
-    new_scope->parent = s_curscope;
-    hashmap_init(&new_scope->vars);
-    s_curscope = new_scope;
-}
-
-static void exit_scope(void)
-{
-    hashmap_free(&s_curscope->vars);
-    s_curscope = s_curscope->parent;
-}
-
-static Object*  scope_def_obj(Lexer* l, Token* symbol, StorageClass storage)
-{
-    Object* old = hashmap_getn(&s_curscope->vars, symbol->loc, symbol->len);
-    if(old != NULL)
+    SIC_ASSERT(peek(l)->kind == TOKEN_LPAREN);
+    advance(l);
+    Type* cast_type;
+    parse_type_prefix(l, &cast_type, NULL);
+    if(cast_type != NULL)
     {
-        sic_error_at(l->file_name, symbol, "Redefinition of symbol \'%.*s\'", (int)symbol->len, symbol->loc);
-        return old;
-    }
-    Object* obj = MALLOC(sizeof(Object));
-    obj->symbol = *symbol;
-    if(storage == STORAGE_SCOPE)
-    {
-        obj->next = s_locals;
-        s_locals = obj;
-    }
-    else
-    {
-        obj->next = s_globals;
-        s_globals = obj;
-    }
-    hashmap_putn(&s_curscope->vars, symbol->loc, symbol->len, obj);
-    return obj;
-}
-
-static Object* get_var(Token* symbol)
-{
-    for(Scope* s = s_curscope; s != NULL; s = s->parent)
-    {
-        Object* var = hashmap_getn(&s->vars, symbol->loc, symbol->len);
-        if(var != NULL)
-            return var;
-    }
-    return NULL;
-}
-
-static Type* get_type(Token* tok)
-{
-    if(tok->kind >= TOKEN_TYPENAME_START && tok->kind <= TOKEN_TYPENAME_END)
-        return builtin_type(tok->kind);
-    else if(tok->kind == TOKEN_IDENT)
-    {
-        // Search through scopes for typedef
+        ASTExpr* cast = MALLOC_STRUCT(ASTExpr);
+        cast->kind = EXPR_CAST;
+        cast->token = *peek(l);
+        CONSUME_OR_RET(BAD_EXPR, l, TOKEN_RPAREN);
+        cast->expr.cast.expr_to_cast = parse_expr(l, PREC_PRIMARY_POSTFIX);
+        if(cast->expr.cast.expr_to_cast == NULL || cast->expr.cast.expr_to_cast->kind == EXPR_INVALID)
+            return BAD_EXPR;
+        return cast;
     }
 
-    return NULL;
+    ASTExpr* inside_expr = parse_expr(l, PREC_ASSIGN);
+    CONSUME_OR_RET(BAD_EXPR, l, TOKEN_RPAREN);
+    return inside_expr;
 }
 
-static ASTNode* create_node(NodeKind kind, Token* token)
+static ASTExpr* parse_unary_prefix(Lexer* l)
 {
-    ASTNode* res = MALLOC(sizeof(ASTNode));
-    res->kind = kind;
-    res->token = *token;
-    res->next = NULL;
-    res->children = NULL;
-    return res;
+    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
+    expr->kind = EXPR_UNARY;
+    expr->token = *peek(l);
+    expr->expr.unary.child = parse_expr(l, PREC_UNARY_PREFIX);
+    if(expr->expr.unary.child == NULL || expr->expr.unary.child->kind == EXPR_INVALID)
+        return BAD_EXPR;
+    return expr;
 }
+
+static ASTExpr* parse_int_literal(Lexer* l)
+{
+    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
+    expr->kind = EXPR_CONSTANT;
+    expr->token = *peek(l);
+    advance(l);
+    return expr;
+}
+
+static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
+    [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
+    [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
+    [TOKEN_CHAR_LITERAL]    = { NULL, NULL, PREC_NONE },
+    [TOKEN_FLOAT_LITERAL]   = { NULL, NULL, PREC_NONE },
+    [TOKEN_STRING_LITERAL]  = { NULL, NULL, PREC_NONE },
+    [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
+    [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
+    [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
+    [TOKEN_BIT_OR]          = { NULL, parse_binary, PREC_BIT_OR },
+    [TOKEN_BIT_XOR]         = { NULL, parse_binary, PREC_BIT_XOR },
+    [TOKEN_ASSIGN]          = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
+    // [TOKEN_PERIOD]          = { NULL, NULL, PREC_PRIMARY_POSTFIX },
+    // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
+    // [TOKEN_LBRACKET]        = { NULL, NULL, PREC_NONE },
+    [TOKEN_LPAREN]          = { parse_paren_expr, NULL, PREC_NONE },
+    [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
+    [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
+    [TOKEN_MOD]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_QUESTION]        = { NULL, NULL, PREC_TERNARY },
+    [TOKEN_SHR]             = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_LOG_AND]         = { NULL, parse_binary, PREC_LOG_AND },
+    [TOKEN_LOG_OR]          = { NULL, parse_binary, PREC_LOG_OR },
+    [TOKEN_EQ]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_NE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_LE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_GE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_BIT_AND_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_BIT_OR_ASSIGN]   = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_BIT_XOR_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_ADD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_SUB_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_MUL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_DIV_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_MOD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_SHR_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_INCREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
+    [TOKEN_DECREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
+};

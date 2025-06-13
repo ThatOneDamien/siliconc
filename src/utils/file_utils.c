@@ -1,14 +1,20 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 #include "file_utils.h"
-#include "error.h"
+#include "da.h"
+#include "lib.h"
 #include "core/core.h"
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 #define FILE_FOUND 0
+
+static StringArray s_tempfiles = {0};
 
 SIFile sifile_new(const char* path)
 {
@@ -56,9 +62,7 @@ char* read_entire_file(const SIFile* file)
     if(lseek(fd, 0, SEEK_SET) < 0)
         goto end;
 
-    res = malloc(sizeof(char) * size + 2);
-    if(res == NULL)
-        goto end;
+    res = cmalloc(sizeof(char) * size + 2);
     ssize_t total_read = 0;
 
     while(true)
@@ -154,4 +158,35 @@ const char* ft_to_extension(FileType ft)
         [FT_SHARED] = ".so", 
     };
     return ft_to_ext[ft];
+}
+
+SIFile create_tempfile(FileType ft)
+{
+    if(s_tempfiles.capacity == 0)
+        da_init(&s_tempfiles, 0);
+    static const char template[21] = "/tmp/siliconc-XXXXXX";
+    const char* ext = ft_to_extension(ft);
+    int ext_len = strlen(ext);
+    char* tmppath = malloc(sizeof(template) + ext_len);
+    memcpy(tmppath, template, sizeof(template) - 1);
+    memcpy(tmppath + sizeof(template) - 1, ext, ext_len + 1);
+
+    int fd = mkstemps(tmppath, ext_len);
+    if(fd == -1)
+        sic_error_fatal("Failed to create temporary file.");
+
+    close(fd);
+    da_append(&s_tempfiles, tmppath);
+
+    SIFile res;
+    res.full_path = tmppath;
+    res.file_name = tmppath + 5;
+    res.type = ft;
+    return res;
+}
+
+void close_tempfiles(void)
+{
+    for(size_t i = 0; i < s_tempfiles.size; ++i)
+        unlink(s_tempfiles.data[i]);
 }

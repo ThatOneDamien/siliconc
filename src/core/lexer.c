@@ -4,12 +4,13 @@
 
 #include <string.h>
 
-#define at_eof(lex)    ((lex)->cur_pos[0] == '\0')
-#define peek(lex)      ((lex)->cur_pos[0])
-#define peek_next(lex) ((lex)->cur_pos[1])
-#define next(lex)      (++(lex)->cur_pos)
-#define nextr(lex)     (*(++(lex)->cur_pos))
-#define backtrack(lex) (--(lex)->cur_pos)
+#define at_eof(lex)         ((lex)->cur_pos[0] == '\0')
+#define peek(lex)           ((lex)->cur_pos[0])
+#define peek_next(lex)      ((lex)->cur_pos[1])
+#define advance(lex, count) ((lex)->cur_pos += count)
+#define next(lex)           (++(lex)->cur_pos)
+#define nextr(lex)          (*(++(lex)->cur_pos))
+#define backtrack(lex)      (--(lex)->cur_pos)
 
 // static Token* create_token(TokenKind type, char* start, size_t len);
 // static size_t extract_num_literal(char* source);
@@ -27,13 +28,14 @@ static inline bool   consume_nl(Lexer* lexer);
 static inline Token* next_token_loc(Lexer* lexer);
 static inline bool   extract_identifier(Lexer* lexer, Token* t);
 static inline bool   extract_num_literal(Lexer* lexer, Token* t);
+static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
 
-void lexer_init_file(Lexer* lexer, const SIFile* input)
+void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
 {
     SIC_ASSERT(lexer != NULL);
-    SIC_ASSERT(input != NULL);
-    lexer->file_name  = input->full_path;
-    lexer->src_start  = read_entire_file(input);
+    SIC_ASSERT(unit != NULL);
+    lexer->unit       = unit;
+    lexer->src_start  = read_entire_file(&unit->file);
     lexer->cur_pos    = lexer->src_start;
     lexer->cur_line   = 1;
     lexer->line_start = lexer->src_start;
@@ -120,7 +122,7 @@ bool lexer_advance(Lexer* lexer)
         return true;
     case '!':
         if(consume(lexer, '='))
-            t->kind = TOKEN_LOG_NOT_EQUIV;
+            t->kind = TOKEN_NE;
         else
             t->kind = TOKEN_LOG_NOT;
         return true;
@@ -140,7 +142,7 @@ bool lexer_advance(Lexer* lexer)
         return true;
     case '=':
         if(consume(lexer, '='))
-            t->kind = TOKEN_LOG_EQUIV;
+            t->kind = TOKEN_EQ;
         else
             t->kind = TOKEN_ASSIGN;
         return true;
@@ -339,10 +341,40 @@ static inline bool extract_num_literal(Lexer* lexer, Token* t)
         }
     }
 
+
     while(c_is_num(peek(lexer)))
         next(lexer);
     
-    t->kind = TOKEN_NUM;
+    bool is_float = false;
+
+    if(peek(lexer) == '.')
+    {
+        is_float = true;
+        next(lexer);
+        while(c_is_num(peek(lexer)))
+            next(lexer);
+    }
+
+    if(!extract_num_suffix(lexer, &is_float))
+    {
+        next(lexer);
+        t->kind = TOKEN_INVALID;
+        t->len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc;
+        sic_error_at(lexer->unit->file.full_path, t, "Invalid numeric literal.");
+        return false;
+    }
+    
+    t->kind = is_float ? TOKEN_FLOAT_LITERAL : TOKEN_INT_LITERAL;
     t->len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc;
     return true;
+}
+
+static inline bool extract_num_suffix(Lexer* lexer, bool* is_float)
+{
+    (void)is_float;
+    // No suffix
+    if(!c_is_alpha(peek(lexer)))
+        return true;
+    SIC_ERROR_DBG("Unimplemented suffix.");
+    return false;
 }
