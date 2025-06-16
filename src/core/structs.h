@@ -1,10 +1,12 @@
 #pragma once
 #include "enums.h"
 #include "utils/file_utils.h"
+#include "utils/lib.h"
 
 #define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
 
 // Lexing Stage Structs
+typedef struct SourceLoc        SourceLoc;
 typedef struct Token            Token;
 typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
@@ -15,8 +17,12 @@ typedef struct Type             Type;
 
 // AST Structs
 typedef struct ASTBlock         ASTBlock;
+typedef struct ASTDeclaration   ASTDeclaration;
+typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTExprBinary    ASTExprBinary;
+typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
+typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct ASTExprIdent     ASTExprIdent;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExpr          ASTExpr;
@@ -28,15 +34,24 @@ typedef struct ObjFunc          ObjFunc;
 typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
 typedef struct ObjectDA         ObjectDA;
+
+// Semantic Analysis Structs
+typedef struct Scope            Scope;
+
 typedef struct CompilationUnit  CompilationUnit;
 
-struct Token
+struct SourceLoc
 {
-    TokenKind   kind;
-    const char* loc;
+    const char* start;
     const char* line_start;
     uint32_t    len;
     uint32_t    line_num;
+};
+
+struct Token
+{
+    TokenKind kind;
+    SourceLoc loc;
 };
 
 
@@ -55,6 +70,7 @@ struct Lexer
     uint32_t         cur_line;
     LookAhead        la_buf;
 };
+
 
 struct TypeBuiltin
 {
@@ -78,45 +94,74 @@ struct ASTBlock
     ASTNode* body;
 };
 
+struct ASTDeclaration
+{
+    Type* unresolved_type;
+};
+
+struct ASTExprDA
+{
+    ASTExpr** data;
+    size_t    capacity;
+    size_t    size;
+};
+
 struct ASTExprBinary
 {
-    ASTExpr* lhs;
-    ASTExpr* rhs;
+    ASTExpr*     lhs;
+    ASTExpr*     rhs;
     BinaryOpKind kind;
+};
+
+struct ASTExprCall
+{
+    ASTExpr*  func_expr;
+    ASTExprDA args;
 };
 
 struct ASTExprCast
 {
-    Type*    type;
     ASTExpr* expr_to_cast;
+    Type*    cast_type;
+};
+
+struct ASTExprConstant
+{
+    ConstantKind kind;
+    union
+    {
+        uint64_t  i;
+        double    f;
+    } val;
 };
 
 struct ASTExprIdent
 {
-    
+    SourceLoc loc;
 };
 
 struct ASTExprUnary
 {
-    ASTExpr* child;
+    ASTExpr*    child;
     UnaryOpKind kind;
 };
 
 struct ASTExpr
 {
-    Type* type;
-    Token token;
-    ExprKind kind;
+    Type*     type;
+    SourceLoc loc;
+    ExprKind  kind;
 
     union
     {
-        ASTExprBinary binary;
-        ASTExprCast   cast;
-        ASTExprIdent  pre_sema_ident;
-        ASTExprUnary  unary;
+        ASTExprBinary   binary;
+        ASTExprCall     call;
+        ASTExprCast     cast;
+        ASTExprConstant constant;
+        ASTExprIdent    pre_sema_ident;
+        ASTExprUnary    unary;
     } expr;
 };
-
 
 struct ASTReturn
 {
@@ -131,9 +176,10 @@ struct ASTNode
 
     union
     {
-        ASTBlock  block;
-        ASTExpr*  expr;
-        ASTReturn return_;
+        ASTBlock        block;
+        ASTDeclaration  declaration;
+        ASTExpr*        expr;
+        ASTReturn       return_;
     } stmt;
 };
 
@@ -156,7 +202,7 @@ struct ObjVar
 struct Object
 {
     Object*      next;
-    Token        symbol;
+    SourceLoc    symbol;
     ObjKind      kind;
     ObjAccess    access;
     ObjAttr      attribs;
@@ -174,6 +220,12 @@ struct ObjectDA
     Object** data;
     size_t   capacity;
     size_t   size;
+};
+
+struct Scope
+{
+    Scope*  parent;
+    HashMap vars;
 };
 
 struct CompilationUnit

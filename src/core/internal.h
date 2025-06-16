@@ -41,6 +41,9 @@ Token* lexer_look_ahead(Lexer* lexer, uint32_t count); // count < LOOK_AHEAD_SIZ
 void parser_init(void);
 void parse_unit(CompilationUnit* unit);
 
+// Semantic analysis functions
+void semantic_analysis(CompilationUnit* unit);
+
 // Symbol map functions
 void      sym_map_init(void);
 TokenKind sym_map_get(const char* str);

@@ -149,6 +149,8 @@ static SIFile compile(const SIFile* input)
 
     unit.file = *input;
     parse_unit(&unit);
+    semantic_analysis(&unit);
+    print_unit(&unit);
     if(sic_error_cnt() > 0)
         return (SIFile){0};
     
@@ -164,7 +166,6 @@ static SIFile compile(const SIFile* input)
         output = create_tempfile(FT_ASM);
 
     // TODO: Remove (TEMPORARY)
-    print_unit(&unit);
     exit(0);
     gen_intermediate_rep(&unit, &output);
     return output;

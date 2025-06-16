@@ -47,25 +47,25 @@ void sic_error_atv(const char* filepath, const Token* t, const char* restrict me
 {
     SIC_ASSERT(filepath != NULL);
     SIC_ASSERT(t != NULL);
-    SIC_ASSERT(t->loc != NULL);
+    SIC_ASSERT(t->loc.start != NULL);
     SIC_ASSERT(message != NULL);
-    char* next_line = strchr(t->loc, '\n');
-    const char* loc_end = t->loc + t->len;
-    int before_size = (uintptr_t)t->loc - (uintptr_t)t->line_start;
+    char* next_line = strchr(t->loc.start, '\n');
+    const char* loc_end = t->loc.start + t->loc.len;
+    int before_size = (uintptr_t)t->loc.start - (uintptr_t)t->loc.line_start;
     int after_size = next_line == NULL ? strlen(loc_end) : (uintptr_t)next_line - (uintptr_t)loc_end;
 
     fprintf(stderr, "%s:%u: \033[31merror:\033[0m ", 
             filepath, 
-            t->line_num);
+            t->loc.line_num);
     
     vfprintf(stderr, message, va);
 
     fprintf(stderr, "\n%4u | %.*s\033[31m%.*s\033[0m%.*s\n     | ", 
-            t->line_num, 
-            before_size, t->line_start,
-            (int)t->len, t->loc,
+            t->loc.line_num, 
+            before_size, t->loc.line_start,
+            (int)t->loc.len, t->loc.start,
             after_size,  loc_end);
-    for(const char* s = t->line_start; s < t->loc; ++s)
+    for(const char* s = t->loc.line_start; s < t->loc.start; ++s)
     {
         if(isspace(*s))
             putc(*s, stderr);
@@ -73,7 +73,7 @@ void sic_error_atv(const char* filepath, const Token* t, const char* restrict me
             putc(' ', stderr);
     }
     fprintf(stderr, "\033[31m^");
-    for(uint32_t i = 1; i < t->len; ++i)
+    for(uint32_t i = 1; i < t->loc.len; ++i)
         putc('~', stderr);
     fprintf(stderr, "\033[0m\n");
     s_error_cnt++;

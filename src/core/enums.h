@@ -59,8 +59,9 @@ typedef enum
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
+    TOKEN_AS,
+    TOKEN_KEYWORD_START = TOKEN_AS,
     TOKEN_CONST,
-    TOKEN_KEYWORD_START = TOKEN_CONST,
     TOKEN_EXTERN,
     TOKEN_PRIV,
     TOKEN_PROT,
@@ -86,6 +87,14 @@ typedef enum
     TOKEN_EOF,               // End Of File Token
     __TOKEN_COUNT
 } TokenKind;
+
+typedef enum
+{
+    CONST_INVALID = 0,
+    CONSTANT_INTEGER,
+    CONSTANT_FLOAT,
+    CONSTANT_STRING,
+} ConstantKind;
 
 typedef enum
 {
@@ -149,6 +158,7 @@ typedef enum
     NODE_INVALID = 0,
 
     NODE_BLOCK,
+    NODE_DECLARATION,
     NODE_EXPR_STMT,
     NODE_RETURN,
 } NodeKind;
@@ -185,7 +195,6 @@ typedef enum
     TYPE_BUILTIN_END = TYPE_F64,
 
     TYPE_POINTER,
-    TYPE_DEF_UNRESOLVED,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;

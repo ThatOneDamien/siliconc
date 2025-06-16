@@ -13,7 +13,6 @@ struct ExprParseRule
     OpPrecedence  precedence;
 };
 
-
 // Global check and add functions
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
@@ -29,7 +28,8 @@ static ASTNode* parse_declaration(Lexer* l, Type* type, ObjAttr attribs);
 static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence);
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_identifier_expr(Lexer* l);
-static ASTExpr* parse_paren_expr(Lexer* l);
+static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
+static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
 static ASTExpr* parse_unary_prefix(Lexer* l);
 static ASTExpr* parse_int_literal(Lexer* l);
 
@@ -117,6 +117,29 @@ static inline ASTNode* new_node(Lexer* l, NodeKind kind)
     return node;
 }
 
+static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
+{
+    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    expr->kind = kind;
+    expr->loc = peek(l)->loc;
+    return expr;
+}
+
+static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
+{
+    while(true)
+    {
+        TokenKind kind = peek(l)->kind;
+        SIC_ASSERT(kind != TOKEN_INVALID);
+        if(kind == TOKEN_EOF)
+            return;
+        for(size_t i = 0; i < count; ++i)
+            if(kind == stopping_kinds[i])
+                return;
+        advance(l);
+    }
+}
+
 static ASTNode s_badnode = {0};
 static ASTExpr s_badexpr = {0};
 static ExprParseRule expr_rules[__TOKEN_COUNT];
@@ -158,7 +181,6 @@ void parse_unit(CompilationUnit* unit)
         
         if(recovery_needed)
         {
-            printf("recovering.\n");
             while(true)
             {
                 Token* t = peek_forw(&l, 1);
@@ -167,7 +189,7 @@ void parse_unit(CompilationUnit* unit)
                     advance(&l);
                     break;
                 }
-                if(t->loc == t->line_start &&
+                if(t->loc.start == t->loc.line_start &&
                     (t->kind == TOKEN_IDENT ||
                     (t->kind >= TOKEN_KEYWORD_START &&
                      t->kind <= TOKEN_KEYWORD_END)))
@@ -189,7 +211,7 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
     ObjFunc* comps = &func->func;
     func->kind = OBJ_FUNC;
     comps->ret_type = ret_type;
-    func->symbol = *peek(l);
+    func->symbol = peek(l)->loc;
     func->access = access;
     func->attribs = attribs;
 
@@ -377,7 +399,7 @@ static bool parse_func_params(Lexer* l, Object** params, size_t* count)
         cur_param->kind = OBJ_VAR;
         cur_param->next = NULL;
         cur_param->var.type = type;
-        cur_param->symbol = *peek(l);
+        cur_param->symbol = peek(l)->loc;
 
         advance(l);
     }
@@ -421,42 +443,39 @@ static ASTNode* parse_stmt_block(Lexer* l)
 
 static ASTNode* parse_stmt(Lexer* l)
 {
+    static const TokenKind recover_list[] = { TOKEN_SEMI, TOKEN_RBRACE };
     if(tok_equal(l, TOKEN_SEMI))
     {
         ASTNode* node = new_node(l, NODE_EXPR_STMT);
-        node->stmt.expr = MALLOC_STRUCT(ASTExpr);
-        node->stmt.expr->kind = EXPR_NOP;
+        node->stmt.expr = new_expr(l, EXPR_NOP);
         advance(l);
         return node;
     }
-    //
-    // if(tok_equal(l, TOKEN_RETURN))
-    // {
-    //     ASTNode* new_node = create_node(NODE_RETURN, peek(l));
-    //     Type* ret_type = s_curfunc->func.ret_type;
-    //     advance(l);
-    //     if(try_consume(l, TOKEN_SEMI))
-    //     {
-    //         if(ret_type != g_type_void)
-    //             sic_error_fatal("Non-void function should return a value.");
-    //         return new_node;
-    //     }
-    //
-    //     ASTNode* ret_expr = parse_assignment(l);
-    //     consume(l, TOKEN_SEMI);
-    //
-    //     new_node->children = ret_expr;
-    //     return new_node;
-    // }
+
+    if(tok_equal(l, TOKEN_RETURN))
+    {
+        ASTNode* node = new_node(l, NODE_RETURN);
+        advance(l);
+        if(!try_consume(l, TOKEN_SEMI))
+        {
+            node->stmt.return_.ret_expr = parse_expr(l, PREC_ASSIGN);
+            if(node->stmt.return_.ret_expr->kind == EXPR_INVALID)
+            {
+                recover_to(l, recover_list, sizeof(recover_list) / sizeof(recover_list[0]));
+                return BAD_NODE;
+            }
+            consume(l, TOKEN_SEMI);
+        }
+        return node;
+    }
 
     ASTNode* expr_stmt = new_node(l, NODE_EXPR_STMT);
     expr_stmt->stmt.expr = parse_expr(l, PREC_ASSIGN);
-    if(expr_stmt->stmt.expr == NULL || expr_stmt->stmt.expr->kind == EXPR_INVALID)
+    if(expr_stmt->stmt.expr->kind == EXPR_INVALID || !consume(l, TOKEN_SEMI))
     {
-        advance(l);
+        recover_to(l, recover_list, sizeof(recover_list) / sizeof(recover_list[0]));
         return BAD_NODE;
     }
-    consume(l, TOKEN_SEMI);
     return expr_stmt;
 }
 
@@ -466,32 +485,10 @@ static ASTNode* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     (void)attribs;
     ASTNode head;
     head.next = NULL;
-    // ASTNode* cur = &head;
 
     if(type == g_type_void)
         sic_error_fatal("Variables cannot be declared as type void.");
 
-    // while(expect(l, TOKEN_IDENT))
-    // {
-    //     Object* new_var = scope_def_obj(l, peek(l), storage);
-    //     new_var->kind = OBJ_VAR;
-    //     new_var->var.type = type;
-    //     advance(l);
-    //     if(tok_equal(l, TOKEN_ASSIGN))
-    //     {
-    //         ASTNode* assign = create_node(NODE_ASSIGN, peek(l));
-    //         assign->children = create_node(NODE_VAR, &new_var->symbol);
-    //         assign->children->var = new_var;
-    //         advance(l);
-    //         assign->children->next = parse_assignment(l);
-    //         cur->next = assign;
-    //         cur = cur->next;
-    //     }
-    //     if(try_consume(l, TOKEN_COMMA))
-    //         continue;
-    //     consume(l, TOKEN_SEMI);
-    //     break;
-    // }
     return head.next;
 }
 
@@ -507,7 +504,7 @@ static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence)
         TokenKind kind = peek(l)->kind;
         if(expr_rules[kind].precedence < precedence)
             break;
-        if(left == NULL || left->kind == EXPR_INVALID)
+        if(left->kind == EXPR_INVALID)
             return left;
 
         ExprInfixFunc infix = expr_rules[kind].infix;
@@ -520,6 +517,7 @@ static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence)
 
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 {
+    ASTExpr* binary = new_expr(l, EXPR_BINARY);
     Token tok = *peek(l);
     advance(l);
 
@@ -529,12 +527,9 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
         rhs_pref++;
 
     rhs = parse_expr(l, rhs_pref);
-    if(rhs == NULL || rhs->kind == EXPR_INVALID)
+    if(rhs->kind == EXPR_INVALID)
         return BAD_EXPR;
 
-    ASTExpr* binary = MALLOC_STRUCT(ASTExpr);
-    binary->kind = EXPR_BINARY;
-    binary->token = tok;
     binary->expr.binary.lhs = lhs;
     binary->expr.binary.rhs = rhs;
     binary->expr.binary.kind = tok_to_binary_op(tok.kind);
@@ -543,31 +538,57 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
-    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
-    expr->kind = EXPR_PRE_SEMANTIC_IDENT;
-    expr->token = *peek(l);
+    ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
+    expr->expr.pre_sema_ident.loc = peek(l)->loc;
     advance(l);
     return expr;
+}
+
+static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
+{
+    ASTExpr* call = new_expr(l, EXPR_FUNC_CALL);
+    advance(l);
+    if(try_consume(l, TOKEN_RPAREN)) // void return
+        return call;
+    
+    ASTExprDA* args = &call->expr.call.args;
+    da_init(args, 8);
+    da_append(args, parse_expr(l, PREC_ASSIGN));
+    if(args->data[0]->kind == EXPR_INVALID)
+        return BAD_EXPR;
+
+    while(!try_consume(l, TOKEN_RPAREN))
+    {
+        CONSUME_OR_RET(BAD_EXPR, l, TOKEN_COMMA);
+
+        da_append(args, parse_expr(l, PREC_ASSIGN));
+        if(args->data[args->size - 1]->kind == EXPR_INVALID)
+            return BAD_EXPR;
+    }
+
+    call->expr.call.func_expr = func_expr;
+    return call;
+}
+
+static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
+{
+    ASTExpr* cast = new_expr(l, EXPR_CAST);
+    advance(l);
+    
+    Type* ty;
+    parse_type_prefix(l, &ty, NULL);
+    if(ty == NULL)
+        ERROR_AND_RET(BAD_EXPR, l, "Expected a type after keyword \'as\'.");
+    cast->expr.cast.expr_to_cast = expr_to_cast;
+    cast->expr.cast.cast_type = ty;
+
+    return cast;
 }
 
 static ASTExpr* parse_paren_expr(Lexer* l)
 {
     SIC_ASSERT(peek(l)->kind == TOKEN_LPAREN);
     advance(l);
-    Type* cast_type;
-    parse_type_prefix(l, &cast_type, NULL);
-    if(cast_type != NULL)
-    {
-        ASTExpr* cast = MALLOC_STRUCT(ASTExpr);
-        cast->kind = EXPR_CAST;
-        cast->token = *peek(l);
-        CONSUME_OR_RET(BAD_EXPR, l, TOKEN_RPAREN);
-        cast->expr.cast.expr_to_cast = parse_expr(l, PREC_PRIMARY_POSTFIX);
-        if(cast->expr.cast.expr_to_cast == NULL || cast->expr.cast.expr_to_cast->kind == EXPR_INVALID)
-            return BAD_EXPR;
-        return cast;
-    }
-
     ASTExpr* inside_expr = parse_expr(l, PREC_ASSIGN);
     CONSUME_OR_RET(BAD_EXPR, l, TOKEN_RPAREN);
     return inside_expr;
@@ -575,20 +596,39 @@ static ASTExpr* parse_paren_expr(Lexer* l)
 
 static ASTExpr* parse_unary_prefix(Lexer* l)
 {
-    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
-    expr->kind = EXPR_UNARY;
-    expr->token = *peek(l);
+    ASTExpr* expr = new_expr(l, EXPR_UNARY);
+    advance(l);
     expr->expr.unary.child = parse_expr(l, PREC_UNARY_PREFIX);
-    if(expr->expr.unary.child == NULL || expr->expr.unary.child->kind == EXPR_INVALID)
+    if(expr->expr.unary.child->kind == EXPR_INVALID)
         return BAD_EXPR;
     return expr;
 }
 
 static ASTExpr* parse_int_literal(Lexer* l)
 {
-    ASTExpr* expr = MALLOC_STRUCT(ASTExpr);
-    expr->kind = EXPR_CONSTANT;
-    expr->token = *peek(l);
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+
+    // TODO: Deal with the prefix for hex, octal, binary
+
+    uint64_t val = 0;
+    for(uint32_t i = 0; i < expr->loc.len; ++i)
+    {
+        uint64_t prev = val;
+        val *= 10;
+        val += expr->loc.start[i] - '0';
+        if(prev > val)
+        {
+            parser_error(l, "Integer value exceeds maximum possible 64 bit value.");
+            advance(l);
+            return BAD_EXPR;
+        }
+    }
+
+    expr->expr.constant.val.i = val;
+    expr->type = g_type_u64;
+
+    // TODO: Deal with the suffix.
     advance(l);
     return expr;
 }
@@ -612,7 +652,7 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     // [TOKEN_PERIOD]          = { NULL, NULL, PREC_PRIMARY_POSTFIX },
     // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
     // [TOKEN_LBRACKET]        = { NULL, NULL, PREC_NONE },
-    [TOKEN_LPAREN]          = { parse_paren_expr, NULL, PREC_NONE },
+    [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
     [TOKEN_MOD]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
@@ -637,4 +677,5 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_INCREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
     [TOKEN_DECREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
+    [TOKEN_AS]              = { NULL, parse_cast, PREC_UNARY_PREFIX },
 };

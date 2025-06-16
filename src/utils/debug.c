@@ -113,9 +113,9 @@ void print_all_tokens(Lexer lexer)
         Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
         printf("%-15s: Len: %-4u   %.*s\n", 
                s_tok_names[tok->kind],
-               tok->len,
-               (int)tok->len, 
-               tok->loc);
+               tok->loc.len,
+               (int)tok->loc.len, 
+               tok->loc.start);
     }
 }
 
@@ -124,23 +124,33 @@ static void print_expr(const ASTExpr* expr, int depth)
     if(expr == NULL)
         return;
     PRINT_DEPTH(depth);
-    printf("(%s", s_tok_names[expr->token.kind]);
     switch(expr->kind)
     {
     case EXPR_BINARY:
-        printf(")\n");
+        printf("[ BINARY \'%.*s\' ]\n", expr->loc.len, expr->loc.start);
         print_expr(expr->expr.binary.lhs, depth + 1);
         print_expr(expr->expr.binary.rhs, depth + 1);
         break;
     case EXPR_CONSTANT:
-        printf(")\n");
+        printf("[ Constant \'%.*s\' val: %lu]\n", expr->loc.len, expr->loc.start, expr->expr.constant.val.i);
         break;
+    case EXPR_INVALID:
+        printf("[ Invalid ]\n");
+        break;
+    case EXPR_NOP:
+        printf("[ Nop ]\n");
+        break;
+    case EXPR_PRE_SEMANTIC_IDENT: {
+        const SourceLoc* loc = &expr->expr.pre_sema_ident.loc;
+        printf("[ Identifier \'%.*s\' ]\n", loc->len, loc->start);
+        break;
+    }
     case EXPR_UNARY:
-        printf(")\n");
+        printf("[ Unary \'%.*s\' ]\n", expr->loc.len, expr->loc.start);
         print_expr(expr->expr.unary.child, depth + 1);
         break;
     default:
-        printf(")\n");
+        printf("[ %.*s ]\n", expr->loc.len, expr->loc.start);
         break;
     }
 }
@@ -151,7 +161,7 @@ static void print_node(const ASTNode* node, int depth)
         return;
 
     PRINT_DEPTH(depth);
-    printf("(%s)\n", s_node_type_names[node->kind]);
+    printf("( %s )\n", s_node_type_names[node->kind]);
     switch(node->kind)
     {
     case NODE_BLOCK: {
@@ -180,7 +190,7 @@ static void print_func(const Object* func)
     const ObjFunc* comps = &func->func;
     printf("Function \'%.*s\' %s (returns %s):\n", 
            (int)func->symbol.len,
-           func->symbol.loc,
+           func->symbol.start,
            s_access_strs[func->access],
            s_type_strings[comps->ret_type->kind]);
     printf("  Params (count: %lu):\n", comps->param_cnt);
@@ -189,7 +199,7 @@ static void print_func(const Object* func)
     {
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
-               param->symbol.loc,
+               param->symbol.start,
                s_type_strings[param->var.type->kind]);
         param = param->next;
     }
@@ -200,7 +210,7 @@ static void print_func(const Object* func)
     {
         printf("    %.*s (type %s)\n", 
                (int)local->symbol.len, 
-               local->symbol.loc,
+               local->symbol.start,
                s_type_strings[local->var.type->kind]);
         local = local->next;
     }

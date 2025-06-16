@@ -59,7 +59,7 @@ static void generate_func(Object* func)
     s_cur_func = func;
     assign_offsets(func);
     int sym_len = (int)func->symbol.len;
-    const char* sym = func->symbol.loc;
+    const char* sym = func->symbol.start;
     ObjFunc* comps = &func->func;
     // Metadata + header
     add_line("\t.text");

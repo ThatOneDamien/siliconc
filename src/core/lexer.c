@@ -53,21 +53,22 @@ bool lexer_advance(Lexer* lexer)
     Token* t = next_token_loc(lexer);
     if(t->kind == TOKEN_EOF)
         return false;
-    t->line_start = lexer->line_start;
-    t->line_num   = lexer->cur_line;
-    t->loc        = lexer->cur_pos;
+
+    t->loc.line_start = lexer->line_start;
+    t->loc.line_num   = lexer->cur_line;
+    t->loc.start      = lexer->cur_pos;
     t->kind       = TOKEN_INVALID;
 
     if(at_eof(lexer))
     {
         t->kind = TOKEN_EOF;
-        t->len = 0;
+        t->loc.len = 0;
         return true;
     }
 
     char c = peek(lexer);
     next(lexer);
-    t->len = 1;
+    t->loc.len = 1;
     switch(c)
     {
     case '~':
@@ -315,8 +316,8 @@ static inline bool extract_identifier(Lexer* lexer, Token* t)
     while(c_is_undalphanum(peek(lexer)))
         next(lexer);
 
-    t->len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc;
-    t->kind = sym_map_getn(t->loc, t->len);
+    t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
+    t->kind = sym_map_getn(t->loc.start, t->loc.len);
     if(t->kind == TOKEN_INVALID)
         t->kind = TOKEN_IDENT;
     return true;
@@ -359,13 +360,13 @@ static inline bool extract_num_literal(Lexer* lexer, Token* t)
     {
         next(lexer);
         t->kind = TOKEN_INVALID;
-        t->len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc;
+        t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
         sic_error_at(lexer->unit->file.full_path, t, "Invalid numeric literal.");
         return false;
     }
     
     t->kind = is_float ? TOKEN_FLOAT_LITERAL : TOKEN_INT_LITERAL;
-    t->len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc;
+    t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
     return true;
 }
 
