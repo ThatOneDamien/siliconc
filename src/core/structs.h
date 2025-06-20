@@ -15,10 +15,14 @@ typedef struct Lexer            Lexer;
 typedef struct TypeBuiltin      TypeBuiltin;
 typedef struct Type             Type;
 
+// Dynamic Array Structs
+typedef struct ObjectDA         ObjectDA;
+typedef struct ASTExprDA        ASTExprDA;
+typedef struct ASTDeclDA        ASTDeclDA;
+
 // AST Structs
 typedef struct ASTBlock         ASTBlock;
 typedef struct ASTDeclaration   ASTDeclaration;
-typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
@@ -33,7 +37,6 @@ typedef struct ASTNode          ASTNode;
 typedef struct ObjFunc          ObjFunc;
 typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
-typedef struct ObjectDA         ObjectDA;
 
 // Semantic Analysis Structs
 typedef struct Scope            Scope;
@@ -89,14 +92,11 @@ struct Type
     };
 };
 
-struct ASTBlock
+struct ObjectDA
 {
-    ASTNode* body;
-};
-
-struct ASTDeclaration
-{
-    Type* unresolved_type;
+    Object** data;
+    size_t   capacity;
+    size_t   size;
 };
 
 struct ASTExprDA
@@ -104,6 +104,24 @@ struct ASTExprDA
     ASTExpr** data;
     size_t    capacity;
     size_t    size;
+};
+
+struct ASTDeclDA
+{
+    ASTDeclaration* data;
+    size_t          capacity;
+    size_t          size;
+};
+
+struct ASTBlock
+{
+    ASTNode* body;
+};
+
+struct ASTDeclaration
+{
+    Object*  obj;
+    ASTExpr* init_expr;
 };
 
 struct ASTExprBinary
@@ -137,7 +155,7 @@ struct ASTExprConstant
 
 struct ASTExprIdent
 {
-    SourceLoc loc;
+    Object* obj;
 };
 
 struct ASTExprUnary
@@ -158,7 +176,7 @@ struct ASTExpr
         ASTExprCall     call;
         ASTExprCast     cast;
         ASTExprConstant constant;
-        ASTExprIdent    pre_sema_ident;
+        ASTExprIdent    ident;
         ASTExprUnary    unary;
     } expr;
 };
@@ -177,19 +195,20 @@ struct ASTNode
     union
     {
         ASTBlock        block;
-        ASTDeclaration  declaration;
+        ASTDeclaration  single_decl;
+        ASTDeclDA       multi_decl;
         ASTExpr*        expr;
         ASTReturn       return_;
     } stmt;
 };
 
+
 struct ObjFunc
 {
     Type*    ret_type;
-    Object*  local_objs;
     ASTNode* body;
-    Object*  params;
-    size_t   param_cnt;
+    ObjectDA local_objs;
+    ObjectDA params;
     int      stack_size;
 };
 
@@ -201,7 +220,6 @@ struct ObjVar
 
 struct Object
 {
-    Object*      next;
     SourceLoc    symbol;
     ObjKind      kind;
     ObjAccess    access;
@@ -213,13 +231,6 @@ struct Object
         ObjVar   var;  // Components of variable
     };
 
-};
-
-struct ObjectDA
-{
-    Object** data;
-    size_t   capacity;
-    size_t   size;
 };
 
 struct Scope

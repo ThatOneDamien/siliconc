@@ -7,7 +7,11 @@ pub s32 main(u32 a)
 {
     a = 1 % (4 + 100) * 5;
     call();
-    u32 b = a as u32;
+    u32 b = 312318803912, c = 2;
     return 0;
 }
 
+priv u32 call(u32 b)
+{
+
+}

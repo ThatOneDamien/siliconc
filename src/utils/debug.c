@@ -94,10 +94,12 @@ static const char* s_type_strings[] = {
 
 
 static const char* s_node_type_names[] = {
-    [NODE_INVALID]   = "Invalid",
-    [NODE_BLOCK]     = "Block",
-    [NODE_EXPR_STMT] = "Expression Statement",
-    [NODE_RETURN]    = "Return Statement",
+    [NODE_INVALID]     = "Invalid",
+    [NODE_BLOCK]       = "Block",
+    [NODE_SINGLE_DECL] = "Single Declaration",
+    [NODE_MULTI_DECL]  = "Multi Declaration",
+    [NODE_EXPR_STMT]   = "Expression Statement",
+    [NODE_RETURN]      = "Return Statement",
 };
 
 static const char* s_access_strs[] = {
@@ -131,8 +133,18 @@ static void print_expr(const ASTExpr* expr, int depth)
         print_expr(expr->expr.binary.lhs, depth + 1);
         print_expr(expr->expr.binary.rhs, depth + 1);
         break;
+    case EXPR_CAST:
+        printf("[ Cast ]\n");
+        print_expr(expr->expr.cast.expr_to_cast, depth + 1);
+        break;
     case EXPR_CONSTANT:
         printf("[ Constant \'%.*s\' val: %lu]\n", expr->loc.len, expr->loc.start, expr->expr.constant.val.i);
+        break;
+    case EXPR_FUNC_CALL:
+        printf("[ Call ]\n");
+        print_expr(expr->expr.call.func_expr, depth + 1);
+        for(size_t i = 0; i < expr->expr.call.args.size; ++i)
+            print_expr(expr->expr.call.args.data[i], depth + 1);
         break;
     case EXPR_INVALID:
         printf("[ Invalid ]\n");
@@ -141,7 +153,7 @@ static void print_expr(const ASTExpr* expr, int depth)
         printf("[ Nop ]\n");
         break;
     case EXPR_PRE_SEMANTIC_IDENT: {
-        const SourceLoc* loc = &expr->expr.pre_sema_ident.loc;
+        const SourceLoc* loc = &expr->loc;
         printf("[ Identifier \'%.*s\' ]\n", loc->len, loc->start);
         break;
     }
@@ -179,6 +191,13 @@ static void print_node(const ASTNode* node, int depth)
     case NODE_RETURN:
         print_expr(node->stmt.return_.ret_expr, depth + 1);
         break;
+    case NODE_SINGLE_DECL:
+        print_expr(node->stmt.single_decl.init_expr, depth + 1);
+        break;
+    case NODE_MULTI_DECL:
+        for(size_t i = 0; i < node->stmt.multi_decl.size; ++i)
+            print_expr(node->stmt.multi_decl.data[i].init_expr, depth + 1);
+        break;
     default:
         break;
     }
@@ -193,26 +212,24 @@ static void print_func(const Object* func)
            func->symbol.start,
            s_access_strs[func->access],
            s_type_strings[comps->ret_type->kind]);
-    printf("  Params (count: %lu):\n", comps->param_cnt);
-    Object* param = comps->params;
-    for(size_t i = 0; i < comps->param_cnt; ++i)
+    printf("  Params (count: %lu):\n", comps->params.size);
+    for(size_t i = 0; i < comps->params.size; ++i)
     {
+        Object* param = comps->params.data[i];
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
                param->symbol.start,
                s_type_strings[param->var.type->kind]);
-        param = param->next;
     }
 
     printf("  Local Variables:\n");
-    Object* local = comps->local_objs;
-    while(local != NULL)
+    for(size_t i = 0; i < comps->local_objs.size; ++i)
     {
+        Object* local = comps->local_objs.data[i];
         printf("    %.*s (type %s)\n", 
                (int)local->symbol.len, 
                local->symbol.start,
                s_type_strings[local->var.type->kind]);
-        local = local->next;
     }
 
     printf("  Body:\n");

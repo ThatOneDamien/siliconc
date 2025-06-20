@@ -11,15 +11,17 @@
 #define DA_ASSERT(cond) SIC_ASSERT(cond)
 
 #define da_init(da, initial_cap)                                \
+    do                                                          \
     {                                                           \
         (da)->capacity = (initial_cap) > DA_MIN_CAPACITY?       \
                          (initial_cap) : DA_MIN_CAPACITY;       \
         (da)->size = 0;                                         \
         (da)->data = MALLOC((da)->capacity *                    \
                             sizeof(*((da)->data)));             \
-    }
+    } while(0)
 
 #define da_reserve(da, desired_cap)                                         \
+    do                                                                      \
     {                                                                       \
         if((da)->capacity < (desired_cap))                                  \
         {                                                                   \
@@ -31,16 +33,18 @@
             (da)->data = __new_da;                                          \
                                                                             \
         }                                                                   \
-    }
+    } while(0)
 
 #define da_append(da, item)                 \
+    do                                      \
     {                                       \
         DA_ASSERT((da) != NULL);            \
         da_reserve((da), (da)->size + 1);   \
         (da)->data[(da)->size++] = (item);  \
-    }
+    } while(0)
 
 #define da_append_arr(da, item_arr, item_count)         \
+    do                                                  \
     {                                                   \
         DA_ASSERT((da) != NULL);                        \
         DA_ASSERT((item_arr) != NULL);                  \
@@ -49,9 +53,10 @@
         memcpy((da)->data + (da)->size, (item_arr),     \
                (item_count) * sizeof(*((da)->data)));   \
         (da)->size += (item_count);                     \
-    }
+    } while(0)
 
 #define da_insert(da, item, index)                                          \
+    do                                                                      \
     {                                                                       \
         DA_ASSERT((da) != NULL);                                            \
         DA_ASSERT((index) <= (da)->size);                                   \
@@ -60,9 +65,10 @@
             (da)->data[__da_idx + 1] = (da)->data[__da_idx];                \
         (da)->data[(index)] = (item);                                       \
         (da)->size++;                                                       \
-    }
+    } while(0)
 
 #define da_insert_arr(da, item_arr, item_count, index)                      \
+    do                                                                      \
     {                                                                       \
         DA_ASSERT((da) != NULL);                                            \
         DA_ASSERT((item_arr) != NULL);                                      \
@@ -74,13 +80,14 @@
         memcpy((da)->data + (index), (item_arr),                            \
                (item_count) * sizeof(*((da)->data)));                       \
         (da)->size += (item_count);                                         \
-    }
+    } while(0)
 
 #define da_resize(da, new_size)         \
+    do                                  \
     {                                   \
         da_reserve((da), (new_size));   \
         (da)->size = (new_size);        \
-    }
+    } while(0)
 
 
 typedef struct StringBuilder StringBuilder;

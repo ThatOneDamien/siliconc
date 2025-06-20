@@ -40,7 +40,7 @@ void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
     lexer->cur_line   = 1;
     lexer->line_start = lexer->src_start;
     memset(&lexer->la_buf, 0, sizeof(LookAhead));
-    for(size_t i = 0; i < LOOK_AHEAD_SIZE - 1; ++i)
+    for(size_t i = 0; i < LOOK_AHEAD_SIZE; ++i)
         lexer_advance(lexer);
 }
 
@@ -361,7 +361,7 @@ static inline bool extract_num_literal(Lexer* lexer, Token* t)
         next(lexer);
         t->kind = TOKEN_INVALID;
         t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-        sic_error_at(lexer->unit->file.full_path, t, "Invalid numeric literal.");
+        sic_error_at(lexer->unit->file.full_path, &t->loc, "Invalid numeric literal.");
         return false;
     }
     

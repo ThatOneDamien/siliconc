@@ -26,12 +26,11 @@ void gasx86_64_codegen(const CompilationUnit* unit, FILE* out_file)
     add_line("\t.file\t\"%s\"", unit->file.file_name);
 
     // TODO: Fix this, it is incorrect, i am temporarily disabling codegen
-    Object* program = unit->funcs.data[0];
-    while(program != NULL)
+    for(size_t i = 0; i < unit->funcs.size; ++i)
     {
+        Object* program = unit->funcs.data[i];
         if(program->kind == OBJ_FUNC)
             generate_func(program);
-        program = program->next;
     }
 
     return;
@@ -142,8 +141,10 @@ static void assign_offsets(Object* func)
     // }
 
     int stack_size = 0;
-    for(Object* lvar = comps->local_objs; lvar != NULL; lvar = lvar->next)
+    // TODO: Fix this, its not right
+    for(size_t i = 0; i < comps->local_objs.size; ++i)
     {
+        Object* lvar = comps->local_objs.data[i];
         ObjVar* vcomp = &lvar->var;
         uint32_t size = type_size(vcomp->type);
         stack_size = align_up(stack_size + size, size);

@@ -21,14 +21,15 @@ extern Type* g_type_f128;
 // Token functions
 const char*  tok_kind_to_str(TokenKind kind);
 BinaryOpKind tok_to_binary_op(TokenKind kind);
-void sic_error_atv(const char* filepath, const Token* t, const char* restrict message, va_list va);
+UnaryOpKind  tok_to_unary_op(TokenKind kind);
+void sic_error_atv(const char* filepath, const SourceLoc* loc, const char* restrict message, va_list va);
 
 __attribute__((format(printf, 3, 4)))
-static inline void sic_error_at(const char* filepath, const Token* t, const char* restrict message, ...)
+static inline void sic_error_at(const char* filepath, const SourceLoc* loc, const char* restrict message, ...)
 {
     va_list va;
     va_start(va, message);
-    sic_error_atv(filepath, t, message, va);
+    sic_error_atv(filepath, loc, message, va);
     va_end(va);
 }
 

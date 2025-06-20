@@ -97,6 +97,12 @@ static BinaryOpKind s_tok_to_bin_op[] = {
     [TOKEN_SHL_ASSIGN]      = BINARY_SHL_ASSIGN,
 };
 
+static UnaryOpKind s_tok_to_unary_op[] = {
+    [TOKEN_AMP]      = UNARY_ADDR_OF,
+    [TOKEN_ASTERISK] = UNARY_DEREF,
+    [TOKEN_SUB]      = UNARY_NEG,
+};
+
 
 const char* tok_kind_to_str(TokenKind kind)
 {
@@ -106,6 +112,14 @@ const char* tok_kind_to_str(TokenKind kind)
 
 BinaryOpKind tok_to_binary_op(TokenKind kind)
 {
+    SIC_ASSERT(kind < sizeof(s_tok_to_bin_op));
     SIC_ASSERT(s_tok_to_bin_op[kind] != BINARY_INVALID);
     return s_tok_to_bin_op[kind];
+}
+
+UnaryOpKind tok_to_unary_op(TokenKind kind)
+{
+    SIC_ASSERT(kind < sizeof(s_tok_to_unary_op));
+    SIC_ASSERT(s_tok_to_unary_op[kind] != UNARY_INVALID);
+    return s_tok_to_unary_op[kind];
 }
