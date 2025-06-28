@@ -42,6 +42,8 @@ typedef struct Object           Object;
 typedef struct Scope            Scope;
 
 typedef struct CompilationUnit  CompilationUnit;
+typedef struct SIFileDA         SIFileDA;
+typedef struct Module           Module;
 
 struct SourceLoc
 {
@@ -242,6 +244,23 @@ struct Scope
 struct CompilationUnit
 {
     SIFile   file;
+    ObjectDA funcs;
+    ObjectDA vars;
+};
+
+struct SIFileDA
+{
+    SIFile* data;
+    size_t  capacity;
+    size_t  size;
+};
+
+// For now this definition is really basic, later on I will add a proper
+// hierarchy of modules.
+struct Module
+{
+    const char* name;
+    SIFileDA sources;
     ObjectDA funcs;
     ObjectDA vars;
 };

@@ -24,7 +24,7 @@ BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
 void sic_error_atv(const char* filepath, const SourceLoc* loc, const char* restrict message, va_list va);
 
-__attribute__((format(printf, 3, 4)))
+ATTR_PRINTF(3, 4)
 static inline void sic_error_at(const char* filepath, const SourceLoc* loc, const char* restrict message, ...)
 {
     va_list va;
@@ -51,9 +51,11 @@ TokenKind sym_map_get(const char* str);
 TokenKind sym_map_getn(const char* str, size_t len);
 
 // Type functions
-Type* builtin_type(TokenKind type_token);
-Type* type_copy(Type* orig);
-Type* pointer_to(Type* base);
+Type*       builtin_type(TokenKind type_token);
+Type*       type_copy(Type* orig);
+Type*       pointer_to(Type* base);
+const char* type_to_string(Type* type);
+
 static inline bool is_builtin_type(TokenKind kind)
 {
     return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;

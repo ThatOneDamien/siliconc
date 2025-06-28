@@ -50,6 +50,7 @@ Type* builtin_type(TokenKind type_token)
 
 Type* type_copy(Type* orig)
 {
+    SIC_ASSERT(orig != NULL);
     Type* new_type = MALLOC(sizeof(Type));
     memcpy(new_type, orig, sizeof(Type));
     return new_type;
@@ -57,9 +58,37 @@ Type* type_copy(Type* orig)
 
 Type* pointer_to(Type* base)
 {
+    SIC_ASSERT(base != NULL);
     Type* new_type = MALLOC(sizeof(Type));
     new_type->kind = TYPE_POINTER;
     new_type->qualifiers = QUALIFIER_NONE;
     new_type->pointer_base = base;
     return new_type;
+}
+
+const char* type_to_string(Type* type)
+{
+    SIC_ASSERT(type != NULL);
+    static const char* type_names[] = {
+        [TYPE_INVALID] = "Invalid",
+        [TYPE_VOID]    = "void",
+        [TYPE_S8]      = "s8",
+        [TYPE_U8]      = "u8",
+        [TYPE_S16]     = "s16",
+        [TYPE_U16]     = "u16",
+        [TYPE_S32]     = "s32",
+        [TYPE_U32]     = "u32",
+        [TYPE_S64]     = "s64",
+        [TYPE_U64]     = "u64",
+        [TYPE_F32]     = "f32",
+        [TYPE_F64]     = "f64",
+    };
+
+    if(type->kind >= TYPE_BUILTIN_START && type->kind <= TYPE_BUILTIN_END)
+        return type_names[type->kind];
+    if(type->kind == TYPE_POINTER)
+        return str_format("%s*", type_to_string(type->pointer_base));
+
+    sic_error_fatal("Unreachable.");
+    return NULL;
 }

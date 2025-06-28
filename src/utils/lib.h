@@ -55,6 +55,14 @@ void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
 void* global_arena_malloc(size_t size, uint32_t align);
 void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
 
+ATTR_PRINTF(1, 2)
+char* str_format(const char* restrict format, ...);
+
+void        scratch_clear(void);
+void        scratch_appendn(const char* str, size_t len);
+const char* scratch_string(void);
+static inline void scratch_append(const char* str) { scratch_appendn(str, strlen(str)); }
+
 static inline void* cmalloc(size_t size)
 {
     void* res = malloc(size);

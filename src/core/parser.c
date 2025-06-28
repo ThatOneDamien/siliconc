@@ -14,6 +14,7 @@ struct ExprParseRule
 };
 
 // Global check and add functions
+static bool      parse_top_level(Lexer* l);
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
 
@@ -162,24 +163,14 @@ void parse_unit(CompilationUnit* unit)
     lexer_init_unit(&l, unit);
     da_init(&unit->funcs, 0);
     da_init(&unit->vars, 0);
+    if(try_consume(&l, TOKEN_MODULE))
+    {
+
+    }
 
     while(!tok_equal(&l, TOKEN_EOF))
     {
-        ObjAccess access = parse_access(&l);
-        Type* type;
-        ObjAttr attribs = ATTR_NONE;
-        parse_type_prefix(&l, &type, &attribs);
-        
-        bool recovery_needed = type == NULL;
-
-        if(type == NULL)
-            parser_error(&l, "Missing type specifier.");
-        else if(function_declaration(&l, access, type, attribs))
-             continue;
-        else
-            recovery_needed = true;
-        
-        if(recovery_needed)
+        if(!parse_top_level(&l))
         {
             while(true)
             {
@@ -198,6 +189,33 @@ void parse_unit(CompilationUnit* unit)
             }
         }
     }
+}
+
+static bool parse_top_level(Lexer* l)
+{
+    switch(peek(l)->kind)
+    {
+    case TOKEN_MODULE:
+        SIC_TODO();
+    case TOKEN_PRIV:
+    case TOKEN_PROT:
+    case TOKEN_PUB:
+    default: {
+        ObjAccess access = parse_access(l);
+        Type* type;
+        ObjAttr attribs = ATTR_NONE;
+        parse_type_prefix(l, &type, &attribs);
+
+        if(type == NULL)
+        {
+            parser_error(l, "Missing type specifier.");
+            return false;
+        }
+
+        return function_declaration(l, access, type, attribs);
+    }
+    }
+
 }
 
 // function_declaration -> type_prefix identifier "(" func_params (";" | "{" stmt_block)
@@ -300,7 +318,7 @@ static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
 
 }
 
-// type_qualifier -> "const" TODO: NOT IMPLEMENTED YET!!!
+// type_qualifier -> "const"
 // type_name -> "void" | "u8" | "s8" | "u16" | "s16" |
 //              "u32" | "s32" | "u64" | "s64" | "f32" | 
 //              "f64" | identifier
@@ -694,7 +712,7 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
-    [TOKEN_MOD]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_QUESTION]        = { NULL, NULL, PREC_TERNARY },
     [TOKEN_SHR]             = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },

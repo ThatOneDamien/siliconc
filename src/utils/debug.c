@@ -35,7 +35,7 @@ static const char* s_tok_names[] = {
     [TOKEN_RBRACE]          = "Right Brace",
     [TOKEN_ADD]             = "Add",
     [TOKEN_SUB]             = "Subtract",
-    [TOKEN_MOD]             = "Modulo",
+    [TOKEN_MODULO]          = "Modulo",
     [TOKEN_QUESTION]        = "Question Mark",
     [TOKEN_SHR]             = "Shift Right",
     [TOKEN_SHL]             = "Shift Left",
@@ -62,6 +62,7 @@ static const char* s_tok_names[] = {
     [TOKEN_PRIV]            = "priv",
     [TOKEN_PROT]            = "prot",
     [TOKEN_RETURN]          = "return",
+    [TOKEN_MODULE]          = "mod",
     [TOKEN_VOID]            = "void",
     [TOKEN_U8]              = "u8",
     [TOKEN_S8]              = "s8",
@@ -75,23 +76,6 @@ static const char* s_tok_names[] = {
     [TOKEN_F64]             = "f64",
     [TOKEN_EOF]             = "End Of File",
 };
-
-static const char* s_type_strings[] = {
-    [TYPE_INVALID]  = "Invalid", 
-    [TYPE_VOID]     = "void", 
-    [TYPE_U8]       = "u8", 
-    [TYPE_S8]       = "s8", 
-    [TYPE_U16]      = "u16", 
-    [TYPE_S16]      = "s16",
-    [TYPE_U32]      = "u32", 
-    [TYPE_S32]      = "s32", 
-    [TYPE_U64]      = "u64", 
-    [TYPE_S64]      = "s64", 
-    [TYPE_F32]      = "f32", 
-    [TYPE_F64]      = "f64", 
-    [TYPE_POINTER]  = "pointer",
-};
-
 
 static const char* s_node_type_names[] = {
     [NODE_INVALID]     = "Invalid",
@@ -126,43 +110,52 @@ static void print_expr(const ASTExpr* expr, int depth)
     if(expr == NULL)
         return;
     PRINT_DEPTH(depth);
+    printf("[ ");
     switch(expr->kind)
     {
     case EXPR_BINARY:
-        printf("[ BINARY \'%.*s\' ]\n", expr->loc.len, expr->loc.start);
+        printf("BINARY \'%.*s\' ] (Type %s)\n", expr->loc.len, expr->loc.start, type_to_string(expr->type));
         print_expr(expr->expr.binary.lhs, depth + 1);
         print_expr(expr->expr.binary.rhs, depth + 1);
         break;
     case EXPR_CAST:
-        printf("[ Cast ]\n");
+        printf("Cast ] (Type %s)\n", type_to_string(expr->type));
         print_expr(expr->expr.cast.expr_to_cast, depth + 1);
         break;
     case EXPR_CONSTANT:
-        printf("[ Constant \'%.*s\' val: %lu]\n", expr->loc.len, expr->loc.start, expr->expr.constant.val.i);
+        printf("Constant \'%.*s\' val: %lu ] (Type %s)\n", 
+               expr->loc.len, expr->loc.start, expr->expr.constant.val.i,
+               type_to_string(expr->type));
         break;
     case EXPR_FUNC_CALL:
-        printf("[ Call ]\n");
+        printf("Call ] (Type %s)\n", type_to_string(expr->type));
         print_expr(expr->expr.call.func_expr, depth + 1);
         for(size_t i = 0; i < expr->expr.call.args.size; ++i)
             print_expr(expr->expr.call.args.data[i], depth + 1);
         break;
+    case EXPR_IDENT: {
+        const SourceLoc* loc = &expr->loc;
+        printf("Identifier \'%.*s\' ] (Type %s)\n", loc->len, loc->start, type_to_string(expr->type));
+        break;
+    }
     case EXPR_INVALID:
-        printf("[ Invalid ]\n");
+        printf("Invalid ]\n");
         break;
     case EXPR_NOP:
-        printf("[ Nop ]\n");
+        printf("Nop ]\n");
         break;
     case EXPR_PRE_SEMANTIC_IDENT: {
         const SourceLoc* loc = &expr->loc;
-        printf("[ Identifier \'%.*s\' ]\n", loc->len, loc->start);
+        printf("Pre-Sema Identifier \'%.*s\' ]\n", loc->len, loc->start);
         break;
     }
     case EXPR_UNARY:
-        printf("[ Unary \'%.*s\' ]\n", expr->loc.len, expr->loc.start);
+        printf("Unary \'%.*s\' ] (Type %s)\n",
+               expr->loc.len, expr->loc.start, type_to_string(expr->type));
         print_expr(expr->expr.unary.child, depth + 1);
         break;
     default:
-        printf("[ %.*s ]\n", expr->loc.len, expr->loc.start);
+        printf("%.*s ]\n", expr->loc.len, expr->loc.start);
         break;
     }
 }
@@ -211,7 +204,7 @@ static void print_func(const Object* func)
            (int)func->symbol.len,
            func->symbol.start,
            s_access_strs[func->access],
-           s_type_strings[comps->ret_type->kind]);
+           type_to_string(comps->ret_type));
     printf("  Params (count: %lu):\n", comps->params.size);
     for(size_t i = 0; i < comps->params.size; ++i)
     {
@@ -219,7 +212,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
                param->symbol.start,
-               s_type_strings[param->var.type->kind]);
+               type_to_string(param->var.type));
     }
 
     printf("  Local Variables:\n");
@@ -229,7 +222,7 @@ static void print_func(const Object* func)
         printf("    %.*s (type %s)\n", 
                (int)local->symbol.len, 
                local->symbol.start,
-               s_type_strings[local->var.type->kind]);
+               type_to_string(local->var.type));
     }
 
     printf("  Body:\n");

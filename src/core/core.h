@@ -6,17 +6,27 @@
 #include <stdio.h>
 #include <stdlib.h>
  
-#define UNUSED __attribute__((unused))
+#ifdef __GNUC__
+    #define UNUSED __attribute__((unused))
+    #define FALLTHROUGH __attribute__((fallthrough))
+    #define NORETURN __attribute__((noreturn))
+    #define ATTR_PRINTF(fmt, va_args) __attribute__((format(printf, fmt, va_args)))
+#else
+    #define UNUSED
+    #define FALLTHROUGH
+    #define NORETURN
+    #define ATTR_PRINTF(fmt, va_args)
+#endif
 
 #ifdef SI_DEBUG
     #include <signal.h>
-    #define SIC_ERROR_DBG(msg)              \
-        do                                  \
-        {                                   \
-            fprintf(stderr, "\033[31m");    \
-            fprintf(stderr, msg);           \
-            fprintf(stderr, "\033[0m\n");   \
-            raise(SIGTRAP);                 \
+    #define SIC_ERROR_DBG(msg)                      \
+        do                                          \
+        {                                           \
+            fprintf(stderr, "\033[31m[DEBUG]: ");   \
+            fprintf(stderr, msg);                   \
+            fprintf(stderr, "\033[0m\n");           \
+            raise(SIGTRAP);                         \
         } while(0)
     #define SIC_ERROR_DBG_ARGS(msg, ...)        \
         do                                      \

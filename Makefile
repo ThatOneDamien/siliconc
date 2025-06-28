@@ -1,7 +1,8 @@
-CC     ?= clang
-CFLAGS := -Wall -Wextra -Werror -std=c11
-LIBS   := 
-INC    = -Isrc
+CC       ?= clang
+CXX      ?= clang++
+CFLAGS   := -Wall -Wextra -Werror -std=c11 `llvm-config --cflags`
+LD_FLAGS := `llvm-config --cxxflags --ldflags --libs core --system-libs`
+INC      = -Isrc
 
 BUILD_DIR ?= build
 INT_DIR   := $(BUILD_DIR)/int
@@ -28,11 +29,11 @@ clean:
 
 $(BUILD_DIR)/sicdb: $(DEBUG_OBJS)
 	@echo 'Linking sicdb (debug)'
-	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) $(LIBS) -DSI_DEBUG -ggdb -o $@ $^
+	@$(CXX) $(INC) $(LD_FLAGS) -ggdb -o $@ $^
 
 $(BUILD_DIR)/sic: $(RELEASE_OBJS)
 	@echo 'Linking sic (release)'
-	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) $(LIBS) -O3 -o $@ $^
+	@$(CXX) $(INC) $(LD_FLAGS) -O3 -o $@ $^
 
 $(DEBUG_OBJS): $(INT_DIR)/debug/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	@mkdir -p $(dir $@)

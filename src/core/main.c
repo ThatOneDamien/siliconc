@@ -11,9 +11,7 @@
 #include <sys/wait.h>
 
 static SIFile compile(const SIFile* input);
-static SIFile assemble(const SIFile* input);
 static void   resolve_dependency_paths(char** crt, char** gcclib);
-static char*  format_new(const char* restrict format, ...);
 
 int main(int argc, char* argv[])
 {
@@ -24,56 +22,54 @@ int main(int argc, char* argv[])
     
     process_cmdln_args(argc, argv);
     
-    for(size_t i = 0; i < args.input_files.size; ++i)
-        if(!sifile_exists(args.input_files.data + i))
-            sic_error_fatal("File named '%s' not found.", args.input_files.data[i].full_path);
+    for(size_t i = 0; i < g_args.input_files.size; ++i)
+        if(!sifile_exists(g_args.input_files.data + i))
+            sic_error_fatal("File named '%s' not found.", g_args.input_files.data[i].full_path);
 
     sym_map_init();
     parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
 
-    SIFileDA linker_inputs;
-    da_init(&linker_inputs, args.input_files.size);
+    if(g_args.ir_kind == IR_LLVM)
+        llvm_initialize();
 
-    for(size_t i = 0; i < args.input_files.size; ++i)
+    SIFileDA linker_inputs;
+    da_init(&linker_inputs, g_args.input_files.size);
+
+    for(size_t i = 0; i < g_args.input_files.size; ++i)
     {
-        SIFile* cur_input  = args.input_files.data + i; 
+        SIFile* cur_input  = g_args.input_files.data + i; 
         SIFile  cur_output;
         
         switch(cur_input->type)
         {
         case FT_SI:
             cur_output = compile(cur_input);
-            if(args.mode >= MODE_ASSEMBLE)
-                cur_output = assemble(&cur_output);
             break;
         case FT_ASM:
-            if(args.mode >= MODE_ASSEMBLE)
-                cur_output = assemble(cur_input);
-            else
-                fprintf(stderr, "Assembly file \'%s\' was ignored because \'-p\' or \'-c\' was provided.\n", cur_input->full_path);
+            SIC_TODO();
             break;
         case FT_OBJ:
-            if(args.mode == MODE_LINK)
+            if(g_args.mode == MODE_LINK)
                 cur_output = *cur_input;
             else
-                fprintf(stderr, "Object file \'%s\' was ignored because \'-p\', \'-c\', or \'-s\' was provided.\n", cur_input->full_path);
+                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->full_path);
             break;
         default:
             sic_error_fatal("Input file \'%s\' has invalid extension.", cur_input->full_path);
         }
 
-        if(args.mode == MODE_LINK && cur_output.full_path != NULL)
+        if(g_args.mode == MODE_LINK && cur_output.full_path != NULL)
             da_append(&linker_inputs, cur_output);
     }
 
     if(sic_error_cnt() > 0)
     {
-        fprintf(stderr, "sic: %d errors generated. Compilation terminated.\n", sic_error_cnt());
+        fprintf(stderr, "sic: %d error(s) generated. Compilation terminated.\n", sic_error_cnt());
         exit(EXIT_FAILURE);
     }
 
-    if(args.mode != MODE_LINK || linker_inputs.size == 0)
+    if(g_args.mode != MODE_LINK || linker_inputs.size == 0)
         exit(EXIT_SUCCESS);
 
 
@@ -93,15 +89,15 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-dynamic-linker");
     da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
     da_append(&cmd, "-o");
-    da_append(&cmd, args.output_file ? (char*)args.output_file : "a.out");
+    da_append(&cmd, g_args.output_file ? (char*)g_args.output_file : "a.out");
 
     // CRT Object files
-    da_append(&cmd, format_new("%s/Scrt1.o", crt_path));
-    da_append(&cmd, format_new("%s/crti.o", crt_path));
-    da_append(&cmd, format_new("%s/crtbeginS.o", gcc_path));
+    da_append(&cmd, str_format("%s/Scrt1.o", crt_path));
+    da_append(&cmd, str_format("%s/crti.o", crt_path));
+    da_append(&cmd, str_format("%s/crtbeginS.o", gcc_path));
 
     // Default library path includes
-    da_append(&cmd, format_new("-L%s", gcc_path));
+    da_append(&cmd, str_format("-L%s", gcc_path));
     da_append(&cmd, "-L/lib../lib");
     da_append(&cmd, "-L/usr/lib/../lib");
     da_append(&cmd, "-L/lib");
@@ -112,8 +108,8 @@ int main(int argc, char* argv[])
 
     da_append(&cmd, "-lc");
 
-    da_append(&cmd, format_new("%s/crtendS.o", gcc_path));
-    da_append(&cmd, format_new("%s/crtn.o", crt_path));
+    da_append(&cmd, str_format("%s/crtendS.o", gcc_path));
+    da_append(&cmd, str_format("%s/crtn.o", crt_path));
 
     da_append(&cmd, NULL);
     run_subprocess(cmd.data);
@@ -123,7 +119,7 @@ int main(int argc, char* argv[])
 
 void run_subprocess(char** cmd)
 {
-    if(args.hash_hash_hash)
+    if(g_args.hash_hash_hash)
     {
         for(char** c = cmd; *c != NULL; ++c)
             printf("%s ", *c);
@@ -155,45 +151,19 @@ static SIFile compile(const SIFile* input)
         return (SIFile){0};
     
     SIFile output = {0};
-    if(args.mode == MODE_COMPILE)
+    if(g_args.mode == MODE_COMPILE)
     {
-        if(args.output_file == NULL)
-            output = convert_ext_to(input, FT_ASM);
+        if(g_args.output_file == NULL)
+            output = convert_file_to(input, FT_ASM);
         else
-            output = sifile_new(args.output_file);
+            output = sifile_new(g_args.output_file);
     }
     else
         output = create_tempfile(FT_ASM);
 
-    // TODO: Remove (TEMPORARY)
-    exit(0);
-    gen_intermediate_rep(&unit, &output);
+    gen_ir(&unit);
     return output;
 }
-
-static SIFile assemble(const SIFile* input)
-{
-    SIC_ASSERT(args.mode >= MODE_ASSEMBLE);
-    SIFile output = {0};
-    if(sic_error_cnt() > 0)
-        return output;
-
-    if(args.mode == MODE_ASSEMBLE)
-    {
-        if(args.output_file == NULL)
-            output = convert_ext_to(input, FT_OBJ);
-        else
-            output = sifile_new(args.output_file);
-    }
-    else
-        output = create_tempfile(FT_OBJ);
-
-    assemble_intermediate(input->full_path, output.full_path);
-
-    return output;
-}
-
-
 
 static void resolve_dependency_paths(char** crt, char** gcclib)
 {
@@ -228,18 +198,3 @@ static void resolve_dependency_paths(char** crt, char** gcclib)
     sic_error_fatal("Unable to locate GCC libraries.");
 }
 
-static char* format_new(const char* restrict format, ...)
-{
-    va_list va;
-    va_start(va, format);
-    int size = vsnprintf(NULL, 0, format, va);
-    va_end(va);
-
-    char* buf = cmalloc(size + 1);
-
-    va_start(va, format);
-    vsnprintf(buf, size + 1, format, va);
-    va_end(va);
-    buf[size] = '\0';
-    return buf;
-}

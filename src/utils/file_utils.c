@@ -16,24 +16,37 @@
 
 static StringArray s_tempfiles = {0};
 
-SIFile sifile_new(const char* path)
+static FileType get_filetype(const char* extension);
+
+SIFile sifile_new(const char* full_path)
 {
-    SIC_ASSERT(path != NULL);
+    SIC_ASSERT(full_path != NULL);
     SIFile file;
-    file.full_path = path;
-    file.file_name = path;
-    if(*path == '\0')
+    file.full_path = full_path;
+    file.file_name = full_path;
+    file.file_ext  = NULL;
+    if(*full_path == '\0')
         sic_error_fatal("Tried to use file with empty path.");
     
-    for(const char* s = path; *s != '\0'; ++s)
-        if(*s == '/')
+    for(file.path_end = full_path; *file.path_end != '\0'; ++file.path_end)
+    {
+        if(*file.path_end == '/')
         {
-            if(s[1] == '\0')
+            if(file.path_end[1] == '\0')
                 sic_error_fatal("File path ends with /. (Indicates directory)");
-            file.file_name = s + 1;
+            file.file_name = file.path_end + 1;
         }
+        else if(*file.path_end == '.')
+            file.file_ext = file.path_end;
+    }
+    if(file.file_ext == NULL || (uintptr_t)file.file_ext <= (uintptr_t)file.file_name)
+    {
+        file.type = FT_UNKNOWN;
+        file.file_ext = file.path_end;
+    }
+    else
+        file.type = get_filetype(file.file_ext + 1);
 
-    file.type = get_filetype(file.file_name);
     return file;
 }
 
@@ -44,7 +57,7 @@ bool file_exists(const char* path)
     return stat(path, &st) == FILE_FOUND;
 }
 
-char* read_entire_file(const SIFile* file)
+char* sifile_read(const SIFile* file)
 {
     SIC_ASSERT(file != NULL);
     SIC_ASSERT(file->full_path != NULL);
@@ -53,47 +66,45 @@ char* read_entire_file(const SIFile* file)
     int fd = open(file->full_path, O_RDONLY);
 
     if(fd == -1)
-        goto end;
+        goto ERR;
 
     long size = lseek(fd, 0, SEEK_END);
     if(size <= 0)
-        goto end;
+        goto ERR;
 
     if(lseek(fd, 0, SEEK_SET) < 0)
-        goto end;
+        goto ERR;
 
     res = cmalloc(sizeof(char) * size + 2);
-    ssize_t total_read = 0;
 
-    while(true)
+    long orig_size = size;
+    char* ptr = res;
+    while(size > 0)
     {
-        ssize_t bytes_read = read(fd, res + total_read, size); 
-        if(bytes_read == 0)
-            break;
-        if(bytes_read < 0)
-            goto end;
-        total_read += bytes_read;
+        ssize_t bytes_read = read(fd, ptr, size); 
+        if(bytes_read <= 0)
+            goto ERR;
+        size -= bytes_read;
+        ptr += bytes_read;
     }
 
-    if(total_read != size)
-        goto end;
-    else if(res[size - 1] == '\n')
-        res[size] = '\0';
+    if(res[orig_size - 1] == '\n')
+        res[orig_size] = '\0';
     else
     {
-        res[size] = '\n';
-        res[size + 1] = '\0';
+        res[orig_size] = '\n';
+        res[orig_size + 1] = '\0';
     }
 
     return res;
-end:
+ERR:
     if(fd != -1)
         close(fd);
     sic_error_fatal("Failed to open file \'%s\'", file->full_path);
     return NULL;
 }
 
-FILE* open_out_file(const SIFile* file)
+FILE* sifile_open_write(const SIFile* file)
 {
     SIC_ASSERT(file != NULL);
     SIC_ASSERT(file->full_path != NULL);
@@ -103,45 +114,54 @@ FILE* open_out_file(const SIFile* file)
     return fp;
 }
 
-SIFile convert_ext_to(const SIFile* file, FileType desired)
+SIFile convert_file_to(const SIFile* file, FileType desired)
 {
     SIC_ASSERT(file != NULL);
     SIC_ASSERT(file->full_path != NULL);
     SIC_ASSERT(desired != FT_UNKNOWN);
 
-    size_t filename_len = 0;
-    for(const char* s = file->file_name; *s != '\0' && *s != '.'; ++s)
-        filename_len++;
+    size_t filename_len = (uintptr_t)file->file_ext - (uintptr_t)file->full_path;
 
     const char* ext = ft_to_extension(desired);
     size_t ext_len = strlen(ext);
     char* new_name = malloc(filename_len + ext_len + 1);
-    memcpy(new_name, file->file_name, filename_len);
+    memcpy(new_name, file->full_path, filename_len);
     strncpy(new_name + filename_len, ext, ext_len);
     new_name[filename_len + ext_len] = '\0';
 
     SIFile new_file;
     new_file.full_path = new_name;
-    new_file.file_name = new_file.full_path;
+    new_file.file_name = new_name + ((uintptr_t)file->file_name - (uintptr_t)file->full_path);
+    new_file.file_ext  = new_name + filename_len;
     new_file.type = desired;
     return new_file;
 }
 
-FileType get_filetype(const char* filename)
+const char* convert_ext_to(const char* path, FileType desired)
 {
-    const char* ext = strrchr(filename, '.');
-    if(ext == NULL)
-        return FT_UNKNOWN;
-    if(strcmp(ext, ".s") == 0 ||
-       strcmp(ext, ".asm") == 0)
+    SIC_ASSERT(path != NULL);
+    SIC_ASSERT(desired != FT_UNKNOWN);
+
+    SIFile temp = sifile_new(path);
+    temp = convert_file_to(&temp, desired);
+    return temp.full_path;
+}
+
+static FileType get_filetype(const char* extension)
+{
+    SIC_ASSERT(extension != NULL);
+    if(strcmp(extension, "ll") == 0)
+        return FT_LLVM_IR;
+    if(strcmp(extension, "s") == 0 ||
+       strcmp(extension, "asm") == 0)
         return FT_ASM;
-    if(strcmp(ext, ".o") == 0)
+    if(strcmp(extension, "o") == 0)
         return FT_OBJ;
-    if(strcmp(ext, ".a") == 0)
+    if(strcmp(extension, "a") == 0)
         return FT_STATIC;
-    if(strcmp(ext, ".so") == 0)
+    if(strcmp(extension, "so") == 0)
         return FT_SHARED;
-    if(strcmp(ext, ".si") == 0)
+    if(strcmp(extension, "si") == 0)
         return FT_SI;
 
     return FT_UNKNOWN;
@@ -151,17 +171,19 @@ const char* ft_to_extension(FileType ft)
 {
     static const char* ft_to_ext[] = {
         NULL, 
-        [FT_SI]     = ".si",
-        [FT_ASM]    = ".s", 
-        [FT_OBJ]    = ".o", 
-        [FT_STATIC] = ".a", 
-        [FT_SHARED] = ".so", 
+        [FT_SI]      = ".si",
+        [FT_LLVM_IR] = ".ll",
+        [FT_ASM]     = ".s", 
+        [FT_OBJ]     = ".o", 
+        [FT_STATIC]  = ".a", 
+        [FT_SHARED]  = ".so", 
     };
     return ft_to_ext[ft];
 }
 
 SIFile create_tempfile(FileType ft)
 {
+    SIC_ASSERT(ft != FT_UNKNOWN);
     if(s_tempfiles.capacity == 0)
         da_init(&s_tempfiles, 0);
     static const char template[21] = "/tmp/siliconc-XXXXXX";
@@ -181,6 +203,7 @@ SIFile create_tempfile(FileType ft)
     SIFile res;
     res.full_path = tmppath;
     res.file_name = tmppath + 5;
+    res.file_ext = tmppath + sizeof(template);
     res.type = ft;
     return res;
 }

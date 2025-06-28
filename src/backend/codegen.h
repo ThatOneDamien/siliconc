@@ -3,5 +3,5 @@
 #include "utils/da.h"
 #include "utils/file_utils.h"
 
-void gen_intermediate_rep(const CompilationUnit* unit, const SIFile* output);
-void assemble_intermediate(const char* input_path, const char* out_path);
+void gen_ir(const CompilationUnit* unit);
+void llvm_initialize(void);

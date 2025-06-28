@@ -33,7 +33,7 @@ typedef enum
     TOKEN_RBRACE,           // }
     TOKEN_ADD,              // +
     TOKEN_SUB,              // -
-    TOKEN_MOD,              // %
+    TOKEN_MODULO,           // %
     TOKEN_QUESTION,         // ?
 
     TOKEN_SHR,              // >>
@@ -44,6 +44,7 @@ typedef enum
     TOKEN_NE,               // !=
     TOKEN_LE,               // <=
     TOKEN_GE,               // >=
+    TOKEN_SCOPE_RES,        // ::
     TOKEN_BIT_AND_ASSIGN,   // &=
     TOKEN_BIT_OR_ASSIGN,    // |=
     TOKEN_BIT_XOR_ASSIGN,   // ^=
@@ -67,6 +68,7 @@ typedef enum
     TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
+    TOKEN_MODULE,
 
     // Built-in/Primitive type names (Still part of keywords)
     TOKEN_VOID,
@@ -98,15 +100,25 @@ typedef enum
 
 typedef enum
 {
+    CAST_GROUP_INVALID = -1,
+    CAST_GROUP_VOID = 0,
+    CAST_GROUP_INT,
+    CAST_GROUP_FLOAT,
+    CAST_GROUP_PTR,
+    __CAST_GROUP_COUNT,
+} CastGroup;
+
+typedef enum
+{
     EXPR_INVALID = 0,
     
-    EXPR_NOP,
     EXPR_BINARY,
     EXPR_CAST,
     EXPR_CONSTANT,
     EXPR_FUNC_CALL,
-    EXPR_PRE_SEMANTIC_IDENT,
     EXPR_IDENT,
+    EXPR_NOP,
+    EXPR_PRE_SEMANTIC_IDENT,
     EXPR_TERNARY,
     EXPR_UNARY,
 } ExprKind;
@@ -199,6 +211,7 @@ typedef enum
     TYPE_BUILTIN_END = TYPE_F64,
 
     TYPE_POINTER,
+    __TYPE_COUNT,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;
@@ -243,3 +256,25 @@ typedef enum
     PREC_UNARY_PREFIX,
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
+
+typedef enum
+{
+    IR_NONE = 0,
+    IR_LLVM,
+    // IR_CUSTOM // Maybe in the future I will do this.
+} IRTarget;
+
+// Could be expanded later to support multiple architectures.
+typedef enum
+{
+    TARGET_NONE = 0,
+    TARGET_x86_64,
+} CompileTarget;
+
+typedef enum
+{
+    MODE_NONE = 0,   // NULL Mode
+    MODE_COMPILE,    // Compile
+    MODE_ASSEMBLE,   // Compile + Assemble
+    MODE_LINK        // Compile + Assemble + Link
+} CompileMode;

@@ -35,7 +35,7 @@ void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
     SIC_ASSERT(lexer != NULL);
     SIC_ASSERT(unit != NULL);
     lexer->unit       = unit;
-    lexer->src_start  = read_entire_file(&unit->file);
+    lexer->src_start  = sifile_read(&unit->file);
     lexer->cur_pos    = lexer->src_start;
     lexer->cur_line   = 1;
     lexer->line_start = lexer->src_start;
@@ -74,9 +74,6 @@ bool lexer_advance(Lexer* lexer)
     case '~':
         t->kind = TOKEN_BIT_NOT;
         return true;
-    case ':':
-        t->kind = TOKEN_COLON;
-        return true;
     case ';':
         t->kind = TOKEN_SEMI;
         return true;
@@ -106,6 +103,12 @@ bool lexer_advance(Lexer* lexer)
         return true;
     case '?':
         t->kind = TOKEN_QUESTION;
+        return true;
+    case ':':
+        if(consume(lexer, ':'))
+            t->kind = TOKEN_SCOPE_RES;
+        else
+            t->kind = TOKEN_COLON;
         return true;
     case '&':
         if(consume(lexer, '&'))
@@ -189,7 +192,7 @@ bool lexer_advance(Lexer* lexer)
         if(consume(lexer, '='))
             t->kind = TOKEN_MOD_ASSIGN;
         else
-            t->kind = TOKEN_MOD;
+            t->kind = TOKEN_MODULO;
         return true;
     case '\'':
         SIC_ERROR_DBG("Unimplemented char literal.");

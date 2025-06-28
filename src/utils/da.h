@@ -105,17 +105,3 @@ struct StringArray
     size_t size;
     size_t capacity;
 };
-
-static inline void sb_append(StringBuilder* sb, const char* str)
-{
-    size_t len = strlen(str);
-    da_append_arr(sb, str, len);
-}
-
-static inline void sb_append_null(StringBuilder* sb)
-{
-    da_append(sb, '\0');
-}
-
-__attribute__((format(printf, 2, 3)))
-void sb_appendf(StringBuilder* sb, const char* restrict format, ...);
