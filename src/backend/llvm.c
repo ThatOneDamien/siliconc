@@ -1,5 +1,4 @@
 #include "codegen-internal.h"
-#include "core/cmdline.h"
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Core.h>
@@ -9,14 +8,19 @@
 typedef struct CodegenContext CodegenContext;
 struct CodegenContext
 {
+    const Module*          module;
     const CompilationUnit* unit;
-    LLVMTargetMachineRef   target_machine;
-    LLVMModuleRef          cur_module;
     const char*            llvm_filename;
     const char*            asm_filename;
     const char*            obj_filename;
+
+    LLVMContextRef         global_context;
+    LLVMTargetMachineRef   target_machine;
+    LLVMModuleRef          module_ref;
 };
 
+static void gen_module(CodegenContext* c, Module* module);
+static void gen_unit(CodegenContext* c, CompilationUnit* unit);
 static void emit_function(CodegenContext* c, Object* function);
 static void emit_llvm_ir(CodegenContext* c);
 static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
@@ -37,72 +41,91 @@ void llvm_initialize()
     s_initialized = true;
 }
 
-void llvm_codegen(const CompilationUnit* unit)
+
+void llvm_codegen(ModulePTRDA* modules)
 {
     SIC_ASSERT(s_initialized);
-    SIC_ASSERT(unit != NULL);
+    SIC_ASSERT(modules != NULL);
+    SIC_ASSERT(modules->size != 0);
+    // TODO: Temporary, remove this line
+    g_compiler.top_module.name = "default";
     CodegenContext c;
-    c.unit = unit;
+    c.global_context = LLVMGetGlobalContext();
 
+    for(size_t i = 0; i < modules->size; ++i)
+        gen_module(&c, modules->data[i]);
+
+}
+
+static void gen_module(CodegenContext* c, Module* module)
+{
+    c->module = module;
     // TODO: Change this from being hardcoded.
-    const char* target_triple = "x86_64-unknown-linux-gnu";
-    LLVMContextRef global_context = LLVMGetGlobalContext();
+    const char* target_triple = "x86_64-pc-linux-gnu";
     LLVMTargetRef target = get_llvm_target(target_triple);
     // No optimization for now, this will be changed later along with properly setting up
     // target detection.
-    c.target_machine = LLVMCreateTargetMachine(target, target_triple, "generic", "", LLVMCodeGenLevelNone, LLVMRelocPIC, LLVMCodeModelDefault);
-    if(c.target_machine == NULL)
+    c->target_machine = LLVMCreateTargetMachine(target, target_triple, "generic", "", LLVMCodeGenLevelNone, LLVMRelocPIC, LLVMCodeModelDefault);
+    if(c->target_machine == NULL)
         sic_error_fatal("LLVM failed to create target machine, maybe check target triple?");
 
-    c.cur_module = LLVMModuleCreateWithNameInContext(unit->file.full_path, global_context);
-    LLVMSetModuleDataLayout(c.cur_module, LLVMCreateTargetDataLayout(c.target_machine));
-    LLVMSetSourceFileName(c.cur_module, unit->file.full_path, (uintptr_t)unit->file.path_end - (uintptr_t)unit->file.full_path);
+    c->module_ref = LLVMModuleCreateWithNameInContext(module->name, c->global_context);
+    LLVMSetModuleDataLayout(c->module_ref, LLVMCreateTargetDataLayout(c->target_machine));
+    LLVMSetTarget(c->module_ref, target_triple);
 
-    emit_function(&c, unit->funcs.data[0]);
+    for(size_t i = 0; i < module->units.size; ++i)
+        gen_unit(c, module->units.data[i]);
 
     if(g_args.emit_ir)
     {
-        c.llvm_filename = convert_file_to(&unit->file, FT_LLVM_IR).file_name;
-        emit_llvm_ir(&c);
+        c->llvm_filename = convert_ext_to(module->name, FT_LLVM_IR);
+        emit_llvm_ir(c);
     }
 
     if(g_args.mode == MODE_COMPILE)
     {
-        c.asm_filename = g_args.output_file == NULL ? 
-                            convert_file_to(&unit->file, FT_ASM).file_name : 
+        c->asm_filename = g_args.output_file == NULL ? 
+                            convert_ext_to(module->name, FT_ASM) : 
                             g_args.output_file;
-        emit_file(&c, c.asm_filename, LLVMAssemblyFile);
+        emit_file(c, c->asm_filename, LLVMAssemblyFile);
         return;
     }
 
     if(g_args.emit_asm)
     {
-        c.asm_filename = convert_file_to(&unit->file, FT_ASM).file_name;
-        emit_file(&c, c.asm_filename, LLVMAssemblyFile);
+        c->asm_filename = convert_ext_to(module->name, FT_ASM);
+        emit_file(c, c->asm_filename, LLVMAssemblyFile);
     }
 
     if(g_args.mode > MODE_ASSEMBLE)
-        c.obj_filename = create_tempfile(FT_OBJ).full_path;
+        c->obj_filename = create_tempfile(FT_OBJ).full_path;
     else if(g_args.mode == MODE_ASSEMBLE)
-        c.obj_filename = g_args.output_file == NULL ? 
-                            convert_file_to(&unit->file, FT_OBJ).file_name : 
+        c->obj_filename = g_args.output_file == NULL ? 
+                            convert_ext_to(module->name, FT_OBJ) : 
                             g_args.output_file;
 
-    emit_file(&c, c.obj_filename, LLVMObjectFile);
-    LLVMDisposeTargetMachine(c.target_machine);
-    LLVMDisposeModule(c.cur_module);
+    emit_file(c, c->obj_filename, LLVMObjectFile);
+    da_append(&g_compiler.linker_inputs, sifile_new(c->obj_filename));
+    LLVMDisposeTargetMachine(c->target_machine);
+    LLVMDisposeModule(c->module_ref);
+
+}
+
+static void gen_unit(CodegenContext* c, CompilationUnit* unit)
+{
+    for(size_t i = 0; i < unit->funcs.size; ++i)
+        emit_function(c, unit->funcs.data[i]);
 }
 
 static void emit_function(CodegenContext* c, Object* function)
 {
-    LLVMContextRef module_context = LLVMGetModuleContext(c->cur_module);
-    LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidTypeInContext(module_context), NULL, 0, false);
-    LLVMValueRef func = LLVMAddFunction(c->cur_module, "Test", func_type);
-    LLVMBasicBlockRef bb = LLVMCreateBasicBlockInContext(module_context, "entry");
-    LLVMBuilderRef builder = LLVMCreateBuilderInContext(module_context);
+    LLVMTypeRef func_type = LLVMFunctionType(LLVMInt32Type(), NULL, 0, false);
+    scratch_appendn(function->symbol.start, function->symbol.len);
+    LLVMValueRef func = LLVMAddFunction(c->module_ref, scratch_string(), func_type);
+    LLVMBasicBlockRef bb = LLVMAppendBasicBlock(func, "entry");
+    LLVMBuilderRef builder = LLVMCreateBuilder();
     LLVMPositionBuilderAtEnd(builder, bb);
-    LLVMBuildRetVoid(builder);
-    LLVMAppendExistingBasicBlock(func, bb);
+    LLVMBuildRet(builder, LLVMConstInt(LLVMInt32Type(), 69, false));
     if(LLVMVerifyFunction(func, LLVMPrintMessageAction))
         sic_error_fatal("Failed.");
     LLVMDisposeBuilder(builder);
@@ -113,21 +136,21 @@ static void emit_function(CodegenContext* c, Object* function)
 static void emit_llvm_ir(CodegenContext* c)
 {
     char* error;
-    if(LLVMPrintModuleToFile(c->cur_module, c->llvm_filename, &error))
-        sic_error_fatal("Failed to emit LLVM IR: \'%s\'", error);
-    if(LLVMVerifyModule(c->cur_module, LLVMPrintMessageAction, &error))
+    if(LLVMVerifyModule(c->module_ref, LLVMPrintMessageAction, &error))
     {
         if(error != NULL && *error != '\0')
             sic_error_fatal("Failed to verify LLVM-IR module: %s", error);
         else
             sic_error_fatal("Failed to verify LLVM-IR module. No error supplied.");
     }
+    if(LLVMPrintModuleToFile(c->module_ref, c->llvm_filename, &error))
+        sic_error_fatal("Failed to emit LLVM IR: \'%s\'", error);
 }
 
 static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type)
 {
     char* error;
-    if(LLVMTargetMachineEmitToFile(c->target_machine, c->cur_module, out_path, llvm_file_type, &error))
+    if(LLVMTargetMachineEmitToFile(c->target_machine, c->module_ref, out_path, llvm_file_type, &error))
         sic_error_fatal("LLVM failed to emit file \'%s\': %s", out_path, error);
 }
 
@@ -143,27 +166,26 @@ static LLVMTargetRef get_llvm_target(const char* triple)
 static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, UNUSED void *context)
 {
 	char *desc = LLVMGetDiagInfoDescription(ref);
-	LLVMDiagnosticSeverity severity = LLVMGetDiagInfoSeverity(ref);
-	const char *severity_str;
-	switch (severity)
+	const char *severity;
+	switch (LLVMGetDiagInfoSeverity(ref))
 	{
 		case LLVMDSError:
 			sic_error_fatal("LLVM Error: %s", desc);
 		case LLVMDSWarning:
-			severity_str = "\033[33mLLVM Warning";
+			severity = "\033[33mLLVM Warning";
 			break;
 		case LLVMDSRemark:
-			severity_str = "\033[35mremark";
+			severity = "\033[35mLLVM Remark";
 			break;
 		case LLVMDSNote:
-			severity_str = "\033[36mnote";
+			severity = "\033[36mLLVM Note";
 			break;
 		default:
-			severity_str = "message";
+			severity = "message";
 			break;
 	}
 
     // TODO: Make this only log for debug.
-	printf("[DEBUG] %s\033[0m: %s\n", severity_str, desc);
+	printf("[DEBUG] %s\033[0m: %s\n", severity, desc);
 	LLVMDisposeMessage(desc);
 }

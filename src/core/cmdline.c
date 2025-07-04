@@ -1,4 +1,4 @@
-#include "cmdline.h"
+#include "internal.h"
 #include "utils/error.h"
 
 #include <string.h>

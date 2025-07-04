@@ -1,4 +1,3 @@
-#include "cmdline.h"
 #include "internal.h"
 #include "backend/codegen.h"
 #include "utils/debug.h"
@@ -10,8 +9,10 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-static SIFile compile(const SIFile* input);
-static void   resolve_dependency_paths(char** crt, char** gcclib);
+CompilerContext g_compiler;
+
+static void compile(const SIFile* input);
+static void resolve_dependency_paths(char** crt, char** gcclib);
 
 int main(int argc, char* argv[])
 {
@@ -33,34 +34,30 @@ int main(int argc, char* argv[])
     if(g_args.ir_kind == IR_LLVM)
         llvm_initialize();
 
-    SIFileDA linker_inputs;
-    da_init(&linker_inputs, g_args.input_files.size);
+    da_init(&g_compiler.linker_inputs, g_args.input_files.size);
 
     for(size_t i = 0; i < g_args.input_files.size; ++i)
     {
-        SIFile* cur_input  = g_args.input_files.data + i; 
-        SIFile  cur_output;
+        SIFile* cur_input = g_args.input_files.data + i; 
         
         switch(cur_input->type)
         {
         case FT_SI:
-            cur_output = compile(cur_input);
+            compile(cur_input);
             break;
+        case FT_LLVM_IR:
         case FT_ASM:
             SIC_TODO();
             break;
         case FT_OBJ:
             if(g_args.mode == MODE_LINK)
-                cur_output = *cur_input;
+                da_append(&g_compiler.linker_inputs, *cur_input);
             else
                 fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->full_path);
             break;
         default:
             sic_error_fatal("Input file \'%s\' has invalid extension.", cur_input->full_path);
         }
-
-        if(g_args.mode == MODE_LINK && cur_output.full_path != NULL)
-            da_append(&linker_inputs, cur_output);
     }
 
     if(sic_error_cnt() > 0)
@@ -69,7 +66,10 @@ int main(int argc, char* argv[])
         exit(EXIT_FAILURE);
     }
 
-    if(g_args.mode != MODE_LINK || linker_inputs.size == 0)
+    da_append(&g_compiler.modules_to_compile, &g_compiler.top_module);
+    gen_ir(&g_compiler.modules_to_compile);
+
+    if(g_args.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
         exit(EXIT_SUCCESS);
 
 
@@ -80,11 +80,13 @@ int main(int argc, char* argv[])
     char* gcc_path;
     resolve_dependency_paths(&crt_path, &gcc_path);
 
+    // TODO: Abstract the linker for possibly other platforms, though for now that
+    //       is not necessary.
     StringArray cmd;
     da_init(&cmd, 32);
     da_append(&cmd, "ld");
     da_append(&cmd, "-m");
-    da_append(&cmd, "elf_x86_64"); // Change this to depend on the target architecture
+    da_append(&cmd, "elf_x86_64");
     da_append(&cmd, "-pie");
     da_append(&cmd, "-dynamic-linker");
     da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
@@ -103,8 +105,8 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-L/lib");
     da_append(&cmd, "-L/usr/lib");
 
-    for(size_t i = 0; i < linker_inputs.size; ++i)
-        da_append(&cmd, (char*)linker_inputs.data[i].full_path);
+    for(size_t i = 0; i < g_compiler.linker_inputs.size; ++i)
+        da_append(&cmd, (char*)g_compiler.linker_inputs.data[i].full_path);
 
     da_append(&cmd, "-lc");
 
@@ -139,30 +141,16 @@ void run_subprocess(char** cmd)
         exit(status);
 }
 
-static SIFile compile(const SIFile* input)
+static void compile(const SIFile* input)
 {
-    CompilationUnit unit;
+    CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
 
-    unit.file = *input;
-    parse_unit(&unit);
-    semantic_analysis(&unit);
-    print_unit(&unit);
-    if(sic_error_cnt() > 0)
-        return (SIFile){0};
-    
-    SIFile output = {0};
-    if(g_args.mode == MODE_COMPILE)
-    {
-        if(g_args.output_file == NULL)
-            output = convert_file_to(input, FT_ASM);
-        else
-            output = sifile_new(g_args.output_file);
-    }
-    else
-        output = create_tempfile(FT_ASM);
-
-    gen_ir(&unit);
-    return output;
+    unit->file = *input;
+    parse_unit(unit);
+    semantic_analysis(unit);
+#ifdef SI_DEBUG
+    print_unit(unit);
+#endif
 }
 
 static void resolve_dependency_paths(char** crt, char** gcclib)

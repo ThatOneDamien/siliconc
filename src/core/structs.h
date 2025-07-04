@@ -42,8 +42,13 @@ typedef struct Object           Object;
 typedef struct Scope            Scope;
 
 typedef struct CompilationUnit  CompilationUnit;
+typedef struct CompUnitDA       CompUnitDA;
 typedef struct SIFileDA         SIFileDA;
+typedef struct ModuleDA         ModuleDA;
+typedef struct ModulePTRDA      ModulePTRDA;
 typedef struct Module           Module;
+typedef struct Cmdline          Cmdline;
+typedef struct CompilerContext  CompilerContext;
 
 struct SourceLoc
 {
@@ -248,6 +253,13 @@ struct CompilationUnit
     ObjectDA vars;
 };
 
+struct CompUnitDA
+{
+    CompilationUnit** data;
+    size_t            capacity;
+    size_t            size;
+};
+
 struct SIFileDA
 {
     SIFile* data;
@@ -255,12 +267,46 @@ struct SIFileDA
     size_t  size;
 };
 
+struct ModuleDA
+{
+    Module* data;
+    size_t  capacity;
+    size_t  size;
+};
+
+struct ModulePTRDA
+{
+    Module** data;
+    size_t   capacity;
+    size_t   size;
+};
+
 // For now this definition is really basic, later on I will add a proper
 // hierarchy of modules.
 struct Module
 {
     const char* name;
-    SIFileDA sources;
-    ObjectDA funcs;
-    ObjectDA vars;
+    CompUnitDA  units;
+    HashMap     symbols;
+};
+
+struct Cmdline
+{
+    SIFileDA        input_files;
+    char*           output_file;
+
+    CompileMode     mode;
+    CompileTarget   target;
+    IRTarget        ir_kind;
+
+    bool            emit_ir;
+    bool            emit_asm;
+    bool            hash_hash_hash;
+};
+
+struct CompilerContext
+{
+    SIFileDA    linker_inputs;
+    Module      top_module;
+    ModulePTRDA modules_to_compile;
 };

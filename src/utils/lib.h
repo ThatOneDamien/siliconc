@@ -10,10 +10,12 @@
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define SCRATCH_SIZE (1 << 14)
 
-typedef struct HashEntry HashEntry;
-typedef struct HashMap   HashMap;
-typedef struct MemArena  MemArena;
+typedef struct HashEntry     HashEntry;
+typedef struct HashMap       HashMap;
+typedef struct MemArena      MemArena;
+typedef struct ScratchBuffer ScratchBuffer;
 
 // TODO: Rename this to something like StringMap,
 //       because I will also need a map for integral types
@@ -42,6 +44,12 @@ struct MemArena
     size_t   allocated;
 };
 
+struct ScratchBuffer
+{
+    char   data[SCRATCH_SIZE];
+    size_t len;
+};
+
 void  hashmap_initn(HashMap* map, uint32_t entry_cnt);
 void  hashmap_free(HashMap* map);
 void  hashmap_putn(HashMap* map, const char* key, size_t len, void* val);
@@ -56,12 +64,22 @@ void* global_arena_malloc(size_t size, uint32_t align);
 void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
 
 ATTR_PRINTF(1, 2)
-char* str_format(const char* restrict format, ...);
+char* str_format(const char* restrict fmt, ...);
 
-void        scratch_clear(void);
-void        scratch_appendn(const char* str, size_t len);
-const char* scratch_string(void);
+extern ScratchBuffer g_scratch;
+
+static inline void scratch_clear() { g_scratch.len = 0; }
+static inline void scratch_appendn(const char* str, size_t len)
+{
+    if(len + g_scratch.len > SCRATCH_SIZE)
+        sic_error_fatal("Ran out of space in the scratch buffer. This shouldn't happen.");
+    memcpy(g_scratch.data + g_scratch.len, str, len);
+    g_scratch.len += len;
+}
 static inline void scratch_append(const char* str) { scratch_appendn(str, strlen(str)); }
+static inline const char* scratch_string(void) { g_scratch.data[g_scratch.len] = '\0'; return g_scratch.data; }
+ATTR_PRINTF(1, 2)
+void scratch_appendf(const char* restrict fmt, ...);
 
 static inline void* cmalloc(size_t size)
 {

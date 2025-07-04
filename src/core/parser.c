@@ -165,8 +165,9 @@ void parse_unit(CompilationUnit* unit)
     da_init(&unit->vars, 0);
     if(try_consume(&l, TOKEN_MODULE))
     {
-
+        printf("here\n");
     }
+    da_append(&g_compiler.top_module.units, unit);
 
     while(!tok_equal(&l, TOKEN_EOF))
     {
@@ -174,7 +175,7 @@ void parse_unit(CompilationUnit* unit)
         {
             while(true)
             {
-                Token* t = peek_forw(&l, 1);
+                Token* t = peek(&l);
                 if(t->kind == TOKEN_EOF)
                 {
                     advance(&l);

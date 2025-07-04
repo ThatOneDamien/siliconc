@@ -3,5 +3,5 @@
 #include "utils/da.h"
 #include "utils/file_utils.h"
 
-void gen_ir(const CompilationUnit* unit);
+void gen_ir(ModulePTRDA* modules);
 void llvm_initialize(void);

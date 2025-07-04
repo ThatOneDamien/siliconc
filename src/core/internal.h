@@ -1,8 +1,13 @@
 #pragma once
 #include "core.h"
 #include "structs.h"
+#include "utils/da.h"
 #include "utils/file_utils.h"
 #include "utils/lib.h"
+
+// Compiler globals
+extern Cmdline         g_args;
+extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
@@ -17,6 +22,9 @@ extern Type* g_type_s64;
 extern Type* g_type_f32;
 extern Type* g_type_f64;
 extern Type* g_type_f128;
+
+// Command line arguments
+void process_cmdln_args(int argc, char* argv[]);
 
 // Token functions
 const char*  tok_kind_to_str(TokenKind kind);
