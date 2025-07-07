@@ -33,6 +33,7 @@ static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
 static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
 static ASTExpr* parse_unary_prefix(Lexer* l);
 static ASTExpr* parse_int_literal(Lexer* l);
+static ASTExpr* parse_string_literal(Lexer* l);
 
 // Inline helpers
 
@@ -240,14 +241,17 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
         return false;
 
     if(try_consume(l, TOKEN_SEMI))
+        goto END;
+    else if(attribs & ATTR_EXTERN)
     {
-        printf("Function declaration\n");
-        return true;
+        parser_error(l, "Function declared extern should end with ';'.");
+        return false;
     }
 
     ASTNode* body_block = parse_stmt_block(l);
     comps->body = body_block->stmt.block.body;
 
+END:
     da_append(&l->unit->funcs, func);
     return true;
 }
@@ -691,12 +695,34 @@ static ASTExpr* parse_int_literal(Lexer* l)
     return expr;
 }
 
+static ASTExpr* parse_string_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_STRING;
+
+    scratch_clear();
+    for(uint32_t i = 0; i < expr->loc.len; ++i)
+    {
+        if(expr->loc.start[i] == '\\')
+            SIC_TODO_MSG("Escaped characters.");
+        else
+            scratch_appendc(expr->loc.start[i]);
+    }
+    char* new_buf = MALLOC(g_scratch.len + 1);
+    memcpy(new_buf, g_scratch.data, g_scratch.len);
+    new_buf[g_scratch.len] = '\0';
+    expr->expr.constant.val.s = new_buf;
+    expr->type = pointer_to(g_type_u8);
+    advance(l);
+    return expr;
+}
+
 static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
     [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
     [TOKEN_CHAR_LITERAL]    = { NULL, NULL, PREC_NONE },
     [TOKEN_FLOAT_LITERAL]   = { NULL, NULL, PREC_NONE },
-    [TOKEN_STRING_LITERAL]  = { NULL, NULL, PREC_NONE },
+    [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
     [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
     [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },

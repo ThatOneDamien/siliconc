@@ -32,7 +32,7 @@ BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
 void sic_error_atv(const char* filepath, const SourceLoc* loc, const char* restrict message, va_list va);
 
-ATTR_PRINTF(3, 4)
+PRINTF_FMT(3, 4)
 static inline void sic_error_at(const char* filepath, const SourceLoc* loc, const char* restrict message, ...)
 {
     va_list va;
@@ -77,6 +77,16 @@ static inline uint32_t type_size(Type* ty)
     if(ty->kind == TYPE_POINTER)
         return 8;
 
-    SIC_ERROR_DBG("Unimplemented type.");
-    return 0;
+    SIC_TODO();
+}
+
+static inline uint32_t type_alignment(Type* ty)
+{
+    SIC_ASSERT(ty != NULL);
+    if(ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END)
+        return ty->builtin.size;
+    if(ty->kind == TYPE_POINTER)
+        return 8;
+
+    SIC_TODO();
 }

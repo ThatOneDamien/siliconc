@@ -63,12 +63,19 @@ void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
 void* global_arena_malloc(size_t size, uint32_t align);
 void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
 
-ATTR_PRINTF(1, 2)
+PRINTF_FMT(1, 2)
 char* str_format(const char* restrict fmt, ...);
 
 extern ScratchBuffer g_scratch;
 
 static inline void scratch_clear() { g_scratch.len = 0; }
+static inline void scratch_appendc(char c) 
+{
+    if(g_scratch.len >= SCRATCH_SIZE)
+        sic_error_fatal("Ran out of space in the scratch buffer. This shouldn't happen.");
+    g_scratch.data[g_scratch.len] = c;
+    g_scratch.len++;
+}
 static inline void scratch_appendn(const char* str, size_t len)
 {
     if(len + g_scratch.len > SCRATCH_SIZE)
@@ -78,7 +85,7 @@ static inline void scratch_appendn(const char* str, size_t len)
 }
 static inline void scratch_append(const char* str) { scratch_appendn(str, strlen(str)); }
 static inline const char* scratch_string(void) { g_scratch.data[g_scratch.len] = '\0'; return g_scratch.data; }
-ATTR_PRINTF(1, 2)
+PRINTF_FMT(1, 2)
 void scratch_appendf(const char* restrict fmt, ...);
 
 static inline void* cmalloc(size_t size)

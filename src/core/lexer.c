@@ -27,6 +27,7 @@ static inline void   backtrack_nl(Lexer* lexer);
 static inline bool   consume_nl(Lexer* lexer);
 static inline Token* next_token_loc(Lexer* lexer);
 static inline bool   extract_identifier(Lexer* lexer, Token* t);
+static inline bool   extract_string_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
 
@@ -195,11 +196,10 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_MODULO;
         return true;
     case '\'':
-        SIC_ERROR_DBG("Unimplemented char literal.");
+        SIC_TODO_MSG("Unimplemented char literal");
         return false;
     case '\"':
-        SIC_ERROR_DBG("Unimplemented string literal.");
-        return false;
+        return extract_string_literal(lexer, t);
     case '_':
     CASE_IDENT:
         return extract_identifier(lexer, t);
@@ -323,6 +323,27 @@ static inline bool extract_identifier(Lexer* lexer, Token* t)
     t->kind = sym_map_getn(t->loc.start, t->loc.len);
     if(t->kind == TOKEN_INVALID)
         t->kind = TOKEN_IDENT;
+    return true;
+}
+
+static inline bool extract_string_literal(Lexer* lexer, Token* t)
+{
+    while(peek(lexer) != '\"')
+    {
+        if(peek(lexer) == '\n')
+        {
+            sic_error_at(lexer->unit->file.full_path, &t->loc, "No closing quotes.");
+            return false;
+        }
+        if(peek(lexer) == '\\')
+            next(lexer);
+        next(lexer);
+    }
+
+    t->loc.start++;
+    t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
+    t->kind = TOKEN_STRING_LITERAL;
+    next(lexer);
     return true;
 }
 

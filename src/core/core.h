@@ -10,12 +10,12 @@
     #define UNUSED __attribute__((unused))
     #define FALLTHROUGH __attribute__((fallthrough))
     #define NORETURN __attribute__((noreturn))
-    #define ATTR_PRINTF(fmt, va_args) __attribute__((format(printf, fmt, va_args)))
+    #define PRINTF_FMT(fmt, va_args) __attribute__((format(printf, fmt, va_args)))
 #else
     #define UNUSED
     #define FALLTHROUGH
     #define NORETURN
-    #define ATTR_PRINTF(fmt, va_args)
+    #define PRINTF_FMT(fmt, va_args)
 #endif
 
 #ifdef SI_DEBUG

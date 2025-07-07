@@ -27,7 +27,7 @@ typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
 typedef struct ASTExprConstant  ASTExprConstant;
-typedef struct ASTExprIdent     ASTExprIdent;
+typedef struct Object*          ASTExprIdent;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTReturn        ASTReturn;
@@ -91,6 +91,7 @@ struct Type
 {
     TypeKind      kind;
     TypeQualifier qualifiers;
+    void*         llvm_ref;
 
     union
     {
@@ -157,12 +158,8 @@ struct ASTExprConstant
     {
         uint64_t  i;
         double    f;
+        char*     s;
     } val;
-};
-
-struct ASTExprIdent
-{
-    Object* obj;
 };
 
 struct ASTExprUnary
@@ -214,9 +211,9 @@ struct ObjFunc
 {
     Type*    ret_type;
     ASTNode* body;
+    void*    llvm_func_type;
     ObjectDA local_objs;
     ObjectDA params;
-    int      stack_size;
 };
 
 struct ObjVar
@@ -231,6 +228,7 @@ struct Object
     ObjKind      kind;
     ObjAccess    access;
     ObjAttr      attribs;
+    void*    llvm_ref;
 
     union
     {

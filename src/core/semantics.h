@@ -10,7 +10,7 @@ struct SemaContext
     Scope*           cur_scope;
 };
 
-ATTR_PRINTF(3, 4)
+PRINTF_FMT(3, 4)
 static inline void sema_error(const SemaContext* c, const SourceLoc* loc, 
                               const char* restrict message, ...)
 {
