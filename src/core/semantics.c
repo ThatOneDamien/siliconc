@@ -82,9 +82,11 @@ static void analyze_stmt(SemaContext* c, ASTNode* stmt)
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         declare_obj(c, decl->obj);
         if(decl->init_expr != NULL)
+        {
             analyze_expr(c, decl->init_expr);
-        if(decl->init_expr->type->kind != decl->obj->var.type->kind)
-            SIC_TODO_MSG("Implicit casting rules.");
+            if(decl->init_expr->type->kind != decl->obj->var.type->kind)
+                SIC_TODO_MSG("Implicit casting rules.");
+        }
         break;
     }
     case NODE_MULTI_DECL: {

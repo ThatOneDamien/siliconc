@@ -147,6 +147,8 @@ static void compile(const SIFile* input)
 
     unit->file = *input;
     parse_unit(unit);
+    print_unit(unit);
+    printf("\n\n\n");
     semantic_analysis(unit);
 #ifdef SI_DEBUG
     print_unit(unit);

@@ -335,8 +335,12 @@ static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr)
         return LLVMConstInt(get_llvm_type(c, expr->type), constant->val.i, false);
     case CONSTANT_FLOAT:
         SIC_TODO();
-    case CONSTANT_STRING:
-        SIC_TODO();
+    case CONSTANT_STRING: {
+        LLVMValueRef constant = LLVMConstString(expr->expr.constant.val.s, strlen(expr->expr.constant.val.s), false);
+        LLVMValueRef global_string = LLVMAddGlobal(c->module_ref, LLVMTypeOf(constant), ".str");
+        LLVMSetInitializer(global_string, constant);
+        return global_string;
+    }
     default:
         SIC_UNREACHABLE();
     }

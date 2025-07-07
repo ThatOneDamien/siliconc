@@ -5,6 +5,8 @@ static void analyze_call(SemaContext* c, ASTExpr* expr);
 static void analyze_unary(SemaContext* c, ASTExpr* expr);
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static void analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 
 void analyze_expr(SemaContext* c, ASTExpr* expr)
 {
@@ -112,6 +114,7 @@ static void analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_BIT_OR:
     case BINARY_BIT_XOR:
     case BINARY_BIT_AND:
+        SIC_TODO();
     case BINARY_ASSIGN:
         if(left->type->kind != right->type->kind)
             SIC_TODO_MSG("Implicit casting rules.");
@@ -129,7 +132,7 @@ static void analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_BIT_AND_ASSIGN:
     case BINARY_SHL_ASSIGN:
     case BINARY_SHR_ASSIGN:
-        SIC_TODO_MSG("Assignment operators.");
+        analyze_op_assign(c, expr, left, right);
         break;
     default:
         SIC_UNREACHABLE();
@@ -253,4 +256,43 @@ static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
     }
     expr->type = left->type;
     return true;
+}
+
+static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(left->type->kind != right->type->kind)
+        SIC_TODO_MSG("Implicit casting rules.");
+    if(left->kind != EXPR_IDENT)
+        SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
+    expr->type = left->type;
+    return true;
+}
+
+static void analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    // TODO: Check if lhs is an lvalue
+    BinaryOpKind conversion[BINARY_OP_ASSIGN_END - BINARY_OP_ASSIGN_START + 1] = {
+        [BINARY_ADD_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_ADD,
+        [BINARY_SUB_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SUB,
+        [BINARY_MUL_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_MUL,
+        [BINARY_DIV_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_DIV,
+        [BINARY_MOD_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_MOD,
+        [BINARY_BIT_OR_ASSIGN  - BINARY_OP_ASSIGN_START] = BINARY_BIT_OR,
+        [BINARY_BIT_XOR_ASSIGN - BINARY_OP_ASSIGN_START] = BINARY_BIT_XOR,
+        [BINARY_BIT_AND_ASSIGN - BINARY_OP_ASSIGN_START] = BINARY_BIT_AND,
+        [BINARY_SHL_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SHL,
+        [BINARY_SHR_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SHR,
+    };
+
+    ASTExpr* new_expr = MALLOC_STRUCT(ASTExpr);
+    new_expr->kind = EXPR_BINARY;
+    new_expr->loc = expr->loc;
+    new_expr->expr.binary.kind = conversion[expr->expr.binary.kind - BINARY_OP_ASSIGN_START];
+    new_expr->expr.binary.lhs = left;
+    new_expr->expr.binary.rhs = right;
+    expr->expr.binary.kind = BINARY_ASSIGN;
+    expr->expr.binary.rhs = new_expr;
+    analyze_binary(c, new_expr);
+    if(new_expr->kind == EXPR_INVALID || !analyze_assign(c, expr, left, new_expr))
+        expr->kind = EXPR_INVALID;
 }

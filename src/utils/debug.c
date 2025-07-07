@@ -6,7 +6,171 @@
 
 #define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
 
-static const char* s_tok_names[] = {
+static const char* s_tok_strs[];
+static const char* s_node_type_strs[];
+static const char* s_binary_op_strs[];
+static const char* s_access_strs[];
+static void print_func(const Object* func);
+static void print_node(const ASTNode* node, int depth);
+static void print_expr(const ASTExpr* expr, int depth);
+
+static inline const char* debug_type_to_str(Type* type)
+{
+    return type == NULL ? "Unknown" : type_to_string(type);
+}
+
+void print_all_tokens(Lexer lexer)
+{
+    while(lexer_advance(&lexer))
+    {
+        Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
+        printf("%-15s: Len: %-4u   %.*s\n", 
+               s_tok_strs[tok->kind],
+               tok->loc.len,
+               (int)tok->loc.len, 
+               tok->loc.start);
+    }
+}
+
+void print_unit(const CompilationUnit* unit)
+{
+    SIC_ASSERT(unit != NULL);
+    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", unit->file.full_path, unit->funcs.size, unit->vars.size);
+    for(size_t i = 0; i < unit->funcs.size; ++i)
+        print_func(unit->funcs.data[i]);
+}
+
+static void print_func(const Object* func)
+{
+    const ObjFunc* comps = &func->func;
+    printf("Function \'%.*s\' %s (returns %s):\n", 
+           (int)func->symbol.len,
+           func->symbol.start,
+           s_access_strs[func->access],
+           debug_type_to_str(comps->ret_type));
+    printf("  Params (count: %lu):\n", comps->params.size);
+    for(size_t i = 0; i < comps->params.size; ++i)
+    {
+        Object* param = comps->params.data[i];
+        printf("    %.*s (type %s)\n", 
+               (int)param->symbol.len, 
+               param->symbol.start,
+               debug_type_to_str(param->var.type));
+    }
+
+    printf("  Local Variables:\n");
+    for(size_t i = 0; i < comps->local_objs.size; ++i)
+    {
+        Object* local = comps->local_objs.data[i];
+        printf("    %.*s (type %s)\n", 
+               (int)local->symbol.len, 
+               local->symbol.start,
+               debug_type_to_str(local->var.type));
+    }
+
+    printf("  Body:\n");
+    ASTNode* cur_node = comps->body;
+    while(cur_node != NULL)
+    {
+        print_node(cur_node, 2);
+        cur_node = cur_node->next;
+    }
+    printf("\n");
+}
+
+static void print_node(const ASTNode* node, int depth)
+{
+    if(node == NULL)
+        return;
+
+    PRINT_DEPTH(depth);
+    printf("( %s )\n", s_node_type_strs[node->kind]);
+    switch(node->kind)
+    {
+    case NODE_BLOCK: {
+        ASTNode* cur = node->stmt.block.body;
+        while(cur != NULL)
+        {
+            print_node(cur, depth + 1);
+            cur = cur->next;
+        }
+        break;
+    }
+    case NODE_EXPR_STMT:
+        print_expr(node->stmt.expr, depth + 1);
+        break;
+    case NODE_RETURN:
+        print_expr(node->stmt.return_.ret_expr, depth + 1);
+        break;
+    case NODE_SINGLE_DECL:
+        print_expr(node->stmt.single_decl.init_expr, depth + 1);
+        break;
+    case NODE_MULTI_DECL:
+        for(size_t i = 0; i < node->stmt.multi_decl.size; ++i)
+            print_expr(node->stmt.multi_decl.data[i].init_expr, depth + 1);
+        break;
+    default:
+        break;
+    }
+
+}
+
+static void print_expr(const ASTExpr* expr, int depth)
+{
+    if(expr == NULL)
+        return;
+    PRINT_DEPTH(depth);
+    printf("[ ");
+    switch(expr->kind)
+    {
+    case EXPR_BINARY:
+        printf("BINARY \'%s\' ] (Type %s)\n", s_binary_op_strs[expr->expr.binary.kind], debug_type_to_str(expr->type));
+        print_expr(expr->expr.binary.lhs, depth + 1);
+        print_expr(expr->expr.binary.rhs, depth + 1);
+        break;
+    case EXPR_CAST:
+        printf("Cast ] (Type %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.cast.expr_to_cast, depth + 1);
+        break;
+    case EXPR_CONSTANT:
+        printf("Constant \'%.*s\' val: %lu ] (Type %s)\n", 
+               expr->loc.len, expr->loc.start, expr->expr.constant.val.i,
+               debug_type_to_str(expr->type));
+        break;
+    case EXPR_FUNC_CALL:
+        printf("Call ] (Type %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.call.func_expr, depth + 1);
+        for(size_t i = 0; i < expr->expr.call.args.size; ++i)
+            print_expr(expr->expr.call.args.data[i], depth + 1);
+        break;
+    case EXPR_IDENT: {
+        const SourceLoc* loc = &expr->loc;
+        printf("Identifier \'%.*s\' ] (Type %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
+        break;
+    }
+    case EXPR_INVALID:
+        printf("Invalid ]\n");
+        break;
+    case EXPR_NOP:
+        printf("Nop ]\n");
+        break;
+    case EXPR_PRE_SEMANTIC_IDENT: {
+        const SourceLoc* loc = &expr->loc;
+        printf("Pre-Sema Identifier \'%.*s\' ]\n", loc->len, loc->start);
+        break;
+    }
+    case EXPR_UNARY:
+        printf("Unary \'%.*s\' ] (Type %s)\n",
+               expr->loc.len, expr->loc.start, debug_type_to_str(expr->type));
+        print_expr(expr->expr.unary.child, depth + 1);
+        break;
+    default:
+        printf("%.*s ]\n", expr->loc.len, expr->loc.start);
+        break;
+    }
+}
+
+static const char* s_tok_strs[] = {
     [TOKEN_INVALID]         = "Invalid",
     [TOKEN_IDENT]           = "Identifier",
     [TOKEN_INT_LITERAL]     = "Integer Literal",
@@ -77,7 +241,7 @@ static const char* s_tok_names[] = {
     [TOKEN_EOF]             = "End Of File",
 };
 
-static const char* s_node_type_names[] = {
+static const char* s_node_type_strs[] = {
     [NODE_INVALID]     = "Invalid",
     [NODE_BLOCK]       = "Block",
     [NODE_SINGLE_DECL] = "Single Declaration",
@@ -86,161 +250,44 @@ static const char* s_node_type_names[] = {
     [NODE_RETURN]      = "Return Statement",
 };
 
+static const char* s_binary_op_strs[] = {
+    [BINARY_INVALID]        = "Invalid",
+    [BINARY_ADD]            = "Addition",
+    [BINARY_SUB]            = "Subtraction",
+    [BINARY_MUL]            = "Multiplication",
+    [BINARY_DIV]            = "Division",
+    [BINARY_MOD]            = "Modulo",
+    [BINARY_LOG_OR]         = "Log Or",
+    [BINARY_LOG_AND]        = "Log And",
+    [BINARY_EQ]             = "Equal",
+    [BINARY_NE]             = "Not Equal",
+    [BINARY_LT]             = "Less Than",
+    [BINARY_LE]             = "Less Than Or Equal",
+    [BINARY_GT]             = "Greater Than",
+    [BINARY_GE]             = "Greater Than Or Equal",
+    [BINARY_SHL]            = "Shift Left",
+    [BINARY_SHR]            = "Shift Right",
+    [BINARY_BIT_OR]         = "Bit Or",
+    [BINARY_BIT_XOR]        = "Bit Xor",
+    [BINARY_BIT_AND]        = "Bit And",
+    [BINARY_ASSIGN]         = "Assign",
+    [BINARY_ADD_ASSIGN]     = "Add and Assign",
+    [BINARY_SUB_ASSIGN]     = "Sub and Assign",
+    [BINARY_MUL_ASSIGN]     = "Mul and Assign",
+    [BINARY_DIV_ASSIGN]     = "Div and Assign",
+    [BINARY_MOD_ASSIGN]     = "Mod and Assign",
+    [BINARY_BIT_OR_ASSIGN]  = "Bit Or and Assign",
+    [BINARY_BIT_XOR_ASSIGN] = "Bit Xor and Assign",
+    [BINARY_BIT_AND_ASSIGN] = "Bit And and Assign",
+    [BINARY_SHL_ASSIGN]     = "Shift Left and Assign",
+    [BINARY_SHR_ASSIGN]     = "Shift Left and Assign",
+};
+
 static const char* s_access_strs[] = {
     [ACCESS_PUBLIC]     = "public",
     [ACCESS_PROTECTED]  = "protected",
     [ACCESS_PRIVATE]    = "private",
 };
 
-void print_all_tokens(Lexer lexer)
-{
-    while(lexer_advance(&lexer))
-    {
-        Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
-        printf("%-15s: Len: %-4u   %.*s\n", 
-               s_tok_names[tok->kind],
-               tok->loc.len,
-               (int)tok->loc.len, 
-               tok->loc.start);
-    }
-}
-
-static void print_expr(const ASTExpr* expr, int depth)
-{
-    if(expr == NULL)
-        return;
-    PRINT_DEPTH(depth);
-    printf("[ ");
-    switch(expr->kind)
-    {
-    case EXPR_BINARY:
-        printf("BINARY \'%.*s\' ] (Type %s)\n", expr->loc.len, expr->loc.start, type_to_string(expr->type));
-        print_expr(expr->expr.binary.lhs, depth + 1);
-        print_expr(expr->expr.binary.rhs, depth + 1);
-        break;
-    case EXPR_CAST:
-        printf("Cast ] (Type %s)\n", type_to_string(expr->type));
-        print_expr(expr->expr.cast.expr_to_cast, depth + 1);
-        break;
-    case EXPR_CONSTANT:
-        printf("Constant \'%.*s\' val: %lu ] (Type %s)\n", 
-               expr->loc.len, expr->loc.start, expr->expr.constant.val.i,
-               type_to_string(expr->type));
-        break;
-    case EXPR_FUNC_CALL:
-        printf("Call ] (Type %s)\n", type_to_string(expr->type));
-        print_expr(expr->expr.call.func_expr, depth + 1);
-        for(size_t i = 0; i < expr->expr.call.args.size; ++i)
-            print_expr(expr->expr.call.args.data[i], depth + 1);
-        break;
-    case EXPR_IDENT: {
-        const SourceLoc* loc = &expr->loc;
-        printf("Identifier \'%.*s\' ] (Type %s)\n", loc->len, loc->start, type_to_string(expr->type));
-        break;
-    }
-    case EXPR_INVALID:
-        printf("Invalid ]\n");
-        break;
-    case EXPR_NOP:
-        printf("Nop ]\n");
-        break;
-    case EXPR_PRE_SEMANTIC_IDENT: {
-        const SourceLoc* loc = &expr->loc;
-        printf("Pre-Sema Identifier \'%.*s\' ]\n", loc->len, loc->start);
-        break;
-    }
-    case EXPR_UNARY:
-        printf("Unary \'%.*s\' ] (Type %s)\n",
-               expr->loc.len, expr->loc.start, type_to_string(expr->type));
-        print_expr(expr->expr.unary.child, depth + 1);
-        break;
-    default:
-        printf("%.*s ]\n", expr->loc.len, expr->loc.start);
-        break;
-    }
-}
-
-static void print_node(const ASTNode* node, int depth)
-{
-    if(node == NULL)
-        return;
-
-    PRINT_DEPTH(depth);
-    printf("( %s )\n", s_node_type_names[node->kind]);
-    switch(node->kind)
-    {
-    case NODE_BLOCK: {
-        ASTNode* cur = node->stmt.block.body;
-        while(cur != NULL)
-        {
-            print_node(cur, depth + 1);
-            cur = cur->next;
-        }
-        break;
-    }
-    case NODE_EXPR_STMT:
-        print_expr(node->stmt.expr, depth + 1);
-        break;
-    case NODE_RETURN:
-        print_expr(node->stmt.return_.ret_expr, depth + 1);
-        break;
-    case NODE_SINGLE_DECL:
-        print_expr(node->stmt.single_decl.init_expr, depth + 1);
-        break;
-    case NODE_MULTI_DECL:
-        for(size_t i = 0; i < node->stmt.multi_decl.size; ++i)
-            print_expr(node->stmt.multi_decl.data[i].init_expr, depth + 1);
-        break;
-    default:
-        break;
-    }
-
-}
-
-static void print_func(const Object* func)
-{
-    const ObjFunc* comps = &func->func;
-    printf("Function \'%.*s\' %s (returns %s):\n", 
-           (int)func->symbol.len,
-           func->symbol.start,
-           s_access_strs[func->access],
-           type_to_string(comps->ret_type));
-    printf("  Params (count: %lu):\n", comps->params.size);
-    for(size_t i = 0; i < comps->params.size; ++i)
-    {
-        Object* param = comps->params.data[i];
-        printf("    %.*s (type %s)\n", 
-               (int)param->symbol.len, 
-               param->symbol.start,
-               type_to_string(param->var.type));
-    }
-
-    printf("  Local Variables:\n");
-    for(size_t i = 0; i < comps->local_objs.size; ++i)
-    {
-        Object* local = comps->local_objs.data[i];
-        printf("    %.*s (type %s)\n", 
-               (int)local->symbol.len, 
-               local->symbol.start,
-               type_to_string(local->var.type));
-    }
-
-    printf("  Body:\n");
-    ASTNode* cur_node = comps->body;
-    while(cur_node != NULL)
-    {
-        print_node(cur_node, 2);
-        cur_node = cur_node->next;
-    }
-    printf("\n");
-}
-
-void print_unit(const CompilationUnit* unit)
-{
-    SIC_ASSERT(unit != NULL);
-    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", unit->file.full_path, unit->funcs.size, unit->vars.size);
-    for(size_t i = 0; i < unit->funcs.size; ++i)
-        print_func(unit->funcs.data[i]);
-}
 
 #endif // SI_DEBUG

@@ -17,6 +17,7 @@ void sic_error_fatal(const char* restrict message, ...)
     vfprintf(stderr, message, va);
     putc('\n', stderr);
     va_end(va);
+    SIC_ERROR_DBG("Fatal Error Triggered Debug Break.");
     exit(EXIT_FAILURE);
 }
 
