@@ -12,13 +12,8 @@
 #define nextr(lex)          (*(++(lex)->cur_pos))
 #define backtrack(lex)      (--(lex)->cur_pos)
 
-// static Token* create_token(TokenKind type, char* start, size_t len);
-// static size_t extract_num_literal(char* source);
-// static size_t extract_identifier(char* source);
-// static size_t extract_separator(char* source);
-static void skip_invisible(Lexer* lexer);
-
-static inline bool   consume(Lexer* lexer, char c);
+static void        skip_invisible(Lexer* lexer);
+static inline bool consume(Lexer* lexer, char c);
 
 // The 'nl' versions of next, backtrack, and consume do an additional check
 // for if the character is a newline, if it is, we update the line data accordingly
@@ -30,6 +25,7 @@ static inline bool   extract_identifier(Lexer* lexer, Token* t);
 static inline bool   extract_string_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
+static inline int    escaped_char(const char** pos, uint64_t* real);
 
 void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
 {
@@ -58,7 +54,7 @@ bool lexer_advance(Lexer* lexer)
     t->loc.line_start = lexer->line_start;
     t->loc.line_num   = lexer->cur_line;
     t->loc.start      = lexer->cur_pos;
-    t->kind       = TOKEN_INVALID;
+    t->kind           = TOKEN_INVALID;
 
     if(at_eof(lexer))
     {
@@ -217,13 +213,6 @@ bool lexer_advance(Lexer* lexer)
     }
 }
 
-Token* lexer_look_ahead(Lexer* lexer, uint32_t count)
-{
-    SIC_ASSERT(lexer != NULL);
-    SIC_ASSERT(count < LOOK_AHEAD_SIZE);
-    return lexer->la_buf.buf + ((lexer->la_buf.head + count) % LOOK_AHEAD_SIZE);
-}
-
 static void skip_invisible(Lexer* lexer)
 {
     while(true)
@@ -328,21 +317,65 @@ static inline bool extract_identifier(Lexer* lexer, Token* t)
 
 static inline bool extract_string_literal(Lexer* lexer, Token* t)
 {
-    while(peek(lexer) != '\"')
+    char c;
+    const char* orig = lexer->cur_pos;
+    while((c = peek(lexer)) != '\"')
     {
-        if(peek(lexer) == '\n')
+        if(c == '\\')
+            c = *(++lexer->cur_pos);
+        if(c == '\n')
         {
-            sic_error_at(lexer->unit->file.full_path, &t->loc, "No closing quotes.");
+            sic_error_at(lexer->unit->file.full_path, &t->loc, 
+                         "Encountered newline character while lexing string literal. Did you forget a '\"'?");
             return false;
         }
-        if(peek(lexer) == '\\')
-            next(lexer);
+        if(c == '\0')
+        {
+            sic_error_at(lexer->unit->file.full_path, &t->loc, 
+                         "Encountered end of file while lexing string literal. Did you forget a '\"'?");
+            return false;
+        }
         next(lexer);
     }
 
     t->loc.start++;
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
     t->kind = TOKEN_STRING_LITERAL;
+
+    char*  real_string = MALLOC((size_t)(lexer->cur_pos - orig + 1));
+    size_t len = 0;
+
+    while(orig < lexer->cur_pos)
+    {
+        SourceLoc escape_loc;
+        escape_loc.start = orig;
+        escape_loc.len = 2;
+        escape_loc.line_start = lexer->line_start;
+        escape_loc.line_num = lexer->cur_line;
+        c = *orig;
+        orig++;
+        if(c == '\\')
+        {
+            uint64_t value;
+            int escape_len = escaped_char(&orig, &value);
+            if(escape_len < 0)
+            {
+                sic_error_at(lexer->unit->file.full_path, &escape_loc, 
+                             "Invalid escape sequence.");
+                next(lexer);
+                return false;
+            }
+            memcpy(real_string + len, &value, escape_len);
+            len += escape_len;
+            continue;
+        }
+        real_string[len] = c;
+        len++;
+    }
+
+    t->str.val = real_string;
+    t->str.len = len;
+
     next(lexer);
     return true;
 }
@@ -402,4 +435,58 @@ static inline bool extract_num_suffix(Lexer* lexer, bool* is_float)
         return true;
     SIC_ERROR_DBG("Unimplemented suffix.");
     return false;
+}
+
+static inline int escaped_char(const char** pos, uint64_t* real)
+{
+    char c = **pos;
+    (*pos)++;
+    // uint64_t char_val = 0;
+    switch(c)
+    {
+    case 'a':
+        *real = '\a';
+        return 1;
+    case 'b':
+        *real = '\b';
+        return 1;
+    case 'e':
+        *real = 0x1B;
+        return 1; // ANSI Escape starting byte
+    case 'f':
+        *real = '\f';
+        return 1;
+    case 'n':
+        *real = '\n';
+        return 1;
+    case 'r':
+        *real = '\r';
+        return 1;
+    case 't':
+        *real = '\t';
+        return 1;
+    case 'u':
+    case 'U':
+        SIC_TODO_MSG("Unicode escape sequences.");
+    case 'v':
+        *real = '\v';
+        return 1;
+    case 'x':
+        SIC_TODO_MSG("Hex escape sequences.");
+        break;
+    case '\"':
+        *real = '\"';
+        return 1;
+    case '\'':
+        *real = '\'';
+        return 1;
+    case '0':
+        *real = '\0';
+        return 1;
+    case '\\':
+        *real = '\\';
+        return 1;
+    default:
+        return -1;
+    }
 }

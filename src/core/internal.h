@@ -44,7 +44,6 @@ static inline void sic_error_at(const char* filepath, const SourceLoc* loc, cons
 // Lexer functions
 void   lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
 bool   lexer_advance(Lexer* lexer);
-Token* lexer_look_ahead(Lexer* lexer, uint32_t count); // count < LOOK_AHEAD_SIZE
 
 // Parser functions
 void parser_init(void);

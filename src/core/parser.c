@@ -700,19 +700,9 @@ static ASTExpr* parse_string_literal(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_STRING;
 
-    scratch_clear();
-    for(uint32_t i = 0; i < expr->loc.len; ++i)
-    {
-        if(expr->loc.start[i] == '\\')
-            SIC_TODO_MSG("Escaped characters.");
-        else
-            scratch_appendc(expr->loc.start[i]);
-    }
-    char* new_buf = MALLOC(g_scratch.len + 1);
-    memcpy(new_buf, g_scratch.data, g_scratch.len);
-    new_buf[g_scratch.len] = '\0';
-    expr->expr.constant.val.s = new_buf;
-    expr->type = pointer_to(g_type_u8);
+    // TODO: Add capability to concat multiple string literals if they are
+    //       side-by-side
+    expr->expr.constant.val.s = peek(l)->str.val;
     advance(l);
     return expr;
 }

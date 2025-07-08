@@ -62,6 +62,20 @@ struct Token
 {
     TokenKind kind;
     SourceLoc loc;
+    union
+    {
+        struct
+        {
+            char*  val;
+            size_t len;
+        } str;
+
+        struct
+        {
+            uint64_t val;
+            size_t   width;
+        } chr;
+    };
 };
 
 
