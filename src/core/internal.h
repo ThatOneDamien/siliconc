@@ -11,6 +11,7 @@ extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
+extern Type* g_type_bool;
 extern Type* g_type_u8;
 extern Type* g_type_s8;
 extern Type* g_type_u16;
@@ -62,7 +63,18 @@ Type*       builtin_type(TokenKind type_token);
 Type*       type_copy(Type* orig);
 Type*       pointer_to(Type* base);
 const char* type_to_string(Type* type);
-
+static inline bool type_is_builtin(Type* ty)
+{
+    return ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END;
+}
+static inline bool type_is_signed(Type* ty)
+{
+    return ty->kind >= TYPE_SIGNED_START && ty->kind <= TYPE_SIGNED_END;
+}
+static inline bool type_is_unsigned(Type* ty)
+{
+    return ty->kind >= TYPE_UNSIGNED_START && ty->kind <= TYPE_UNSIGNED_END;
+}
 static inline bool is_builtin_type(TokenKind kind)
 {
     return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;

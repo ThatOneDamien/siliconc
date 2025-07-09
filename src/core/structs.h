@@ -30,8 +30,9 @@ typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct Object*          ASTExprIdent;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExpr          ASTExpr;
+typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
-typedef struct ASTNode          ASTNode;
+typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
 typedef struct ObjFunc          ObjFunc;
@@ -137,7 +138,7 @@ struct ASTDeclDA
 
 struct ASTBlock
 {
-    ASTNode* body;
+    ASTStmt* body;
 };
 
 struct ASTDeclaration
@@ -163,6 +164,7 @@ struct ASTExprCast
 {
     ASTExpr* expr_to_cast;
     Type*    cast_type;
+    CastKind kind;
 };
 
 struct ASTExprConstant
@@ -199,15 +201,22 @@ struct ASTExpr
     } expr;
 };
 
+struct ASTIf
+{
+    ASTExpr* cond;
+    ASTStmt* then_stmt;
+    ASTStmt* else_stmt;
+};
+
 struct ASTReturn
 {
     ASTExpr* ret_expr;
 };
 
-struct ASTNode
+struct ASTStmt
 {
-    NodeKind kind;
-    ASTNode* next;
+    StmtKind kind;
+    ASTStmt* next;
     Token    token;
 
     union
@@ -216,6 +225,7 @@ struct ASTNode
         ASTDeclaration  single_decl;
         ASTDeclDA       multi_decl;
         ASTExpr*        expr;
+        ASTIf           if_;
         ASTReturn       return_;
     } stmt;
 };
@@ -224,7 +234,7 @@ struct ASTNode
 struct ObjFunc
 {
     Type*    ret_type;
-    ASTNode* body;
+    ASTStmt* body;
     void*    llvm_func_type;
     ObjectDA local_objs;
     ObjectDA params;
@@ -238,11 +248,11 @@ struct ObjVar
 
 struct Object
 {
-    SourceLoc    symbol;
-    ObjKind      kind;
-    ObjAccess    access;
-    ObjAttr      attribs;
-    void*    llvm_ref;
+    SourceLoc symbol;
+    ObjKind   kind;
+    ObjAccess access;
+    ObjAttr   attribs;
+    void*     llvm_ref;
 
     union
     {

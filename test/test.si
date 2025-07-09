@@ -4,11 +4,12 @@
  * This should also not appear in the lexer's output.
  */
 
-priv extern void printf(u8* str, u32 a);
-
-pub s32 main()
+pub u32 main()
 {
-    u32 a = 1;
-    printf("Bruh %u\n", a);
-    return a;
+    u32 a = 10;
+    a >>= 1;
+    printf("hi %d\n", a);
+    return 0;
 }
+
+priv extern void printf(u8* str, u32 a);

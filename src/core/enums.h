@@ -63,16 +63,21 @@ typedef enum
     TOKEN_AS,
     TOKEN_KEYWORD_START = TOKEN_AS,
     TOKEN_CONST,
+    TOKEN_ELSE,
     TOKEN_EXTERN,
+    TOKEN_FALSE,
+    TOKEN_IF,
+    TOKEN_MODULE,
     TOKEN_PRIV,
     TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
-    TOKEN_MODULE,
+    TOKEN_TRUE,
 
     // Built-in/Primitive type names (Still part of keywords)
     TOKEN_VOID,
     TOKEN_TYPENAME_START = TOKEN_VOID,
+    TOKEN_BOOL,
     TOKEN_U8,
     TOKEN_S8,
     TOKEN_U16,
@@ -92,8 +97,9 @@ typedef enum
 
 typedef enum
 {
-    CONST_INVALID = 0,
+    CONSTANT_INVALID = 0,
     CONSTANT_INTEGER,
+    CONSTANT_BOOL,
     CONSTANT_FLOAT,
     CONSTANT_STRING,
 } ConstantKind;
@@ -102,11 +108,24 @@ typedef enum
 {
     CAST_GROUP_INVALID = -1,
     CAST_GROUP_VOID = 0,
+    CAST_GROUP_BOOL,
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
     CAST_GROUP_PTR,
     __CAST_GROUP_COUNT,
 } CastGroup;
+
+typedef enum
+{
+    CAST_INVALID = 0,
+    CAST_FLOAT_TO_SINT,
+    CAST_FLOAT_TO_UINT,
+    CAST_SINT_TO_FLOAT,
+    CAST_UINT_TO_FLOAT,
+    CAST_PTR_TO_INT,
+    CAST_INT_TO_PTR,
+    CAST_WIDEN_OR_NARROW,
+} CastKind;
 
 typedef enum
 {
@@ -170,14 +189,15 @@ typedef enum
 
 typedef enum
 {
-    NODE_INVALID = 0,
+    STMT_INVALID = 0,
 
-    NODE_BLOCK,
-    NODE_SINGLE_DECL,
-    NODE_MULTI_DECL,
-    NODE_EXPR_STMT,
-    NODE_RETURN,
-} NodeKind;
+    STMT_BLOCK,
+    STMT_IF,
+    STMT_SINGLE_DECL,
+    STMT_MULTI_DECL,
+    STMT_EXPR_STMT,
+    STMT_RETURN,
+} StmtKind;
 
 typedef enum
 {
@@ -192,18 +212,23 @@ typedef enum
     TYPE_INVALID = 0,
     TYPE_VOID,
     TYPE_BUILTIN_START = TYPE_VOID,
+    TYPE_BOOL,
 
-    TYPE_S8,
-    TYPE_INTEGER_START = TYPE_S8,
-    TYPE_NUMERIC_START = TYPE_S8,
     TYPE_U8,
-    TYPE_S16,
+    TYPE_INTEGER_START  = TYPE_U8,
+    TYPE_NUMERIC_START  = TYPE_U8,
+    TYPE_UNSIGNED_START = TYPE_U8,
     TYPE_U16,
-    TYPE_S32,
     TYPE_U32,
-    TYPE_S64,
     TYPE_U64,
-    TYPE_INTEGER_END = TYPE_U64,
+    TYPE_UNSIGNED_END = TYPE_U64,
+    TYPE_S8,
+    TYPE_SIGNED_START = TYPE_S8,
+    TYPE_S16,
+    TYPE_S32,
+    TYPE_S64,
+    TYPE_SIGNED_END = TYPE_S64,
+    TYPE_INTEGER_END = TYPE_S64,
 
     TYPE_F32,
     TYPE_FLOAT_START = TYPE_F32,

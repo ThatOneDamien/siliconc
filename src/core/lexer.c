@@ -22,6 +22,7 @@ static inline void   backtrack_nl(Lexer* lexer);
 static inline bool   consume_nl(Lexer* lexer);
 static inline Token* next_token_loc(Lexer* lexer);
 static inline bool   extract_identifier(Lexer* lexer, Token* t);
+static inline bool   extract_char_literal(Lexer* lexer, Token* t);
 static inline bool   extract_string_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
@@ -192,8 +193,7 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_MODULO;
         return true;
     case '\'':
-        SIC_TODO_MSG("Unimplemented char literal");
-        return false;
+        return extract_char_literal(lexer, t);
     case '\"':
         return extract_string_literal(lexer, t);
     case '_':
@@ -312,6 +312,42 @@ static inline bool extract_identifier(Lexer* lexer, Token* t)
     t->kind = sym_map_getn(t->loc.start, t->loc.len);
     if(t->kind == TOKEN_INVALID)
         t->kind = TOKEN_IDENT;
+    return true;
+}
+
+static inline bool extract_char_literal(Lexer* lexer, Token* t)
+{
+    t->loc.start++;
+    if(peek(lexer) == '\\')
+    {
+        next(lexer);
+        int escape_len = escaped_char(&lexer->cur_pos, &t->chr.val);
+        if(escape_len < 0)
+        {
+            t->loc.len = 2;
+            sic_error_at(lexer->unit->file.full_path, &t->loc, 
+                         "Invalid escape sequence.");
+            return false;
+        }
+        t->chr.width = escape_len;
+    }
+    else
+    {
+        t->chr.val = peek(lexer);
+        t->chr.width = 1;
+        next(lexer);
+    }
+
+    if(peek(lexer) != '\'')
+    {
+        t->loc.start--;
+        sic_error_at(lexer->unit->file.full_path, &t->loc,
+                     "Multi-character char literal, or just missing \'.");
+        return false;
+    }
+    t->loc.len = lexer->cur_pos - t->loc.start;
+    t->kind = TOKEN_CHAR_LITERAL;
+    next(lexer);
     return true;
 }
 

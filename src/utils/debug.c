@@ -1,18 +1,18 @@
-#ifdef SI_DEBUG
-
 #include "debug.h"
 #include "core/core.h"
 #include "core/internal.h"
 
+#ifdef SI_DEBUG
 #define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
 
 static const char* s_tok_strs[];
-static const char* s_node_type_strs[];
+static const char* s_stmt_type_strs[];
 static const char* s_binary_op_strs[];
 static const char* s_access_strs[];
 static void print_func(const Object* func);
-static void print_node(const ASTNode* node, int depth);
-static void print_expr(const ASTExpr* expr, int depth);
+static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth);
+static void print_expr(const ASTExpr* expr, int depth, bool print_depth);
+static void print_constant(const ASTExpr* expr);
 
 static inline const char* debug_type_to_str(Type* type)
 {
@@ -69,83 +69,104 @@ static void print_func(const Object* func)
     }
 
     printf("  Body:\n");
-    ASTNode* cur_node = comps->body;
-    while(cur_node != NULL)
+    ASTStmt* cur_stmt = comps->body;
+    while(cur_stmt != NULL)
     {
-        print_node(cur_node, 2);
-        cur_node = cur_node->next;
+        print_stmt(cur_stmt, 2, true);
+        cur_stmt = cur_stmt->next;
     }
     printf("\n");
 }
 
-static void print_node(const ASTNode* node, int depth)
+static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
 {
-    if(node == NULL)
+    if(stmt == NULL)
         return;
 
-    PRINT_DEPTH(depth);
-    printf("( %s )\n", s_node_type_strs[node->kind]);
-    switch(node->kind)
+    if(print_depth)
+        PRINT_DEPTH(depth);
+    printf("( %s )\n", s_stmt_type_strs[stmt->kind]);
+    switch(stmt->kind)
     {
-    case NODE_BLOCK: {
-        ASTNode* cur = node->stmt.block.body;
+    case STMT_BLOCK: {
+        ASTStmt* cur = stmt->stmt.block.body;
         while(cur != NULL)
         {
-            print_node(cur, depth + 1);
+            print_stmt(cur, depth + 1, true);
             cur = cur->next;
         }
         break;
     }
-    case NODE_EXPR_STMT:
-        print_expr(node->stmt.expr, depth + 1);
+    case STMT_IF:
+        PRINT_DEPTH(depth + 1);
+        printf("cond: ");
+        print_expr(stmt->stmt.if_.cond, depth + 1, false);
+        PRINT_DEPTH(depth + 1);
+        printf("then: ");
+        print_stmt(stmt->stmt.if_.then_stmt, depth + 1, false);
+        PRINT_DEPTH(depth + 1);
+        printf("else: ");
+        print_stmt(stmt->stmt.if_.else_stmt, depth + 1, false);
         break;
-    case NODE_RETURN:
-        print_expr(node->stmt.return_.ret_expr, depth + 1);
+    case STMT_EXPR_STMT:
+        print_expr(stmt->stmt.expr, depth + 1, true);
         break;
-    case NODE_SINGLE_DECL:
-        print_expr(node->stmt.single_decl.init_expr, depth + 1);
+    case STMT_RETURN:
+        print_expr(stmt->stmt.return_.ret_expr, depth + 1, true);
         break;
-    case NODE_MULTI_DECL:
-        for(size_t i = 0; i < node->stmt.multi_decl.size; ++i)
-            print_expr(node->stmt.multi_decl.data[i].init_expr, depth + 1);
+    case STMT_SINGLE_DECL: {
+        const ASTDeclaration* decl = &stmt->stmt.single_decl;
+        PRINT_DEPTH(depth + 1);
+        printf("%.*s = ", decl->obj->symbol.len, decl->obj->symbol.start);
+        print_expr(decl->init_expr, depth + 1, false);
         break;
+    }
+    case STMT_MULTI_DECL: {
+        const ASTDeclDA* decls = &stmt->stmt.multi_decl;
+        for(size_t i = 0; i < decls->size; ++i)
+        {
+            PRINT_DEPTH(depth + 1);
+            printf("%.*s = ", decls->data[i].obj->symbol.len, decls->data[i].obj->symbol.start);
+            print_expr(decls->data[i].init_expr, depth + 1, false);
+        }
+        break;
+    }
     default:
         break;
     }
 
 }
 
-static void print_expr(const ASTExpr* expr, int depth)
+static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
 {
     if(expr == NULL)
         return;
-    PRINT_DEPTH(depth);
+    if(print_depth)
+        PRINT_DEPTH(depth);
     printf("[ ");
     switch(expr->kind)
     {
     case EXPR_BINARY:
-        printf("BINARY \'%s\' ] (Type %s)\n", s_binary_op_strs[expr->expr.binary.kind], debug_type_to_str(expr->type));
-        print_expr(expr->expr.binary.lhs, depth + 1);
-        print_expr(expr->expr.binary.rhs, depth + 1);
+        printf("BINARY \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], debug_type_to_str(expr->type));
+        print_expr(expr->expr.binary.lhs, depth + 1, true);
+        print_expr(expr->expr.binary.rhs, depth + 1, true);
         break;
     case EXPR_CAST:
-        printf("Cast ] (Type %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.cast.expr_to_cast, depth + 1);
+        printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.cast.expr_to_cast, depth + 1, true);
         break;
     case EXPR_CONSTANT:
-        printf("Constant \'%.*s\' val: %lu ] (Type %s)\n", 
-               expr->loc.len, expr->loc.start, expr->expr.constant.val.i,
-               debug_type_to_str(expr->type));
+        print_constant(expr);
         break;
     case EXPR_FUNC_CALL:
-        printf("Call ] (Type %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.call.func_expr, depth + 1);
+        printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.call.func_expr, depth + 1, true);
         for(size_t i = 0; i < expr->expr.call.args.size; ++i)
-            print_expr(expr->expr.call.args.data[i], depth + 1);
+            print_expr(expr->expr.call.args.data[i], depth + 1, true);
         break;
     case EXPR_IDENT: {
         const SourceLoc* loc = &expr->loc;
-        printf("Identifier \'%.*s\' ] (Type %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
+        printf("Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
         break;
     }
     case EXPR_INVALID:
@@ -160,12 +181,40 @@ static void print_expr(const ASTExpr* expr, int depth)
         break;
     }
     case EXPR_UNARY:
-        printf("Unary \'%.*s\' ] (Type %s)\n",
+        printf("Unary \'%.*s\' ] (Type: %s)\n",
                expr->loc.len, expr->loc.start, debug_type_to_str(expr->type));
-        print_expr(expr->expr.unary.child, depth + 1);
+        print_expr(expr->expr.unary.child, depth + 1, true);
         break;
     default:
         printf("%.*s ]\n", expr->loc.len, expr->loc.start);
+        break;
+    }
+}
+
+static void print_constant(const ASTExpr* expr)
+{
+    const ASTExprConstant* constant = &expr->expr.constant;
+    switch(constant->kind)
+    {
+    case CONSTANT_INVALID:
+        printf("Invalid Constant ]\n");
+        break;
+    case CONSTANT_INTEGER:
+        printf("Constant Integer val: %lu ] (Type: %s)\n",
+               constant->val.i, debug_type_to_str(expr->type));
+        break;
+    case CONSTANT_BOOL:
+        printf("Constant Boolean val: %s ]\n",
+               constant->val.i ? "true" : "false");
+        break;
+    case CONSTANT_FLOAT:
+        printf("Constant Float val: %lf ] (Type: %s)\n",
+               constant->val.f, debug_type_to_str(expr->type));
+        break;
+    case CONSTANT_STRING:
+        printf("Constant String \'%.*s\' ]\n", 
+               expr->loc.len, expr->loc.start);
+               
         break;
     }
 }
@@ -221,13 +270,20 @@ static const char* s_tok_strs[] = {
     [TOKEN_SHL_ASSIGN]      = "Shift Left Assign",
     [TOKEN_INCREM]          = "Increment",
     [TOKEN_DECREM]          = "Decrement",
+
+    [TOKEN_AS]              = "as",
+    [TOKEN_CONST]           = "const",
+    [TOKEN_ELSE]            = "else",
     [TOKEN_EXTERN]          = "extern",
+    [TOKEN_IF]              = "if",
     [TOKEN_PUB]             = "pub",
     [TOKEN_PRIV]            = "priv",
     [TOKEN_PROT]            = "prot",
     [TOKEN_RETURN]          = "return",
     [TOKEN_MODULE]          = "mod",
+
     [TOKEN_VOID]            = "void",
+    [TOKEN_BOOL]            = "bool",
     [TOKEN_U8]              = "u8",
     [TOKEN_S8]              = "s8",
     [TOKEN_U16]             = "u16",
@@ -241,13 +297,14 @@ static const char* s_tok_strs[] = {
     [TOKEN_EOF]             = "End Of File",
 };
 
-static const char* s_node_type_strs[] = {
-    [NODE_INVALID]     = "Invalid",
-    [NODE_BLOCK]       = "Block",
-    [NODE_SINGLE_DECL] = "Single Declaration",
-    [NODE_MULTI_DECL]  = "Multi Declaration",
-    [NODE_EXPR_STMT]   = "Expression Statement",
-    [NODE_RETURN]      = "Return Statement",
+static const char* s_stmt_type_strs[] = {
+    [STMT_INVALID]     = "Invalid",
+    [STMT_BLOCK]       = "Block",
+    [STMT_IF]          = "If",
+    [STMT_SINGLE_DECL] = "Single Declaration",
+    [STMT_MULTI_DECL]  = "Multi Declaration",
+    [STMT_EXPR_STMT]   = "Expression Statement",
+    [STMT_RETURN]      = "Return Statement",
 };
 
 static const char* s_binary_op_strs[] = {
@@ -288,6 +345,5 @@ static const char* s_access_strs[] = {
     [ACCESS_PROTECTED]  = "protected",
     [ACCESS_PRIVATE]    = "private",
 };
-
 
 #endif // SI_DEBUG

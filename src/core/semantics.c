@@ -2,7 +2,7 @@
 #include "utils/da.h"
 
 static void    analyze_function(SemaContext* c, Object* function);
-static void    analyze_stmt(SemaContext* c, ASTNode* stmt);
+static void    analyze_stmt(SemaContext* c, ASTStmt* stmt);
 
 static inline void push_scope(SemaContext* c);
 static inline void pop_scope(SemaContext* c);
@@ -45,7 +45,7 @@ static void analyze_function(SemaContext* c, Object* function)
         hashmap_putn(&c->cur_scope->vars, param->symbol.start, param->symbol.len, param);
     }
 
-    ASTNode* stmt = function->func.body;
+    ASTStmt* stmt = function->func.body;
     while(stmt != NULL)
     {
         analyze_stmt(c, stmt);
@@ -54,31 +54,52 @@ static void analyze_function(SemaContext* c, Object* function)
     pop_scope(c);
 }
 
-static void analyze_stmt(SemaContext* c, ASTNode* stmt)
+static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
 {
     switch(stmt->kind)
     {
-    case NODE_BLOCK: {
+    case STMT_BLOCK: {
         push_scope(c);
-        ASTNode* sub_stmt = stmt->stmt.block.body;
+        ASTStmt* sub_stmt = stmt->stmt.block.body;
         while(sub_stmt != NULL)
         {
             analyze_stmt(c, sub_stmt);
             sub_stmt = sub_stmt->next;
         }
         pop_scope(c);
-        break;
-    }
-    case NODE_EXPR_STMT:
-        analyze_expr(c, stmt->stmt.expr);
-        break;
-    case NODE_INVALID:
         return;
-    case NODE_RETURN:
-        analyze_expr(c, stmt->stmt.return_.ret_expr);
-        
-        break;
-    case NODE_SINGLE_DECL: {
+    }
+    case STMT_IF: {
+        ASTIf* if_stmt = &stmt->stmt.if_;
+        analyze_expr(c, if_stmt->cond);
+        analyze_stmt(c, if_stmt->then_stmt);
+        if(if_stmt->else_stmt != NULL)
+            analyze_stmt(c, if_stmt->else_stmt);
+        return;
+    }
+    case STMT_EXPR_STMT:
+        analyze_expr(c, stmt->stmt.expr);
+        return;
+    case STMT_INVALID:
+        return;
+    case STMT_RETURN:
+        if(stmt->stmt.return_.ret_expr != NULL)
+        {
+            if(c->cur_func->func.ret_type->kind == TYPE_VOID)
+            {
+                sema_error(c, &stmt->stmt.return_.ret_expr->loc,
+                           "Function returning void should not have expression in return statement.");
+                return;
+            }
+            analyze_expr(c, stmt->stmt.return_.ret_expr);
+        }
+        else if(c->cur_func->func.ret_type->kind != TYPE_VOID)
+        {
+            sema_error(c, &stmt->token.loc,
+                       "Function returning non-void should have expression in return statement.");
+        }
+        return;
+    case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         declare_obj(c, decl->obj);
         if(decl->init_expr != NULL)
@@ -87,9 +108,9 @@ static void analyze_stmt(SemaContext* c, ASTNode* stmt)
             if(decl->init_expr->type->kind != decl->obj->var.type->kind)
                 SIC_TODO_MSG("Implicit casting rules.");
         }
-        break;
+        return;
     }
-    case NODE_MULTI_DECL: {
+    case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
         for(size_t i = 0; i < decl_list->size; ++i)
         {
@@ -97,10 +118,10 @@ static void analyze_stmt(SemaContext* c, ASTNode* stmt)
             if(decl_list->data[i].init_expr != NULL)
                 analyze_expr(c, decl_list->data[i].init_expr);
         }
-        break;
+        return;
     }
     default:
-        break;
+        return;
     }
 }
 

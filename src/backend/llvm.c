@@ -31,9 +31,11 @@ static void emit_llvm_ir(CodegenContext* c);
 static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
 static void decl_function(CodegenContext* c, Object* function);
 static void emit_function_body(CodegenContext* c, Object* function);
-static void emit_stmt(CodegenContext* c, ASTNode* stmt);
+static void emit_stmt(CodegenContext* c, ASTStmt* stmt);
+static void emit_if(CodegenContext* c, ASTStmt* stmt);
 static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval);
 static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr);
+static LLVMValueRef emit_cast(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_function_call(CodegenContext* c, ASTExpr* expr);
 static void emit_var_alloca(CodegenContext* c, Object* obj);
@@ -43,6 +45,13 @@ static LLVMBasicBlockRef emit_basic_block(CodegenContext* c, const char* label);
 static LLVMTypeRef   get_llvm_type(CodegenContext* c, Type* type);
 static LLVMTargetRef get_llvm_target(const char* triple);
 static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *context);
+
+static bool stmt_not_empty(ASTStmt* stmt)
+{
+    return stmt != NULL &&
+           (stmt->kind != STMT_EXPR_STMT || stmt->stmt.expr->kind != EXPR_NOP) &&
+           (stmt->kind != STMT_BLOCK || (stmt->stmt.block.body != NULL && stmt_not_empty(stmt->stmt.block.body)));
+}
 
 static bool s_initialized = false;
 
@@ -175,7 +184,15 @@ static void emit_function_body(CodegenContext* c, Object* function)
         param->llvm_ref = emit_alloca(c, scratch_string(), get_llvm_type(c, param->var.type), type_alignment(param->var.type));
     }
 
-    ASTNode* body = function->func.body;
+    for(size_t i = 0; i < function->func.params.size; ++i)
+    {
+        Object* param = function->func.params.data[i];
+        scratch_clear();
+        scratch_appendn(param->symbol.start, param->symbol.len);
+        LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
+    }
+
+    ASTStmt* body = function->func.body;
     while(body != NULL)
     {
         emit_stmt(c, body);
@@ -196,17 +213,18 @@ static void emit_function_body(CodegenContext* c, Object* function)
 
     if(LLVMVerifyFunction(function->llvm_ref, LLVMPrintMessageAction))
     {
+        LLVMDumpModule(c->module_ref);
         fprintf(stderr, "\n");
         sic_error_fatal("Failed.");
     }
 }
 
-static void emit_stmt(CodegenContext* c, ASTNode* stmt)
+static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
 {
     switch(stmt->kind)
     {
-    case NODE_BLOCK: {
-        ASTNode* body = stmt->stmt.block.body;
+    case STMT_BLOCK: {
+        ASTStmt* body = stmt->stmt.block.body;
         while(body != NULL)
         {
             emit_stmt(c, body);
@@ -214,14 +232,17 @@ static void emit_stmt(CodegenContext* c, ASTNode* stmt)
         }
         break;
     }
-    case NODE_SINGLE_DECL: {
+    case STMT_IF: 
+        emit_if(c, stmt);
+        break;
+    case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         emit_var_alloca(c, decl->obj);
         if(decl->init_expr != NULL)
             LLVMBuildStore(c->builder, emit_expr(c, decl->init_expr, false), decl->obj->llvm_ref);
         break;
     }
-    case NODE_MULTI_DECL:
+    case STMT_MULTI_DECL:
         for(size_t i = 0; i < stmt->stmt.multi_decl.size; ++i)
         {
             ASTDeclaration* decl = stmt->stmt.multi_decl.data + i;
@@ -230,10 +251,10 @@ static void emit_stmt(CodegenContext* c, ASTNode* stmt)
                 LLVMBuildStore(c->builder, emit_expr(c, decl->init_expr, false), decl->obj->llvm_ref);
         }
         break;
-    case NODE_EXPR_STMT:
+    case STMT_EXPR_STMT:
         emit_expr(c, stmt->stmt.expr, false);
         break;
-    case NODE_RETURN:
+    case STMT_RETURN:
         if(c->cur_func->func.ret_type->kind == TYPE_VOID)
             LLVMBuildRetVoid(c->builder);
         else
@@ -245,6 +266,44 @@ static void emit_stmt(CodegenContext* c, ASTNode* stmt)
     }
 }
 
+static void emit_if(CodegenContext* c, ASTStmt* stmt)
+{
+    ASTIf* if_stmt = &stmt->stmt.if_;
+
+    LLVMBasicBlockRef exit_block = LLVMCreateBasicBlockInContext(c->global_context, ".if_exit");
+    LLVMBasicBlockRef then_block = exit_block;
+    LLVMBasicBlockRef else_block = exit_block;
+
+    if(stmt_not_empty(if_stmt->then_stmt))
+        then_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".if_then");
+    
+    if(stmt_not_empty(if_stmt->else_stmt))
+        else_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".if_else");
+
+    LLVMValueRef cond = emit_expr(c, if_stmt->cond, false);
+    cond = LLVMBuildTrunc(c->builder, cond, LLVMInt1Type(), "");
+    if(then_block == exit_block && else_block == exit_block)
+        return;
+
+    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, exit_block);
+    LLVMBuildCondBr(c->builder, cond, then_block, else_block);
+    if(then_block != exit_block)
+    {
+        LLVMPositionBuilderAtEnd(c->builder, then_block);
+        emit_stmt(c, if_stmt->then_stmt);
+        LLVMBuildBr(c->builder, exit_block);
+    }
+
+    if(else_block != exit_block)
+    {
+        LLVMPositionBuilderAtEnd(c->builder, else_block);
+        emit_stmt(c, if_stmt->else_stmt);
+        LLVMBuildBr(c->builder, exit_block);
+    }
+    c->cur_bb = exit_block;
+    LLVMPositionBuilderAtEnd(c->builder, exit_block);
+}
+
 static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
 {
     switch(expr->kind)
@@ -252,7 +311,7 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
     case EXPR_BINARY:
         return emit_binary(c, expr);
     case EXPR_CAST:
-        SIC_TODO();
+        return emit_cast(c, expr);
     case EXPR_CONSTANT:
         return emit_constant(c, expr);
     case EXPR_FUNC_CALL:
@@ -283,44 +342,80 @@ static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr)
     case BINARY_ADD:
         return LLVMBuildAdd(c->builder, lhs, rhs, "");
     case BINARY_SUB:
-        SIC_TODO();
+        return LLVMBuildSub(c->builder, lhs, rhs, "");
     case BINARY_MUL:
-        SIC_TODO();
+        return LLVMBuildMul(c->builder, lhs, rhs, "");
     case BINARY_DIV:
-        SIC_TODO();
+        if(type_is_signed(expr->type))
+            return LLVMBuildSDiv(c->builder, lhs, rhs, "");
+        else if(type_is_unsigned(expr->type))
+            return LLVMBuildUDiv(c->builder, lhs, rhs, "");
+        else
+            return LLVMBuildFDiv(c->builder, lhs, rhs, "");
     case BINARY_MOD:
-        SIC_TODO();
+        if(type_is_signed(expr->type))
+            return LLVMBuildSRem(c->builder, lhs, rhs, "");
+        else if(type_is_unsigned(expr->type))
+            return LLVMBuildURem(c->builder, lhs, rhs, "");
+        else
+            return LLVMBuildFRem(c->builder, lhs, rhs, "");
     case BINARY_LOG_OR:
-        SIC_TODO();
     case BINARY_LOG_AND:
-        SIC_TODO();
     case BINARY_EQ:
-        SIC_TODO();
     case BINARY_NE:
-        SIC_TODO();
     case BINARY_LT:
-        SIC_TODO();
     case BINARY_LE:
-        SIC_TODO();
     case BINARY_GT:
-        SIC_TODO();
     case BINARY_GE:
         SIC_TODO();
     case BINARY_SHL:
-        SIC_TODO();
+        return LLVMBuildShl(c->builder, lhs, rhs, "");
     case BINARY_SHR:
-        SIC_TODO();
+        return LLVMBuildLShr(c->builder, lhs, rhs, "");
     case BINARY_BIT_OR:
-        SIC_TODO();
+        return LLVMBuildOr(c->builder, lhs, rhs, "");
     case BINARY_BIT_XOR:
-        SIC_TODO();
+        return LLVMBuildXor(c->builder, lhs, rhs, "");
     case BINARY_BIT_AND:
-        SIC_TODO();
+        return LLVMBuildAnd(c->builder, lhs, rhs, "");
     case BINARY_ASSIGN:
         // TODO: Temporary, replace this with a proper method of finding the l-value ref for
         //       the lhs.
         SIC_ASSERT(binary->lhs->kind == EXPR_IDENT);
         return LLVMBuildStore(c->builder, rhs, lhs);
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
+static LLVMValueRef emit_cast(CodegenContext* c, ASTExpr* expr)
+{
+    ASTExprCast* cast = &expr->expr.cast;
+    LLVMValueRef inner = emit_expr(c, cast->expr_to_cast, false);
+    LLVMTypeRef to_llvm = get_llvm_type(c, expr->type);
+    switch(cast->kind)
+    {
+    case CAST_FLOAT_TO_SINT:
+        SIC_TODO();
+    case CAST_FLOAT_TO_UINT:
+        SIC_TODO();
+    case CAST_SINT_TO_FLOAT:
+        SIC_TODO();
+    case CAST_UINT_TO_FLOAT:
+        if(type_is_signed(cast->expr_to_cast->type))
+            return LLVMBuildSIToFP(c->builder, inner, to_llvm, "");
+        else
+            return LLVMBuildUIToFP(c->builder, inner, to_llvm, "");
+    case CAST_PTR_TO_INT:
+        SIC_TODO();
+    case CAST_INT_TO_PTR:
+        SIC_TODO();
+    case CAST_WIDEN_OR_NARROW:
+        if(type_size(expr->type) < type_size(cast->expr_to_cast->type))
+            return LLVMBuildTrunc(c->builder, inner, to_llvm, "");
+        if(type_is_signed(cast->expr_to_cast->type))
+            return LLVMBuildSExt(c->builder, inner, to_llvm, "");
+        return LLVMBuildZExt(c->builder, inner, to_llvm, "");
     default:
         SIC_UNREACHABLE();
     }
@@ -333,8 +428,11 @@ static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr)
     {
     case CONSTANT_INTEGER:
         return LLVMConstInt(get_llvm_type(c, expr->type), constant->val.i, false);
+    case CONSTANT_BOOL:
+        SIC_ASSERT(constant->val.i <= 1);
+        return LLVMConstInt(LLVMInt1Type(), constant->val.i, false);
     case CONSTANT_FLOAT:
-        SIC_TODO();
+        return LLVMConstReal(get_llvm_type(c, expr->type), constant->val.f);
     case CONSTANT_STRING: {
         LLVMValueRef constant = LLVMConstString(expr->expr.constant.val.s, strlen(expr->expr.constant.val.s), false);
         LLVMValueRef global_string = LLVMAddGlobal(c->module_ref, LLVMTypeOf(constant), ".str");
@@ -417,16 +515,16 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     {
     case TYPE_VOID:
         return type->llvm_ref = LLVMVoidType();
-    case TYPE_S8:
+    case TYPE_BOOL:
     case TYPE_U8:
-    case TYPE_S16:
     case TYPE_U16:
-    case TYPE_S32:
     case TYPE_U32:
-    case TYPE_S64:
     case TYPE_U64:
+    case TYPE_S8:
+    case TYPE_S16:
+    case TYPE_S32:
+    case TYPE_S64:
         return type->llvm_ref = LLVMIntType(type->builtin.size * 8);
-        break;
     case TYPE_F32:
         return type->llvm_ref = LLVMFloatType();
     case TYPE_F64:

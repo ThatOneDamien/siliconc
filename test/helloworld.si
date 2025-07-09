@@ -1,6 +1,7 @@
-extern void puts(char* str);
+priv extern void puts(u8* str);
 
-u32 main()
+pub u32 main()
 {
-    puts("Hello, World!\n");
+    puts("Hello, World!");
+    return 0;
 }

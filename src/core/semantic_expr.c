@@ -1,12 +1,12 @@
 #include "semantics.h"
 
-static void analyze_binary(SemaContext* c, ASTExpr* expr);
-static void analyze_call(SemaContext* c, ASTExpr* expr);
-static void analyze_unary(SemaContext* c, ASTExpr* expr);
+static bool analyze_binary(SemaContext* c, ASTExpr* expr);
+static bool analyze_call(SemaContext* c, ASTExpr* expr);
+static bool analyze_unary(SemaContext* c, ASTExpr* expr);
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
-static void analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 
 void analyze_expr(SemaContext* c, ASTExpr* expr)
 {
@@ -16,45 +16,24 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         ASTExprBinary* bin = &expr->expr.binary;
         analyze_expr(c, bin->lhs);
         analyze_expr(c, bin->rhs);
-        if(bin->lhs->kind == EXPR_INVALID ||
-           bin->rhs->kind == EXPR_INVALID)
-        {
+        if(!analyze_binary(c, expr))
             expr->kind = EXPR_INVALID;
-            return;
-        }
-        analyze_binary(c, expr);
-        break;
+        return;
     }
     case EXPR_CAST: {
         ASTExprCast* cast = &expr->expr.cast;
         analyze_expr(c, cast->expr_to_cast);
-        if(cast->expr_to_cast->kind == EXPR_INVALID)
-        {
+        if(!analyze_cast(c, expr))
             expr->kind = EXPR_INVALID;
-            return;
-        }
-        analyze_cast(c, expr);
-        break;
-    }
-    case EXPR_CONSTANT:
         return;
+    }
     case EXPR_FUNC_CALL: {
         ASTExprCall* call = &expr->expr.call;
         analyze_expr(c, call->func_expr);
-        if(call->func_expr->kind == EXPR_INVALID)
-        {
+        if(!analyze_call(c, expr))
             expr->kind = EXPR_INVALID;
-            return;
-        }
-        analyze_call(c, expr);
-        break;
-    }
-    case EXPR_IDENT:
-        sic_error_fatal("Encountered unexpected error.");
-        break;
-    case EXPR_INVALID:
-    case EXPR_NOP:
         return;
+    }
     case EXPR_PRE_SEMANTIC_IDENT: {
         ASTExprIdent ident = find_obj(c, &expr->loc);
         if(ident == NULL)
@@ -68,36 +47,35 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         expr->kind = EXPR_IDENT;
         break;
     }
-    case EXPR_TERNARY:
-        break;
     case EXPR_UNARY: {
         ASTExprUnary* unary = &expr->expr.unary;
         analyze_expr(c, unary->child);
-        if(unary->child->kind == EXPR_INVALID)
-        {
+        if(!analyze_unary(c, expr))
             expr->kind = EXPR_INVALID;
-            return;
-        }
-        analyze_unary(c, expr);
-        break;
+        return;
     }
+    case EXPR_CONSTANT:
+    case EXPR_INVALID:
+    case EXPR_NOP:
+    case EXPR_TERNARY:
+        return;
+    default:
+        SIC_UNREACHABLE();
     }
 }
 
-static void analyze_binary(SemaContext* c, ASTExpr* expr)
+static bool analyze_binary(SemaContext* c, ASTExpr* expr)
 {
     ASTExpr* left = expr->expr.binary.lhs;
     ASTExpr* right = expr->expr.binary.rhs;
+    if(left->kind == EXPR_INVALID || right->kind == EXPR_INVALID)
+        return false;
     switch(expr->expr.binary.kind)
     {
     case BINARY_ADD:
-        if(!analyze_add(c, expr, left, right))
-            expr->kind = EXPR_INVALID;
-        break;
+        return analyze_add(c, expr, left, right);
     case BINARY_SUB:
-        if(!analyze_sub(c, expr, left, right))
-            expr->kind = EXPR_INVALID;
-        break;
+        return analyze_sub(c, expr, left, right);
     case BINARY_MUL:
     case BINARY_DIV:
     case BINARY_MOD:
@@ -121,7 +99,7 @@ static void analyze_binary(SemaContext* c, ASTExpr* expr)
         if(left->kind != EXPR_IDENT)
             SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
         expr->type = left->type;
-        break;
+        return true;
     case BINARY_ADD_ASSIGN:
     case BINARY_SUB_ASSIGN:
     case BINARY_MUL_ASSIGN:
@@ -132,30 +110,29 @@ static void analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_BIT_AND_ASSIGN:
     case BINARY_SHL_ASSIGN:
     case BINARY_SHR_ASSIGN:
-        analyze_op_assign(c, expr, left, right);
-        break;
+        return analyze_op_assign(c, expr, left, right);
     default:
         SIC_UNREACHABLE();
     }
 }
 
-static void analyze_call(SemaContext* c, ASTExpr* expr)
+static bool analyze_call(SemaContext* c, ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
+    if(call->func_expr->kind == EXPR_INVALID)
+        return false;
     if(call->func_expr->kind != EXPR_IDENT || call->func_expr->expr.ident->kind != OBJ_FUNC)
     {
         SIC_TODO_MSG("Handle complex function calling");
         sema_error(c, &expr->loc, "Identifier in call expression is not a function.");
-        expr->kind = EXPR_INVALID;
-        return;
+        return false;
     }
 
     Object* func = call->func_expr->expr.ident;
     if(call->args.size != func->func.params.size)
     {
         sema_error(c, &expr->loc, "Wrong number of arguments passed to function.");
-        expr->kind = EXPR_INVALID;
-        return;
+        return false;
     }
 
     bool invalid = false;
@@ -170,43 +147,43 @@ static void analyze_call(SemaContext* c, ASTExpr* expr)
     else
         expr->type = func->func.ret_type;
 
+    return true;
 }
 
-static void analyze_unary(SemaContext* c, ASTExpr* expr)
+static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 {
     ASTExpr* child = expr->expr.unary.child;
+    if(child->kind == EXPR_INVALID)
+        return false;
     switch(expr->expr.unary.kind)
     {
     case UNARY_ADDR_OF:
         if(child->kind != EXPR_IDENT)
         {
             sema_error(c, &expr->loc, "Cannot take address of rvalue.");
-            expr->kind = EXPR_INVALID;
-            return;
+            return false;
         }
         expr->type = pointer_to(child->type);
-        break;
+        return true;
     case UNARY_DEREF:
         if(child->type->kind != TYPE_POINTER)
         {
             sema_error(c, &expr->loc, "Cannot dereference non-pointer type.");
-            expr->kind = EXPR_INVALID;
-            return;
+            return false;
         }
         expr->type = child->type->pointer_base;
-        break;
-    case UNARY_INVALID:
-        break;
+        return true;
     case UNARY_NEG:
         if(child->type->kind < TYPE_NUMERIC_START ||
            child->type->kind > TYPE_NUMERIC_END)
         {
             sema_error(c, &expr->loc, "Cannot negate non-numeric type.");
-            expr->kind = EXPR_INVALID;
-            return;
+            return false;
         }
         expr->type = child->type;
-        break;
+        return true;
+    default:
+        SIC_UNREACHABLE();
     }
 }
 
@@ -268,7 +245,7 @@ static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, 
     return true;
 }
 
-static void analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
     // TODO: Check if lhs is an lvalue
     BinaryOpKind conversion[BINARY_OP_ASSIGN_END - BINARY_OP_ASSIGN_START + 1] = {
@@ -293,6 +270,5 @@ static void analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
     expr->expr.binary.kind = BINARY_ASSIGN;
     expr->expr.binary.rhs = new_expr;
     analyze_binary(c, new_expr);
-    if(new_expr->kind == EXPR_INVALID || !analyze_assign(c, expr, left, new_expr))
-        expr->kind = EXPR_INVALID;
+    return new_expr->kind != EXPR_INVALID && analyze_assign(c, expr, left, new_expr);
 }
