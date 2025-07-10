@@ -36,7 +36,8 @@ typedef enum
     TOKEN_MODULO,           // %
     TOKEN_QUESTION,         // ?
 
-    TOKEN_SHR,              // >>
+    TOKEN_LSHR,             // >>
+    TOKEN_ASHR,             // >>>
     TOKEN_SHL,              // <<
     TOKEN_LOG_AND,          // &&
     TOKEN_LOG_OR,           // ||
@@ -56,7 +57,8 @@ typedef enum
     TOKEN_INCREM,           // ++
     TOKEN_DECREM,           // --
     
-    TOKEN_SHR_ASSIGN,       // >>=
+    TOKEN_LSHR_ASSIGN,      // >>=
+    TOKEN_ASHR_ASSIGN,      // >>>=
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
@@ -73,6 +75,7 @@ typedef enum
     TOKEN_PUB,
     TOKEN_RETURN,
     TOKEN_TRUE,
+    TOKEN_WHILE,
 
     // Built-in/Primitive type names (Still part of keywords)
     TOKEN_VOID,
@@ -122,9 +125,13 @@ typedef enum
     CAST_FLOAT_TO_UINT,
     CAST_SINT_TO_FLOAT,
     CAST_UINT_TO_FLOAT,
+    CAST_INT_TO_BOOL,
     CAST_PTR_TO_INT,
     CAST_INT_TO_PTR,
-    CAST_WIDEN_OR_NARROW,
+    CAST_FLOAT_EXT_TRUNC,
+    CAST_SINT_EXT_TRUNC,
+    CAST_UINT_EXT_TRUNC,
+    CAST_REINTERPRET,
 } CastKind;
 
 typedef enum
@@ -159,7 +166,8 @@ typedef enum
     BINARY_GT,
     BINARY_GE,
     BINARY_SHL,
-    BINARY_SHR,
+    BINARY_LSHR,
+    BINARY_ASHR,
     BINARY_BIT_OR,
     BINARY_BIT_XOR,
     BINARY_BIT_AND,
@@ -174,8 +182,9 @@ typedef enum
     BINARY_BIT_XOR_ASSIGN,
     BINARY_BIT_AND_ASSIGN,
     BINARY_SHL_ASSIGN,
-    BINARY_SHR_ASSIGN,
-    BINARY_OP_ASSIGN_END = BINARY_SHR_ASSIGN,
+    BINARY_LSHR_ASSIGN,
+    BINARY_ASHR_ASSIGN,
+    BINARY_OP_ASSIGN_END = BINARY_ASHR_ASSIGN,
 } BinaryOpKind;
 
 typedef enum
@@ -197,6 +206,7 @@ typedef enum
     STMT_MULTI_DECL,
     STMT_EXPR_STMT,
     STMT_RETURN,
+    STMT_WHILE,
 } StmtKind;
 
 typedef enum
@@ -211,31 +221,31 @@ typedef enum
 {
     TYPE_INVALID = 0,
     TYPE_VOID,
-    TYPE_BUILTIN_START = TYPE_VOID,
+    TYPE_BUILTIN_START  = TYPE_VOID,
     TYPE_BOOL,
 
     TYPE_U8,
     TYPE_INTEGER_START  = TYPE_U8,
-    TYPE_NUMERIC_START  = TYPE_U8,
     TYPE_UNSIGNED_START = TYPE_U8,
+    TYPE_NUMERIC_START  = TYPE_U8,
     TYPE_U16,
     TYPE_U32,
     TYPE_U64,
-    TYPE_UNSIGNED_END = TYPE_U64,
+    TYPE_UNSIGNED_END   = TYPE_U64,
     TYPE_S8,
-    TYPE_SIGNED_START = TYPE_S8,
+    TYPE_SIGNED_START   = TYPE_S8,
     TYPE_S16,
     TYPE_S32,
     TYPE_S64,
-    TYPE_SIGNED_END = TYPE_S64,
-    TYPE_INTEGER_END = TYPE_S64,
+    TYPE_SIGNED_END     = TYPE_S64,
+    TYPE_INTEGER_END    = TYPE_S64,
 
     TYPE_F32,
-    TYPE_FLOAT_START = TYPE_F32,
+    TYPE_FLOAT_START    = TYPE_F32,
     TYPE_F64,
-    TYPE_FLOAT_END = TYPE_F64,
-    TYPE_NUMERIC_END = TYPE_F64,
-    TYPE_BUILTIN_END = TYPE_F64,
+    TYPE_FLOAT_END      = TYPE_F64,
+    TYPE_NUMERIC_END    = TYPE_F64,
+    TYPE_BUILTIN_END    = TYPE_F64,
 
     TYPE_POINTER,
     __TYPE_COUNT,

@@ -13,6 +13,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_PUB]    = "pub",
     [TOKEN_RETURN] = "return",
     [TOKEN_TRUE]   = "true",
+    [TOKEN_WHILE]  = "while",
     [TOKEN_VOID]   = "void",
     [TOKEN_BOOL]   = "bool",
     [TOKEN_U8]     = "u8",
@@ -39,7 +40,8 @@ static BinaryOpKind s_tok_to_bin_op[] = {
     [TOKEN_ADD]             = BINARY_ADD,
     [TOKEN_SUB]             = BINARY_SUB,
     [TOKEN_MODULO]          = BINARY_MOD,
-    [TOKEN_SHR]             = BINARY_SHR,
+    [TOKEN_LSHR]            = BINARY_LSHR,
+    [TOKEN_ASHR]            = BINARY_ASHR,
     [TOKEN_SHL]             = BINARY_SHL,
     [TOKEN_LOG_AND]         = BINARY_LOG_AND,
     [TOKEN_LOG_OR]          = BINARY_LOG_OR,
@@ -55,7 +57,8 @@ static BinaryOpKind s_tok_to_bin_op[] = {
     [TOKEN_MUL_ASSIGN]      = BINARY_MUL_ASSIGN,
     [TOKEN_DIV_ASSIGN]      = BINARY_DIV_ASSIGN,
     [TOKEN_MOD_ASSIGN]      = BINARY_MOD_ASSIGN,
-    [TOKEN_SHR_ASSIGN]      = BINARY_SHR_ASSIGN,
+    [TOKEN_LSHR_ASSIGN]     = BINARY_LSHR_ASSIGN,
+    [TOKEN_ASHR_ASSIGN]     = BINARY_ASHR_ASSIGN,
     [TOKEN_SHL_ASSIGN]      = BINARY_SHL_ASSIGN,
 };
 

@@ -45,6 +45,10 @@ static inline void sic_error_at(const char* filepath, const SourceLoc* loc, cons
 // Lexer functions
 void   lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
 bool   lexer_advance(Lexer* lexer);
+static inline bool token_is_typename(TokenKind kind)
+{
+    return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;
+}
 
 // Parser functions
 void parser_init(void);
@@ -59,25 +63,38 @@ TokenKind sym_map_get(const char* str);
 TokenKind sym_map_getn(const char* str, size_t len);
 
 // Type functions
-Type*       builtin_type(TokenKind type_token);
+Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(Type* orig);
 Type*       pointer_to(Type* base);
+bool        type_equal(Type* t1, Type* t2);
 const char* type_to_string(Type* type);
 static inline bool type_is_builtin(Type* ty)
 {
     return ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END;
 }
+
 static inline bool type_is_signed(Type* ty)
 {
     return ty->kind >= TYPE_SIGNED_START && ty->kind <= TYPE_SIGNED_END;
 }
+
 static inline bool type_is_unsigned(Type* ty)
 {
     return ty->kind >= TYPE_UNSIGNED_START && ty->kind <= TYPE_UNSIGNED_END;
 }
-static inline bool is_builtin_type(TokenKind kind)
+
+static inline bool type_is_integer(Type* ty)
 {
-    return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;
+    return ty->kind >= TYPE_INTEGER_START && ty->kind <= TYPE_INTEGER_END;
+}
+
+static inline bool type_is_float(Type* ty)
+{
+    return ty->kind >= TYPE_FLOAT_START && ty->kind <= TYPE_FLOAT_END;
+}
+static inline bool type_is_numeric(Type* ty)
+{
+    return ty->kind >= TYPE_NUMERIC_START && ty->kind <= TYPE_NUMERIC_END;
 }
 
 static inline uint32_t type_size(Type* ty)

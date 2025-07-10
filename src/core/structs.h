@@ -32,6 +32,7 @@ typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
+typedef struct ASTWhile         ASTWhile;
 typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
@@ -213,6 +214,12 @@ struct ASTReturn
     ASTExpr* ret_expr;
 };
 
+struct ASTWhile
+{
+    ASTExpr* cond;
+    ASTStmt* body;
+};
+
 struct ASTStmt
 {
     StmtKind kind;
@@ -226,6 +233,7 @@ struct ASTStmt
         ASTDeclDA       multi_decl;
         ASTExpr*        expr;
         ASTIf           if_;
+        ASTWhile        while_;
         ASTReturn       return_;
     } stmt;
 };

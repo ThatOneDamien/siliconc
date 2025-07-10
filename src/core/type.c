@@ -45,9 +45,9 @@ static Type* builtin_type_lookup[] = {
     [TOKEN_F64  - TOKEN_TYPENAME_START] = &s_f64,
 };
 
-Type* builtin_type(TokenKind type_token)
+Type* type_from_token(TokenKind type_token)
 {
-    SIC_ASSERT(is_builtin_type(type_token));
+    SIC_ASSERT(token_is_typename(type_token));
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 
@@ -67,6 +67,34 @@ Type* pointer_to(Type* base)
     new_type->qualifiers = QUALIFIER_NONE;
     new_type->pointer_base = base;
     return new_type;
+}
+
+bool type_equal(Type* t1, Type* t2)
+{
+    SIC_ASSERT(t1 != NULL);
+    SIC_ASSERT(t2 != NULL);
+    if(t1->kind != t2->kind)
+        return false;
+    switch(t1->kind)
+    {
+    case TYPE_VOID:
+    case TYPE_BOOL:
+    case TYPE_U8:
+    case TYPE_U16:
+    case TYPE_U32:
+    case TYPE_U64:
+    case TYPE_S8:
+    case TYPE_S16:
+    case TYPE_S32:
+    case TYPE_S64:
+    case TYPE_F32:
+    case TYPE_F64:
+        return true;
+    case TYPE_POINTER:
+        return type_equal(t1->pointer_base, t2->pointer_base);
+    default:
+        SIC_UNREACHABLE();
+    }
 }
 
 const char* type_to_string(Type* type)

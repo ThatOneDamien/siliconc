@@ -72,6 +72,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
     case STMT_IF: {
         ASTIf* if_stmt = &stmt->stmt.if_;
         analyze_expr(c, if_stmt->cond);
+        implicit_cast(c, if_stmt->cond, g_type_bool);
         analyze_stmt(c, if_stmt->then_stmt);
         if(if_stmt->else_stmt != NULL)
             analyze_stmt(c, if_stmt->else_stmt);
@@ -92,6 +93,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
                 return;
             }
             analyze_expr(c, stmt->stmt.return_.ret_expr);
+            implicit_cast(c, stmt->stmt.return_.ret_expr, c->cur_func->func.ret_type);
         }
         else if(c->cur_func->func.ret_type->kind != TYPE_VOID)
         {
@@ -99,14 +101,20 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
                        "Function returning non-void should have expression in return statement.");
         }
         return;
+    case STMT_WHILE: {
+        ASTWhile* while_stmt = &stmt->stmt.while_;
+        analyze_expr(c, while_stmt->cond);
+        implicit_cast(c, while_stmt->cond, g_type_bool);
+        analyze_stmt(c, while_stmt->body);
+        return;
+    }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         declare_obj(c, decl->obj);
         if(decl->init_expr != NULL)
         {
             analyze_expr(c, decl->init_expr);
-            if(decl->init_expr->type->kind != decl->obj->var.type->kind)
-                SIC_TODO_MSG("Implicit casting rules.");
+            implicit_cast(c, decl->init_expr, decl->obj->var.type);
         }
         return;
     }
@@ -114,14 +122,18 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
         for(size_t i = 0; i < decl_list->size; ++i)
         {
-            declare_obj(c, decl_list->data[i].obj);
-            if(decl_list->data[i].init_expr != NULL)
-                analyze_expr(c, decl_list->data[i].init_expr);
+            ASTDeclaration* decl = decl_list->data + i;
+            declare_obj(c, decl->obj);
+            if(decl->init_expr != NULL)
+            {
+                analyze_expr(c, decl->init_expr);
+                implicit_cast(c, decl->init_expr, decl->obj->var.type);
+            }
         }
         return;
     }
     default:
-        return;
+        SIC_UNREACHABLE();
     }
 }
 

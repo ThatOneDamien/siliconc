@@ -114,6 +114,14 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
     case STMT_RETURN:
         print_expr(stmt->stmt.return_.ret_expr, depth + 1, true);
         break;
+    case STMT_WHILE:
+        PRINT_DEPTH(depth + 1);
+        printf("cond: ");
+        print_expr(stmt->stmt.while_.cond, depth + 1, false);
+        PRINT_DEPTH(depth + 1);
+        printf("body: ");
+        print_stmt(stmt->stmt.while_.body, depth + 1, false);
+        break;
     case STMT_SINGLE_DECL: {
         const ASTDeclaration* decl = &stmt->stmt.single_decl;
         PRINT_DEPTH(depth + 1);
@@ -200,8 +208,8 @@ static void print_constant(const ASTExpr* expr)
         printf("Invalid Constant ]\n");
         break;
     case CONSTANT_INTEGER:
-        printf("Constant Integer val: %lu ] (Type: %s)\n",
-               constant->val.i, debug_type_to_str(expr->type));
+        printf("Constant Integer val: %lu hex: 0x%lX] (Type: %s)\n",
+               constant->val.i, constant->val.i, debug_type_to_str(expr->type));
         break;
     case CONSTANT_BOOL:
         printf("Constant Boolean val: %s ]\n",
@@ -250,7 +258,8 @@ static const char* s_tok_strs[] = {
     [TOKEN_SUB]             = "Subtract",
     [TOKEN_MODULO]          = "Modulo",
     [TOKEN_QUESTION]        = "Question Mark",
-    [TOKEN_SHR]             = "Shift Right",
+    [TOKEN_LSHR]            = "Logical Shift Right",
+    [TOKEN_ASHR]            = "Arithmetic Shift Right",
     [TOKEN_SHL]             = "Shift Left",
     [TOKEN_LOG_AND]         = "Logical And",
     [TOKEN_LOG_OR]          = "Logical Or",
@@ -266,7 +275,8 @@ static const char* s_tok_strs[] = {
     [TOKEN_MUL_ASSIGN]      = "Multiply Assign",
     [TOKEN_DIV_ASSIGN]      = "Divide Assign",
     [TOKEN_MOD_ASSIGN]      = "Modulo Assign",
-    [TOKEN_SHR_ASSIGN]      = "Shift Right Assign",
+    [TOKEN_LSHR_ASSIGN]     = "Logical Shift Right Assign",
+    [TOKEN_ASHR_ASSIGN]     = "Arithmetic Shift Right Assign",
     [TOKEN_SHL_ASSIGN]      = "Shift Left Assign",
     [TOKEN_INCREM]          = "Increment",
     [TOKEN_DECREM]          = "Decrement",
@@ -300,11 +310,12 @@ static const char* s_tok_strs[] = {
 static const char* s_stmt_type_strs[] = {
     [STMT_INVALID]     = "Invalid",
     [STMT_BLOCK]       = "Block",
-    [STMT_IF]          = "If",
+    [STMT_IF]          = "If Statement",
     [STMT_SINGLE_DECL] = "Single Declaration",
     [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_RETURN]      = "Return Statement",
+    [STMT_WHILE]       = "While Statement",
 };
 
 static const char* s_binary_op_strs[] = {
@@ -323,7 +334,8 @@ static const char* s_binary_op_strs[] = {
     [BINARY_GT]             = "Greater Than",
     [BINARY_GE]             = "Greater Than Or Equal",
     [BINARY_SHL]            = "Shift Left",
-    [BINARY_SHR]            = "Shift Right",
+    [BINARY_LSHR]           = "Logical Shift Right",
+    [BINARY_ASHR]           = "Arithmetic Shift Right",
     [BINARY_BIT_OR]         = "Bit Or",
     [BINARY_BIT_XOR]        = "Bit Xor",
     [BINARY_BIT_AND]        = "Bit And",
@@ -337,7 +349,8 @@ static const char* s_binary_op_strs[] = {
     [BINARY_BIT_XOR_ASSIGN] = "Bit Xor and Assign",
     [BINARY_BIT_AND_ASSIGN] = "Bit And and Assign",
     [BINARY_SHL_ASSIGN]     = "Shift Left and Assign",
-    [BINARY_SHR_ASSIGN]     = "Shift Left and Assign",
+    [BINARY_LSHR_ASSIGN]    = "Logical Shift Right and Assign",
+    [BINARY_ASHR_ASSIGN]    = "Arithmetic Shift Right and Assign",
 };
 
 static const char* s_access_strs[] = {

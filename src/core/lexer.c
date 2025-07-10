@@ -158,7 +158,12 @@ bool lexer_advance(Lexer* lexer)
         return true;
     case '>':
         if(consume(lexer, '>'))
-            t->kind = consume(lexer, '=') ? TOKEN_SHR_ASSIGN : TOKEN_SHR;
+        {
+            if(consume(lexer, '>'))
+                t->kind = consume(lexer, '=') ? TOKEN_ASHR_ASSIGN : TOKEN_ASHR;
+            else
+                t->kind = consume(lexer, '=') ? TOKEN_LSHR_ASSIGN : TOKEN_LSHR;
+        }
         else if(consume(lexer, '='))
             t->kind = TOKEN_GE;
         else

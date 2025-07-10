@@ -1,12 +1,28 @@
 #include "semantics.h"
 
+// Expr kind functions
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
+
+// Binary functions
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_mul(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_div(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+
+// Unary functions
+static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* child);
+static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child);
+static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child);
+
+static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2);
+static void promote_int_type(SemaContext* c, ASTExpr* expr);
 
 void analyze_expr(SemaContext* c, ASTExpr* expr)
 {
@@ -57,8 +73,9 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
     case EXPR_CONSTANT:
     case EXPR_INVALID:
     case EXPR_NOP:
-    case EXPR_TERNARY:
         return;
+    case EXPR_TERNARY:
+        SIC_TODO();
     default:
         SIC_UNREACHABLE();
     }
@@ -77,8 +94,11 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_SUB:
         return analyze_sub(c, expr, left, right);
     case BINARY_MUL:
+        return analyze_mul(c, expr, left, right);
     case BINARY_DIV:
+        return analyze_div(c, expr, left, right);
     case BINARY_MOD:
+        return analyze_div(c, expr, left, right);
     case BINARY_LOG_OR:
     case BINARY_LOG_AND:
     case BINARY_EQ:
@@ -87,17 +107,19 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_LE:
     case BINARY_GT:
     case BINARY_GE:
+        return analyze_comparison(c, expr, left, right);
     case BINARY_SHL:
-    case BINARY_SHR:
+    case BINARY_LSHR:
+    case BINARY_ASHR:
+        return analyze_shift(c, expr, left, right);
     case BINARY_BIT_OR:
     case BINARY_BIT_XOR:
     case BINARY_BIT_AND:
-        SIC_TODO();
+        return analyze_bit_op(c, expr, left, right);
     case BINARY_ASSIGN:
-        if(left->type->kind != right->type->kind)
-            SIC_TODO_MSG("Implicit casting rules.");
         if(left->kind != EXPR_IDENT)
             SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
+        implicit_cast(c, right, left->type);
         expr->type = left->type;
         return true;
     case BINARY_ADD_ASSIGN:
@@ -109,7 +131,8 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_BIT_XOR_ASSIGN:
     case BINARY_BIT_AND_ASSIGN:
     case BINARY_SHL_ASSIGN:
-    case BINARY_SHR_ASSIGN:
+    case BINARY_LSHR_ASSIGN:
+    case BINARY_ASHR_ASSIGN:
         return analyze_op_assign(c, expr, left, right);
     default:
         SIC_UNREACHABLE();
@@ -131,23 +154,24 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     Object* func = call->func_expr->expr.ident;
     if(call->args.size != func->func.params.size)
     {
-        sema_error(c, &expr->loc, "Wrong number of arguments passed to function.");
+        sema_error(c, &expr->loc, 
+                   "Wrong number of arguments passed to function. Passed %lu, expected %lu.",
+                   call->args.size, func->func.params.size);
         return false;
     }
 
-    bool invalid = false;
+    bool valid = true;
     for(size_t i = 0; i < call->args.size; ++i)
     {
-        analyze_expr(c, call->args.data[i]);
-        invalid = invalid || call->args.data[i]->kind == EXPR_INVALID;
+        ASTExpr* arg = call->args.data[i];
+        analyze_expr(c, arg);
+        valid = valid && arg->kind != EXPR_INVALID && 
+                implicit_cast(c, arg, func->func.params.data[i]->var.type);
     }
 
-    if(invalid)
-        expr->kind = EXPR_INVALID;
-    else
-        expr->type = func->func.ret_type;
+    expr->type = func->func.ret_type;
 
-    return true;
+    return valid;
 }
 
 static bool analyze_unary(SemaContext* c, ASTExpr* expr)
@@ -158,30 +182,11 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     switch(expr->expr.unary.kind)
     {
     case UNARY_ADDR_OF:
-        if(child->kind != EXPR_IDENT)
-        {
-            sema_error(c, &expr->loc, "Cannot take address of rvalue.");
-            return false;
-        }
-        expr->type = pointer_to(child->type);
-        return true;
+        return analyze_addr_of(c, expr, child);
     case UNARY_DEREF:
-        if(child->type->kind != TYPE_POINTER)
-        {
-            sema_error(c, &expr->loc, "Cannot dereference non-pointer type.");
-            return false;
-        }
-        expr->type = child->type->pointer_base;
-        return true;
+        return analyze_deref(c, expr, child);
     case UNARY_NEG:
-        if(child->type->kind < TYPE_NUMERIC_START ||
-           child->type->kind > TYPE_NUMERIC_END)
-        {
-            sema_error(c, &expr->loc, "Cannot negate non-numeric type.");
-            return false;
-        }
-        expr->type = child->type;
-        return true;
+        return analyze_negate(c, expr, child);
     default:
         SIC_UNREACHABLE();
     }
@@ -202,20 +207,25 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
 
     if(left_is_pointer)
     {
-        if(right->type->kind < TYPE_INTEGER_START || right->type->kind > TYPE_INTEGER_END)
+        if(!type_is_integer(right->type))
         {
-            sema_error(c, &expr->loc, "Invalid operand types for the add operation.");
+            sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                       type_to_string(left->type), type_to_string(right->type));
             return false;
         }
         expr->type = left->type;
         return true;
     }
 
-    if(left->type->kind != right->type->kind)
-        SIC_TODO_MSG("Implicit casting rules.");
+    if(!arith_type_conv(c, left, right))
+        return false;
+
+    // if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
+    // {
+    //
+    // }
 
     expr->type = left->type;
-
     return true;
 }
 
@@ -223,32 +233,116 @@ static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
 {
     if(left->type->kind == TYPE_POINTER)
     {
-        if(right->type->kind < TYPE_INTEGER_START || right->type->kind > TYPE_INTEGER_END)
+        if(!type_is_integer(right->type))
         {
-            sema_error(c, &expr->loc, "Invalid operand types for the sub operation.");
+            sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                       type_to_string(left->type), type_to_string(right->type));
             return false;
         }
         expr->type = left->type;
         return true;
     }
+
+    if(!arith_type_conv(c, left, right))
+        return false;
+
     expr->type = left->type;
     return true;
 }
 
+static bool analyze_mul(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                   type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+
+    if(!arith_type_conv(c, left, right))
+        return false;
+
+    expr->type = left->type;
+    return true;
+}
+
+static bool analyze_div(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                   type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+
+    if(!arith_type_conv(c, left, right))
+        return false;
+
+    expr->type = left->type;
+    return true;
+}
+
+static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    expr->type = g_type_bool;
+    if(left->type->kind == right->type->kind && left->type->kind == TYPE_POINTER)
+        return true;
+
+    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                   type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+
+    return arith_type_conv(c, left, right);
+}
+
+static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(!type_is_integer(left->type) || !type_is_integer(right->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                   type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+
+    if(type_size(left->type) != type_size(right->type) && !implicit_cast(c, right, left->type))
+        return false;
+
+    expr->type = left->type;
+    return true;
+}
+
+static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+                   type_to_string(left->type), type_to_string(right->type));
+        return false;
+    }
+
+    if(!arith_type_conv(c, left, right))
+        return false;
+
+    expr->type = left->type;
+    return true;
+
+}
+
 static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    if(left->type->kind != right->type->kind)
-        SIC_TODO_MSG("Implicit casting rules.");
     if(left->kind != EXPR_IDENT)
         SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
     expr->type = left->type;
-    return true;
+    return implicit_cast(c, right, left->type);
 }
 
 static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
     // TODO: Check if lhs is an lvalue
-    BinaryOpKind conversion[BINARY_OP_ASSIGN_END - BINARY_OP_ASSIGN_START + 1] = {
+    static BinaryOpKind conversion[BINARY_OP_ASSIGN_END - BINARY_OP_ASSIGN_START + 1] = {
         [BINARY_ADD_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_ADD,
         [BINARY_SUB_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SUB,
         [BINARY_MUL_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_MUL,
@@ -258,17 +352,180 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
         [BINARY_BIT_XOR_ASSIGN - BINARY_OP_ASSIGN_START] = BINARY_BIT_XOR,
         [BINARY_BIT_AND_ASSIGN - BINARY_OP_ASSIGN_START] = BINARY_BIT_AND,
         [BINARY_SHL_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SHL,
-        [BINARY_SHR_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_SHR,
+        [BINARY_LSHR_ASSIGN    - BINARY_OP_ASSIGN_START] = BINARY_LSHR,
+        [BINARY_ASHR_ASSIGN    - BINARY_OP_ASSIGN_START] = BINARY_ASHR,
     };
 
     ASTExpr* new_expr = MALLOC_STRUCT(ASTExpr);
     new_expr->kind = EXPR_BINARY;
     new_expr->loc = expr->loc;
     new_expr->expr.binary.kind = conversion[expr->expr.binary.kind - BINARY_OP_ASSIGN_START];
-    new_expr->expr.binary.lhs = left;
+    new_expr->expr.binary.lhs = MALLOC_STRUCT(ASTExpr);
+    memcpy(new_expr->expr.binary.lhs, left, sizeof(ASTExpr));
     new_expr->expr.binary.rhs = right;
     expr->expr.binary.kind = BINARY_ASSIGN;
     expr->expr.binary.rhs = new_expr;
     analyze_binary(c, new_expr);
     return new_expr->kind != EXPR_INVALID && analyze_assign(c, expr, left, new_expr);
+}
+
+static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* child)
+{
+    if(child->kind != EXPR_IDENT)
+    {
+        sema_error(c, &expr->loc, "Cannot take address of rvalue.");
+        return false;
+    }
+    expr->type = pointer_to(child->type);
+    return true;
+}
+
+static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child)
+{
+    if(child->type->kind != TYPE_POINTER)
+    {
+        sema_error(c, &expr->loc, "Cannot dereference non-pointer type %s.",
+                   type_to_string(child->type));
+        return false;
+    }
+    expr->type = child->type->pointer_base;
+    return true;
+}
+
+static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child)
+{
+    if(!type_is_numeric(child->type))
+    {
+        sema_error(c, &expr->loc, "Cannot negate non-numeric type %s.",
+                   type_to_string(child->type));
+        return false;
+    }
+
+    if(child->kind == EXPR_CONSTANT)
+    {
+        expr->kind = EXPR_CONSTANT;
+        if(child->expr.constant.kind == CONSTANT_FLOAT)
+        {
+            expr->expr.constant.val.f = -child->expr.constant.val.f;
+            expr->expr.constant.kind = CONSTANT_FLOAT;
+            return true;
+        }
+
+        expr->expr.constant.val.i = -child->expr.constant.val.i;
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        switch(child->type->kind)
+        {
+        case TYPE_U8:
+            expr->type = child->expr.constant.val.i > 0x7F ? g_type_s16 : g_type_s8;
+            return true;
+        case TYPE_U16:
+            expr->type = child->expr.constant.val.i > 0x7FFF ? g_type_s32 : g_type_s16;
+            return true;
+        case TYPE_U32:
+            expr->type = child->expr.constant.val.i > 0x7FFFFFFF ? g_type_s64 : g_type_s32;
+            return true;
+        case TYPE_U64:
+        case TYPE_S8:
+        case TYPE_S16:
+        case TYPE_S32:
+        case TYPE_S64:
+            return true;
+        default:
+            SIC_UNREACHABLE();
+        }
+    }
+
+    expr->type = child->type;
+    return true;
+}
+
+static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2)
+{
+    Type* t1 = e1->type;
+    Type* t2 = e2->type;
+    TypeKind kind1 = t1->kind;
+    TypeKind kind2 = t2->kind;
+    // TODO: Optimize this section, it should be really easy by changing the order of
+    //       the TypeKind enum, but for now I just want it working.
+    if(kind1 == TYPE_F64 && kind2 != TYPE_F64)
+        return implicit_cast(c, e2, t1);
+    if(kind2 == TYPE_F64 && kind1 != TYPE_F64)
+        return implicit_cast(c, e1, t2);
+
+    if(kind1 == TYPE_F32 && kind2 != TYPE_F32)
+        return implicit_cast(c, e2, t1);
+    if(kind2 == TYPE_F32 && kind1 != TYPE_F32)
+        return implicit_cast(c, e1, t2);
+
+    if(!type_is_integer(t1))
+    {
+        sema_error(c, &e1->loc, "Invalid operand type %s.", type_to_string(t1));
+        return false;
+    }
+    if(!type_is_integer(t2))
+    {
+        sema_error(c, &e2->loc, "Invalid operand type %s.", type_to_string(t2));
+        return false;
+    }
+
+    promote_int_type(c, e1);
+    promote_int_type(c, e2);
+
+    if(type_equal(e1->type, e2->type))
+        return true;
+
+    bool e1_signed = type_is_signed(e1->type);
+    bool e2_signed = type_is_signed(e2->type);
+    ASTExpr* high_rank;
+    ASTExpr* low_rank;
+
+    if(e1_signed == e2_signed)
+    {
+        if(type_size(e1->type) >= type_size(e2->type))
+        {
+            high_rank = e1;
+            low_rank = e2;
+        }
+        else
+        {
+            high_rank = e2;
+            low_rank = e1;
+        }
+        if(!implicit_cast(c, low_rank, high_rank->type))
+            SIC_UNREACHABLE();
+        return true;
+    }
+
+    ASTExpr* sint;
+    ASTExpr* uint;
+
+    if(e1_signed)
+    {
+        sint = e1;
+        uint = e2;
+    }
+    else
+    {
+        sint = e2;
+        uint = e1;
+    }
+
+    if(type_size(uint->type) >= type_size(sint->type))
+    {
+        if(!implicit_cast(c, sint, uint->type))
+            SIC_UNREACHABLE();
+        return true;
+    }
+
+    if(!implicit_cast(c, uint, sint->type))
+        SIC_UNREACHABLE();
+    return true;
+
+}
+
+static void promote_int_type(SemaContext* c, ASTExpr* expr)
+{
+    SIC_ASSERT(type_is_integer(expr->type));
+    if(type_size(expr->type) < 4 && !implicit_cast(c, expr, g_type_s32))
+        SIC_UNREACHABLE();
 }

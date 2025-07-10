@@ -166,10 +166,9 @@ void parse_unit(CompilationUnit* unit)
     lexer_init_unit(&l, unit);
     da_init(&unit->funcs, 0);
     da_init(&unit->vars, 0);
-    if(try_consume(&l, TOKEN_MODULE))
-    {
-        printf("here\n");
-    }
+    // if(try_consume(&l, TOKEN_MODULE))
+    // {
+    // }
     da_append(&g_compiler.top_module.units, unit);
 
     while(!tok_equal(&l, TOKEN_EOF))
@@ -347,7 +346,7 @@ static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs)
             continue;
         if(parse_type_qualifier(l, &qual))
             continue;
-        Type* t = is_builtin_type(peek(l)->kind) ? builtin_type(peek(l)->kind) : NULL; // TODO: Get type
+        Type* t = token_is_typename(peek(l)->kind) ? type_from_token(peek(l)->kind) : NULL; // TODO: Get type
         if(t != NULL)
         {
             if(ty != NULL)
@@ -506,6 +505,24 @@ static ASTStmt* parse_stmt(Lexer* l)
                 goto RECOVER;
         }
         return stmt;
+    case TOKEN_WHILE: {
+        stmt = new_stmt(l, STMT_WHILE);
+        ASTWhile* while_stmt = &stmt->stmt.while_;
+        advance(l);
+        if(!consume(l, TOKEN_LPAREN))
+            goto RECOVER;
+
+        while_stmt->cond = parse_expr(l, PREC_ASSIGN);
+        if(while_stmt->cond->kind == EXPR_INVALID || 
+           !consume(l, TOKEN_RPAREN))
+            goto RECOVER;
+
+        while_stmt->body = parse_stmt(l);
+        if(while_stmt->body->kind == STMT_INVALID)
+            goto RECOVER;
+
+        return stmt;
+    }
     case TOKEN_SEMI:
         stmt = new_stmt(l, STMT_EXPR_STMT);
         stmt->stmt.expr = new_expr(l, EXPR_NOP);
@@ -778,7 +795,8 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_QUESTION]        = { NULL, NULL, PREC_TERNARY },
-    [TOKEN_SHR]             = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_LOG_AND]         = { NULL, parse_binary, PREC_LOG_AND },
     [TOKEN_LOG_OR]          = { NULL, parse_binary, PREC_LOG_OR },
@@ -794,7 +812,8 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_MUL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_DIV_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_MOD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_SHR_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_LSHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_ASHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_INCREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
     [TOKEN_DECREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },

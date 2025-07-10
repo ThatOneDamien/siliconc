@@ -22,5 +22,6 @@ static inline void sema_error(const SemaContext* c, const SourceLoc* loc,
 
 void    analyze_expr(SemaContext* c, ASTExpr* expr);
 bool    analyze_cast(SemaContext* c, ASTExpr* cast);
+bool    implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired);
 void    declare_obj(SemaContext* c, Object* obj);
 Object* find_obj(SemaContext* c, SourceLoc* symbol);
