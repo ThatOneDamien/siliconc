@@ -4,7 +4,11 @@
  * This should also not appear in the lexer's output.
  */
 
-pub u32 main()
+priv void printf(u8* fmt, ...);
+
+pub u32 main(u32 argc)
 {
+    u32[2] a;
+    a[1] = 1;
     return 0;
 }

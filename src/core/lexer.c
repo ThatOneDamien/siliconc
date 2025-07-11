@@ -76,7 +76,8 @@ bool lexer_advance(Lexer* lexer)
         t->kind = TOKEN_SEMI;
         return true;
     case '.':
-        t->kind = TOKEN_PERIOD;
+        t->kind = (consume(lexer, '.') && consume(lexer, '.')) ? 
+                    TOKEN_ELLIPSIS : TOKEN_DOT;
         return true;
     case ',':
         t->kind = TOKEN_COMMA;

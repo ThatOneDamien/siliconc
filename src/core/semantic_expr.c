@@ -101,6 +101,7 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
         return analyze_div(c, expr, left, right);
     case BINARY_LOG_OR:
     case BINARY_LOG_AND:
+        SIC_TODO();
     case BINARY_EQ:
     case BINARY_NE:
     case BINARY_LT:
@@ -117,11 +118,7 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_BIT_AND:
         return analyze_bit_op(c, expr, left, right);
     case BINARY_ASSIGN:
-        if(left->kind != EXPR_IDENT)
-            SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
-        implicit_cast(c, right, left->type);
-        expr->type = left->type;
-        return true;
+        return analyze_assign(c, expr, left, right);
     case BINARY_ADD_ASSIGN:
     case BINARY_SUB_ASSIGN:
     case BINARY_MUL_ASSIGN:
@@ -152,24 +149,45 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     }
 
     Object* func = call->func_expr->expr.ident;
-    if(call->args.size != func->func.params.size)
+    FuncSignature* sig = func->func.signature;
+    if(call->args.size < sig->params.size)
     {
         sema_error(c, &expr->loc, 
-                   "Wrong number of arguments passed to function. Passed %lu, expected %lu.",
-                   call->args.size, func->func.params.size);
+                   "Too few arguments passed to function. Expected %s%lu, have %lu.",
+                   sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
+        return false;
+    }
+    if(!sig->is_var_arg && call->args.size > sig->params.size)
+    {
+        sema_error(c, &expr->loc, 
+                   "Too many arguments passed to function. Expected %lu, have %lu.",
+                   sig->params.size, call->args.size);
         return false;
     }
 
     bool valid = true;
-    for(size_t i = 0; i < call->args.size; ++i)
+    for(size_t i = 0; i < sig->params.size; ++i)
     {
         ASTExpr* arg = call->args.data[i];
         analyze_expr(c, arg);
-        valid = valid && arg->kind != EXPR_INVALID && 
-                implicit_cast(c, arg, func->func.params.data[i]->var.type);
+        valid = valid && arg->kind != EXPR_INVALID &&
+                implicit_cast(c, arg, sig->params.data[i]->var.type);
     }
 
-    expr->type = func->func.ret_type;
+    for(size_t i = sig->params.size; i < call->args.size; ++i)
+    {
+        ASTExpr* arg = call->args.data[i];
+        analyze_expr(c, arg);
+        if(arg->kind == EXPR_INVALID)
+        {
+            valid = false;
+            continue;
+        }
+        implicit_cast_varargs(c, arg);
+    }
+
+
+    expr->type = sig->ret_type;
 
     return valid;
 }
@@ -194,12 +212,11 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    bool left_is_pointer = left->type->kind == TYPE_POINTER;
-    bool right_is_pointer = right->type->kind == TYPE_POINTER;
-    if(right_is_pointer && !left_is_pointer)
+    bool left_is_pointer = type_is_pointer(left->type) || left->type->kind == TYPE_SS_ARRAY;
+    bool right_is_pointer = type_is_pointer(right->type) || right->type->kind == TYPE_SS_ARRAY;
+    if(right_is_pointer)
     {
         left_is_pointer = true;
-        right_is_pointer = false;
         ASTExpr* temp = left;
         left = right;
         right = temp;
@@ -211,6 +228,17 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
         {
             sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
                        type_to_string(left->type), type_to_string(right->type));
+            return false;
+        }
+
+        // This checks if the constant indexing will overflow the size of the static
+        // array. This check is not done for ds-arrays or when the index expression 
+        // is calculated at runtime. 
+        if(left->type->kind == TYPE_SS_ARRAY && right->kind == EXPR_CONSTANT && 
+           right->expr.constant.val.i >= left->type->ss_array.elem_cnt)
+        {
+            // TODO: Make this a warning?
+            sema_error(c, &expr->loc, "Array index will overflow the size of the array.");
             return false;
         }
         expr->type = left->type;
@@ -333,10 +361,29 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
 
 static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    if(left->kind != EXPR_IDENT)
-        SIC_TODO_MSG("Assignment of non-identifiers not handled yet.");
+    switch(left->kind)
+    {
+    case EXPR_IDENT:
+        if(left->expr.ident->kind != OBJ_VAR)
+        {
+            sema_error(c, &expr->loc, "Unable to assign object \'%.*s\'.",
+                       left->expr.ident->symbol.len, left->expr.ident->symbol.start);
+            return false;
+        }
+        break;
+    case EXPR_UNARY:
+        if(left->expr.unary.kind != UNARY_DEREF)
+            goto ERR;
+        break;
+    default:
+        goto ERR;
+    }
     expr->type = left->type;
     return implicit_cast(c, right, left->type);
+
+ERR:
+    sema_error(c, &expr->loc, "Expression is not assignable.");
+    return false;
 }
 
 static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
@@ -376,20 +423,28 @@ static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* child)
         sema_error(c, &expr->loc, "Cannot take address of rvalue.");
         return false;
     }
-    expr->type = pointer_to(child->type);
+    expr->type = type_pointer_to(child->type);
     return true;
 }
 
 static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child)
 {
-    if(child->type->kind != TYPE_POINTER)
+    switch(child->type->kind)
     {
+    case TYPE_POINTER:
+        expr->type = child->type->pointer_base;
+        return true;
+    case TYPE_SS_ARRAY:
+        expr->type = child->type->ss_array.elem_type;
+        return true;
+    case TYPE_DS_ARRAY:
+        expr->type = child->type->ds_array.elem_type;
+        return true;
+    default:
         sema_error(c, &expr->loc, "Cannot dereference non-pointer type %s.",
                    type_to_string(child->type));
         return false;
     }
-    expr->type = child->type->pointer_base;
-    return true;
 }
 
 static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child)

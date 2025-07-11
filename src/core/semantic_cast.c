@@ -60,6 +60,8 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
 
 bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
 {
+    if(expr_to_cast->kind == EXPR_INVALID)
+        return false;
     CastParams params;
     params.sema_context = c;
     params.from = expr_to_cast->type;
@@ -93,6 +95,30 @@ bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
         rule.convert(new_cast, expr_to_cast);
 
     return true;
+}
+
+void implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast)
+{
+    bool good = true;
+    switch(expr_to_cast->type->kind)
+    {
+    case TYPE_BOOL:
+    case TYPE_U8:
+    case TYPE_U16:
+    case TYPE_U32:
+    case TYPE_S8:
+    case TYPE_S16:
+    case TYPE_S32:
+        good = implicit_cast(c, expr_to_cast, g_type_u64);
+        break;
+    case TYPE_F32:
+        good = implicit_cast(c, expr_to_cast, g_type_f64);
+        break;
+    default:
+        return;
+    }
+    if(!good)
+        SIC_UNREACHABLE();
 }
 
 static bool cast_rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit)
@@ -327,4 +353,6 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_F32]           = CAST_GROUP_FLOAT,
     [TYPE_F64]           = CAST_GROUP_FLOAT,
     [TYPE_POINTER]       = CAST_GROUP_PTR,
+    [TYPE_SS_ARRAY]      = CAST_GROUP_ARRAY,
+    [TYPE_DS_ARRAY]      = CAST_GROUP_PTR,
 };

@@ -12,7 +12,12 @@ typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
 
 // Type Structs
+typedef struct TypePreSemaArray TypeDSArray;
 typedef struct TypeBuiltin      TypeBuiltin;
+typedef struct FuncSignature*   TypeFuncPtr;
+typedef struct Type*            TypePointer;
+typedef struct TypePreSemaArray TypePreSemaArray; 
+typedef struct TypeSSArray      TypeSSArray;
 typedef struct Type             Type;
 
 // Dynamic Array Structs
@@ -36,6 +41,7 @@ typedef struct ASTWhile         ASTWhile;
 typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
+typedef struct FuncSignature    FuncSignature;
 typedef struct ObjFunc          ObjFunc;
 typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
@@ -97,10 +103,21 @@ struct Lexer
     LookAhead        la_buf;
 };
 
-
 struct TypeBuiltin
 {
     uint32_t size;
+};
+
+struct TypePreSemaArray
+{
+    Type*    elem_type;
+    ASTExpr* size_expr;
+};
+
+struct TypeSSArray
+{
+    Type*    elem_type;
+    uint64_t elem_cnt;
 };
 
 struct Type
@@ -111,8 +128,12 @@ struct Type
 
     union
     {
-        TypeBuiltin builtin;
-        Type*       pointer_base;
+        TypeBuiltin      builtin;
+        TypeDSArray      ds_array;
+        TypeFuncPtr      func_ptr;
+        TypePointer      pointer_base;
+        TypePreSemaArray pre_sema_array;
+        TypeSSArray      ss_array;
     };
 };
 
@@ -233,25 +254,29 @@ struct ASTStmt
         ASTDeclDA       multi_decl;
         ASTExpr*        expr;
         ASTIf           if_;
-        ASTWhile        while_;
         ASTReturn       return_;
+        ASTWhile        while_;
     } stmt;
 };
 
+struct FuncSignature
+{
+    Type*    ret_type;
+    ObjectDA params;
+    void*    llvm_func_type;
+    bool     is_var_arg;
+};
 
 struct ObjFunc
 {
-    Type*    ret_type;
-    ASTStmt* body;
-    void*    llvm_func_type;
-    ObjectDA local_objs;
-    ObjectDA params;
+    FuncSignature* signature;
+    ASTStmt*       body;
+    ObjectDA       local_objs;
 };
 
 struct ObjVar
 {
     Type* type;
-    int   offset;
 };
 
 struct Object

@@ -16,13 +16,14 @@ struct ExprParseRule
 // Global check and add functions
 static bool      parse_top_level(Lexer* l);
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
+static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
 
 // Grammar parsing
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
 static bool     parse_type_qualifier(Lexer* l, TypeQualifier* qual);
 static void     parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs);
-static bool     parse_func_params(Lexer* l, ObjectDA* params);
+static bool     parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
 static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs);
@@ -31,6 +32,7 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_identifier_expr(Lexer* l);
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
 static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
+static ASTExpr* parse_array_access(Lexer* l, ASTExpr* expr_to_cast);
 static ASTExpr* parse_unary_prefix(Lexer* l);
 static ASTExpr* parse_int_literal(Lexer* l);
 static ASTExpr* parse_bool_literal(Lexer* l);
@@ -113,6 +115,16 @@ static inline bool consume(Lexer* l, TokenKind kind)
     return false;
 }
 
+static inline Object* new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs)
+{
+    Object* obj = CALLOC_STRUCT(Object);
+    obj->kind = kind;
+    obj->access = access;
+    obj->attribs = attribs;
+    obj->symbol = peek(l)->loc;
+    return obj;
+}
+
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind)
 {
     ASTStmt* stmt = CALLOC_STRUCT(ASTStmt);
@@ -126,6 +138,14 @@ static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
     ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
     expr->kind = kind;
     expr->loc = peek(l)->loc;
+    return expr;
+}
+
+static inline ASTExpr* new_unary(Lexer* l, UnaryOpKind kind, ASTExpr* inner)
+{
+    ASTExpr* expr = new_expr(l, EXPR_UNARY);
+    expr->expr.unary.kind = kind;
+    expr->expr.unary.child = inner;
     return expr;
 }
 
@@ -194,17 +214,16 @@ void parse_unit(CompilationUnit* unit)
     }
 }
 
+void test(int a, ...);
+
 static bool parse_top_level(Lexer* l)
 {
+    ObjAccess access = parse_access(l);
     switch(peek(l)->kind)
     {
     case TOKEN_MODULE:
         SIC_TODO();
-    case TOKEN_PRIV:
-    case TOKEN_PROT:
-    case TOKEN_PUB:
     default: {
-        ObjAccess access = parse_access(l);
         Type* type;
         ObjAttr attribs = ATTR_NONE;
         parse_type_prefix(l, &type, &attribs);
@@ -214,8 +233,15 @@ static bool parse_top_level(Lexer* l)
             parser_error(l, "Missing type specifier.");
             return false;
         }
-
-        return function_declaration(l, access, type, attribs);
+        if(!tok_equal(l, TOKEN_IDENT))
+        {
+            parser_error(l, "Expected identifier.");
+            return false;
+        }
+        if(tok_equal_forw(l, 1, TOKEN_LPAREN))
+            return function_declaration(l, access, type, attribs);
+        
+        return global_var_declaration(l, access, type, attribs);
     }
     }
 
@@ -224,21 +250,17 @@ static bool parse_top_level(Lexer* l)
 // function_declaration -> type_prefix identifier "(" func_params (";" | "{" stmt_block)
 static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs)
 {
-    if(!tok_equal(l, TOKEN_IDENT)||
-       !tok_equal_forw(l, 1, TOKEN_LPAREN))
-        return false;
+    SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
+    SIC_ASSERT(tok_equal_forw(l, 1, TOKEN_LPAREN));
 
-    Object* func = MALLOC_STRUCT(Object);
+    Object* func = new_obj(l, OBJ_FUNC, access, attribs);
     ObjFunc* comps = &func->func;
-    func->kind = OBJ_FUNC;
-    comps->ret_type = ret_type;
-    func->symbol = peek(l)->loc;
-    func->access = access;
-    func->attribs = attribs;
-    da_init(&func->func.params, 8);
+    comps->signature = CALLOC_STRUCT(FuncSignature);
+    comps->signature->ret_type = ret_type;
+    da_init(&comps->signature->params, 8);
 
     advance_many(l, 2);
-    if(!parse_func_params(l, &comps->params))
+    if(!parse_func_params(l, &comps->signature->params, &comps->signature->is_var_arg))
         return false;
 
     if(try_consume(l, TOKEN_SEMI))
@@ -254,6 +276,24 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
 
 END:
     da_append(&l->unit->funcs, func);
+    return true;
+}
+
+static bool global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs)
+{
+    SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
+    Object* var = new_obj(l, OBJ_VAR, access, attribs);
+    ObjVar* comps = &var->var;
+    comps->type = type;
+    advance(l);
+
+    if(try_consume(l, TOKEN_SEMI))
+        goto END;
+    
+    SIC_TODO_MSG("Global variable initialization.");
+
+END:
+    da_append(&l->unit->vars, var);
     return true;
 }
 
@@ -367,14 +407,19 @@ static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs)
 
     while(true)
     {
-
-        if(tok_equal(l, TOKEN_LBRACKET))
-            sic_error_fatal("Array types not implemented yet.");
+        if(try_consume(l, TOKEN_LBRACKET))
+        {
+            // TODO: Add auto detection for size when initialized.
+            //       For now size must be specified as an expression.
+            ty = type_array_of(ty, parse_expr(l, PREC_ASSIGN));
+            CONSUME_OR_RET(, l, TOKEN_RBRACKET);
+            continue;
+        }
 
 
         if(tok_equal(l, TOKEN_LPAREN))
         {
-            sic_error_fatal("Function pointer types not implemented yet.");
+            SIC_TODO_MSG("Function pointer types not implemented yet.");
             // Object* params;
             // size_t count;
             // if(!parse_func_params(l, &params, &count))
@@ -382,7 +427,7 @@ static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs)
         }
         else if(tok_equal(l, TOKEN_ASTERISK))
         {
-            ty = pointer_to(ty);
+            ty = type_pointer_to(ty);
             advance(l);
         }
         else
@@ -395,7 +440,7 @@ static void parse_type_prefix(Lexer* l, Type** type, ObjAttr* attribs)
     *type = ty;
 }
 
-static bool parse_func_params(Lexer* l, ObjectDA* params)
+static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
 {
     while(!tok_equal(l, TOKEN_RPAREN))
     {
@@ -405,6 +450,15 @@ static bool parse_func_params(Lexer* l, ObjectDA* params)
         if(params->size > 0)
             consume(l, TOKEN_COMMA);
 
+        // TODO: Make a more robust variable argument system
+        if(tok_equal(l, TOKEN_ELLIPSIS))
+        {
+            advance(l);
+            CONSUME_OR_RET(false, l, TOKEN_RPAREN);
+            *is_var_args = true;
+            printf("VARARGS!!!!\n");
+            return true;
+        }
 
         Type* type;
         parse_type_prefix(l, &type, NULL);
@@ -423,6 +477,7 @@ static bool parse_func_params(Lexer* l, ObjectDA* params)
     }
     
     advance(l);
+    *is_var_args = false;
     return true;
 }
 
@@ -687,6 +742,22 @@ static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
     return cast;
 }
 
+static ASTExpr* parse_array_access(Lexer* l, ASTExpr* ptr_expr)
+{
+    ASTExpr* add = new_expr(l, EXPR_BINARY);
+    add->expr.binary.kind = BINARY_ADD;
+    add->expr.binary.lhs = ptr_expr;
+    ASTExpr* deref = new_unary(l, UNARY_DEREF, add);
+    advance(l);
+
+    ASTExpr* index = parse_expr(l, PREC_ASSIGN);
+    if(index->kind == EXPR_INVALID || !consume(l, TOKEN_RBRACKET))
+        return BAD_EXPR;
+
+    add->expr.binary.rhs = index;
+    return deref;
+}
+
 static ASTExpr* parse_paren_expr(Lexer* l)
 {
     SIC_ASSERT(peek(l)->kind == TOKEN_LPAREN);
@@ -765,7 +836,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
     // TODO: Add capability to concat multiple string literals if they are
     //       side-by-side
     expr->expr.constant.val.s = peek(l)->str.val;
-    expr->type = pointer_to(g_type_u8);
+    expr->type = type_pointer_to(g_type_u8);
     advance(l);
     return expr;
 }
@@ -787,9 +858,9 @@ static ExprParseRule UNUSED expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    // [TOKEN_PERIOD]          = { NULL, NULL, PREC_PRIMARY_POSTFIX },
+    // [TOKEN_DOT]             = { NULL, NULL, PREC_PRIMARY_POSTFIX },
     // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
-    // [TOKEN_LBRACKET]        = { NULL, NULL, PREC_NONE },
+    [TOKEN_LBRACKET]        = { NULL, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },

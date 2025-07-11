@@ -65,8 +65,11 @@ TokenKind sym_map_getn(const char* str, size_t len);
 // Type functions
 Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(Type* orig);
-Type*       pointer_to(Type* base);
+Type*       type_pointer_to(Type* base);
+Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
 bool        type_equal(Type* t1, Type* t2);
+uint32_t    type_size(Type* ty);
+uint32_t    type_alignment(Type* ty);
 const char* type_to_string(Type* type);
 static inline bool type_is_builtin(Type* ty)
 {
@@ -92,29 +95,20 @@ static inline bool type_is_float(Type* ty)
 {
     return ty->kind >= TYPE_FLOAT_START && ty->kind <= TYPE_FLOAT_END;
 }
+
 static inline bool type_is_numeric(Type* ty)
 {
     return ty->kind >= TYPE_NUMERIC_START && ty->kind <= TYPE_NUMERIC_END;
 }
 
-static inline uint32_t type_size(Type* ty)
+static inline bool type_is_pointer(Type* ty)
 {
-    SIC_ASSERT(ty != NULL);
-    if(ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END)
-        return ty->builtin.size;
-    if(ty->kind == TYPE_POINTER)
-        return 8;
-
-    SIC_TODO();
+    return ty->kind == TYPE_POINTER || ty->kind == TYPE_DS_ARRAY;
 }
 
-static inline uint32_t type_alignment(Type* ty)
+static inline Type* type_get_base(Type* ptr_ty)
 {
-    SIC_ASSERT(ty != NULL);
-    if(ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END)
-        return ty->builtin.size;
-    if(ty->kind == TYPE_POINTER)
-        return 8;
-
-    SIC_TODO();
+    if(!type_is_pointer(ptr_ty))
+        SIC_UNREACHABLE();
+    return ptr_ty->kind == TYPE_POINTER ? ptr_ty->pointer_base : ptr_ty->ds_array.elem_type;
 }

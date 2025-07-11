@@ -17,7 +17,8 @@ void semantic_analysis(CompilationUnit* unit)
     context.cur_scope = &context.unit_scope;
 
     ObjectDA* funcs = &context.unit->funcs;
-    hashmap_initn(&context.unit_scope.vars, funcs->size);
+    ObjectDA* vars  = &context.unit->vars;
+    hashmap_initn(&context.unit_scope.vars, funcs->size + vars->size);
     for(size_t i = 0; i < funcs->size; ++i)
     {
         // For now, I only allow one declaration/definition of a function
@@ -30,6 +31,13 @@ void semantic_analysis(CompilationUnit* unit)
         hashmap_putn(&context.unit_scope.vars, func->symbol.start, func->symbol.len, func);
     }
 
+    for(size_t i = 0; i < vars->size; ++i)
+    {
+        Object* var = vars->data[i];
+        if(find_obj(&context, &var->symbol) != NULL)
+            sema_error(&context, &var->symbol, "Symbol redefined.");
+        hashmap_putn(&context.unit_scope.vars, var->symbol.start, var->symbol.len, var);
+    }
 
     for(size_t i = 0; i < funcs->size; ++i)
         analyze_function(&context, funcs->data[i]);
@@ -39,9 +47,10 @@ static void analyze_function(SemaContext* c, Object* function)
 {
     push_scope(c);
     c->cur_func = function;
-    for(size_t i = 0; i < function->func.params.size; ++i)
+    ObjectDA* params = &function->func.signature->params;
+    for(size_t i = 0; i < params->size; ++i)
     {
-        Object* param = function->func.params.data[i];
+        Object* param = params->data[i];
         hashmap_putn(&c->cur_scope->vars, param->symbol.start, param->symbol.len, param);
     }
 
@@ -83,24 +92,26 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
         return;
     case STMT_INVALID:
         return;
-    case STMT_RETURN:
+    case STMT_RETURN: {
+        Type* ret_type = c->cur_func->func.signature->ret_type;
         if(stmt->stmt.return_.ret_expr != NULL)
         {
-            if(c->cur_func->func.ret_type->kind == TYPE_VOID)
+            if(ret_type->kind == TYPE_VOID)
             {
                 sema_error(c, &stmt->stmt.return_.ret_expr->loc,
                            "Function returning void should not have expression in return statement.");
                 return;
             }
             analyze_expr(c, stmt->stmt.return_.ret_expr);
-            implicit_cast(c, stmt->stmt.return_.ret_expr, c->cur_func->func.ret_type);
+            implicit_cast(c, stmt->stmt.return_.ret_expr, ret_type);
         }
-        else if(c->cur_func->func.ret_type->kind != TYPE_VOID)
+        else if(ret_type->kind != TYPE_VOID)
         {
             sema_error(c, &stmt->token.loc,
                        "Function returning non-void should have expression in return statement.");
         }
         return;
+    }
     case STMT_WHILE: {
         ASTWhile* while_stmt = &stmt->stmt.while_;
         analyze_expr(c, while_stmt->cond);
@@ -110,6 +121,8 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
     }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
+        if(!resolve_type(c, decl->obj->var.type))
+            return;
         declare_obj(c, decl->obj);
         if(decl->init_expr != NULL)
         {
@@ -120,6 +133,8 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
     }
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
+        if(!resolve_type(c, decl_list->data[0].obj->var.type))
+            return;
         for(size_t i = 0; i < decl_list->size; ++i)
         {
             ASTDeclaration* decl = decl_list->data + i;

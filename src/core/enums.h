@@ -23,7 +23,7 @@ typedef enum
     TOKEN_LT,               // <
     TOKEN_GT,               // >
     TOKEN_DIV,              // /
-    TOKEN_PERIOD,           // .
+    TOKEN_DOT,              // .
     TOKEN_COMMA,            // ,
     TOKEN_LBRACE,           // {
     TOKEN_LBRACKET,         // [
@@ -56,6 +56,7 @@ typedef enum
     TOKEN_MOD_ASSIGN,       // %=
     TOKEN_INCREM,           // ++
     TOKEN_DECREM,           // --
+    TOKEN_ELLIPSIS,         // ...
     
     TOKEN_LSHR_ASSIGN,      // >>=
     TOKEN_ASHR_ASSIGN,      // >>>=
@@ -115,6 +116,7 @@ typedef enum
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
     CAST_GROUP_PTR,
+    CAST_GROUP_ARRAY,
     __CAST_GROUP_COUNT,
 } CastGroup;
 
@@ -248,6 +250,9 @@ typedef enum
     TYPE_BUILTIN_END    = TYPE_F64,
 
     TYPE_POINTER,
+    TYPE_SS_ARRAY, // Statically sized array (i.e. an array whose size is known at compile-time)
+    TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
+    TYPE_PRE_SEMA_ARRAY,
     __TYPE_COUNT,
     // TODO: Add structs, unions, arrays, pointers, etc
 

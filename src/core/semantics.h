@@ -20,8 +20,11 @@ static inline void sema_error(const SemaContext* c, const SourceLoc* loc,
     va_end(va);
 }
 
+
 void    analyze_expr(SemaContext* c, ASTExpr* expr);
 bool    analyze_cast(SemaContext* c, ASTExpr* cast);
 bool    implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired);
+void    implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast);
+bool    resolve_type(SemaContext* c, Type* type);
 void    declare_obj(SemaContext* c, Object* obj);
 Object* find_obj(SemaContext* c, SourceLoc* symbol);

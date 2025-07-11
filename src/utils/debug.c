@@ -8,6 +8,7 @@
 static const char* s_tok_strs[];
 static const char* s_stmt_type_strs[];
 static const char* s_binary_op_strs[];
+static const char* s_unary_op_strs[];
 static const char* s_access_strs[];
 static void print_func(const Object* func);
 static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth);
@@ -16,7 +17,11 @@ static void print_constant(const ASTExpr* expr);
 
 static inline const char* debug_type_to_str(Type* type)
 {
-    return type == NULL ? "Unknown" : type_to_string(type);
+    if(type == NULL)
+        return "Unknown";
+    if(type->kind == TYPE_PRE_SEMA_ARRAY)
+        return str_format("Pre-Sema-Array %s[]", type_to_string(type->pre_sema_array.elem_type));
+    return type_to_string(type);
 }
 
 void print_all_tokens(Lexer lexer)
@@ -43,15 +48,16 @@ void print_unit(const CompilationUnit* unit)
 static void print_func(const Object* func)
 {
     const ObjFunc* comps = &func->func;
+    const FuncSignature* sig = comps->signature;
     printf("Function \'%.*s\' %s (returns %s):\n", 
            (int)func->symbol.len,
            func->symbol.start,
            s_access_strs[func->access],
-           debug_type_to_str(comps->ret_type));
-    printf("  Params (count: %lu):\n", comps->params.size);
-    for(size_t i = 0; i < comps->params.size; ++i)
+           debug_type_to_str(sig->ret_type));
+    printf("  Params (count: %lu):\n", sig->params.size);
+    for(size_t i = 0; i < sig->params.size; ++i)
     {
-        Object* param = comps->params.data[i];
+        Object* param = sig->params.data[i];
         printf("    %.*s (type %s)\n", 
                (int)param->symbol.len, 
                param->symbol.start,
@@ -126,7 +132,10 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         const ASTDeclaration* decl = &stmt->stmt.single_decl;
         PRINT_DEPTH(depth + 1);
         printf("%.*s = ", decl->obj->symbol.len, decl->obj->symbol.start);
-        print_expr(decl->init_expr, depth + 1, false);
+        if(decl->init_expr != NULL)
+            print_expr(decl->init_expr, depth + 1, false);
+        else
+            printf("( Uninitialized )\n");
         break;
     }
     case STMT_MULTI_DECL: {
@@ -152,50 +161,63 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
     if(print_depth)
         PRINT_DEPTH(depth);
     printf("[ ");
+    const SourceLoc* loc = &expr->loc;
     switch(expr->kind)
     {
     case EXPR_BINARY:
-        printf("BINARY \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], debug_type_to_str(expr->type));
+        printf("BINARY \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], 
+               debug_type_to_str(expr->type));
         print_expr(expr->expr.binary.lhs, depth + 1, true);
         print_expr(expr->expr.binary.rhs, depth + 1, true);
-        break;
+        return;
     case EXPR_CAST:
         printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type));
         print_expr(expr->expr.cast.expr_to_cast, depth + 1, true);
-        break;
+        return;
     case EXPR_CONSTANT:
         print_constant(expr);
-        break;
+        return;
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
         print_expr(expr->expr.call.func_expr, depth + 1, true);
         for(size_t i = 0; i < expr->expr.call.args.size; ++i)
             print_expr(expr->expr.call.args.data[i], depth + 1, true);
-        break;
+        return;
     case EXPR_IDENT: {
-        const SourceLoc* loc = &expr->loc;
-        printf("Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
-        break;
+        Object* obj = expr->expr.ident;
+        switch(obj->kind)
+        {
+        case OBJ_VAR:
+            printf("Variable \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, 
+                   debug_type_to_str(expr->type));
+            return;
+        case OBJ_FUNC:
+            printf("Function \'%.*s\' ]\n", loc->len, loc->start);
+            return;
+        default:
+            printf("Unknown Identifier\n");
+            SIC_ERROR_DBG("Unknown identifier encountered.");
+            return;
+        }
     }
     case EXPR_INVALID:
         printf("Invalid ]\n");
-        break;
+        return;
     case EXPR_NOP:
         printf("Nop ]\n");
-        break;
+        return;
     case EXPR_PRE_SEMANTIC_IDENT: {
-        const SourceLoc* loc = &expr->loc;
         printf("Pre-Sema Identifier \'%.*s\' ]\n", loc->len, loc->start);
-        break;
+        return;
     }
     case EXPR_UNARY:
-        printf("Unary \'%.*s\' ] (Type: %s)\n",
-               expr->loc.len, expr->loc.start, debug_type_to_str(expr->type));
+        printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
+               debug_type_to_str(expr->type));
         print_expr(expr->expr.unary.child, depth + 1, true);
-        break;
+        return;
     default:
-        printf("%.*s ]\n", expr->loc.len, expr->loc.start);
-        break;
+        printf("%.*s ]\n", loc->len, loc->start);
+        return;
     }
 }
 
@@ -246,7 +268,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_LT]              = "Less Than",
     [TOKEN_GT]              = "Greater Than",
     [TOKEN_DIV]             = "Divide",
-    [TOKEN_PERIOD]          = "Period",
+    [TOKEN_DOT]             = "Dot",
     [TOKEN_COMMA]           = "Comma",
     [TOKEN_LBRACE]          = "Left Brace",
     [TOKEN_LBRACKET]        = "Left Bracket",
@@ -351,6 +373,13 @@ static const char* s_binary_op_strs[] = {
     [BINARY_SHL_ASSIGN]     = "Shift Left and Assign",
     [BINARY_LSHR_ASSIGN]    = "Logical Shift Right and Assign",
     [BINARY_ASHR_ASSIGN]    = "Arithmetic Shift Right and Assign",
+};
+
+static const char* s_unary_op_strs[] = {
+    [UNARY_INVALID] = "Invalid",
+    [UNARY_ADDR_OF] = "Address Of",
+    [UNARY_DEREF]   = "Deref",
+    [UNARY_NEG]     = "Negate",
 };
 
 static const char* s_access_strs[] = {

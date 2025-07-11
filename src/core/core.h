@@ -40,7 +40,7 @@
         do                                                          \
         {                                                           \
             if(!(cond))                                             \
-                SIC_ERROR_DBG_ARGS("Assertion failed (%s: %d): %s", \
+                SIC_ERROR_DBG_ARGS("Assertion failed (%s:%d): %s",  \
                                    __FILE__, __LINE__, #cond);      \
         } while(0)
     #define SIC_ASSERT_MSG(cond, msg)   \
