@@ -12,17 +12,16 @@ extern CompilerContext g_compiler;
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
 extern Type* g_type_bool;
-extern Type* g_type_u8;
-extern Type* g_type_s8;
-extern Type* g_type_u16;
-extern Type* g_type_s16;
-extern Type* g_type_u32;
-extern Type* g_type_s32;
-extern Type* g_type_u64;
-extern Type* g_type_s64;
-extern Type* g_type_f32;
-extern Type* g_type_f64;
-extern Type* g_type_f128;
+extern Type* g_type_ubyte;
+extern Type* g_type_byte;
+extern Type* g_type_ushort;
+extern Type* g_type_short;
+extern Type* g_type_uint;
+extern Type* g_type_int;
+extern Type* g_type_ulong;
+extern Type* g_type_long;
+extern Type* g_type_float;
+extern Type* g_type_double;
 
 // Command line arguments
 void process_cmdln_args(int argc, char* argv[]);
@@ -108,6 +107,8 @@ static inline bool type_is_pointer(Type* ty)
 
 static inline Type* type_get_base(Type* ptr_ty)
 {
+    if(ptr_ty->kind == TYPE_SS_ARRAY)
+        return ptr_ty->ss_array.elem_type;
     if(!type_is_pointer(ptr_ty))
         SIC_UNREACHABLE();
     return ptr_ty->kind == TYPE_POINTER ? ptr_ty->pointer_base : ptr_ty->ds_array.elem_type;

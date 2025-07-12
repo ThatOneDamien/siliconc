@@ -8,16 +8,16 @@ bool resolve_type(SemaContext* c, Type* type)
     {
     case TYPE_VOID:
     case TYPE_BOOL:
-    case TYPE_U8:
-    case TYPE_U16:
-    case TYPE_U32:
-    case TYPE_U64:
-    case TYPE_S8:
-    case TYPE_S16:
-    case TYPE_S32:
-    case TYPE_S64:
-    case TYPE_F32:
-    case TYPE_F64:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
         return true;
@@ -39,15 +39,15 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
 
     analyze_expr(c, size_expr);
     // TODO: Check for negative size expr, that is BAD.
-    //       For now negative sizes are implicitly casted to u64, which
-    //       means u8[-1] tries to allocate quintillions of bytes!! :)
-    if(!implicit_cast(c, size_expr, g_type_u64))
+    //       For now negative sizes are implicitly casted to ulong, which
+    //       means ubyte[-1] tries to allocate quintillions of bytes!! :)
+    if(!implicit_cast(c, size_expr, g_type_ulong))
         return false;
 
     if(size_expr->kind == EXPR_CONSTANT)
     {
         SIC_ASSERT(size_expr->expr.constant.kind == CONSTANT_INTEGER &&
-                   size_expr->type->kind == TYPE_U64);
+                   size_expr->type->kind == TYPE_ULONG);
         arr_ty->kind = TYPE_SS_ARRAY;
         arr_ty->ss_array.elem_type = elem_type;
         arr_ty->ss_array.elem_cnt = size_expr->expr.constant.val.i;

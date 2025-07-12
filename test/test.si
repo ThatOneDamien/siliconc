@@ -4,11 +4,14 @@
  * This should also not appear in the lexer's output.
  */
 
-priv void printf(u8* fmt, ...);
+priv void printf(ubyte* fmt, ...);
 
-pub u32 main(u32 argc)
+pub uint main(uint argc)
 {
-    u32[2] a;
-    a[1] = 1;
+    ubyte[3] str;
+    str[0] = 'b';
+    str[1] = '\n';
+    str[2] = '\0';
+    printf(str as ubyte*);
     return 0;
 }

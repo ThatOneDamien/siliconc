@@ -5,7 +5,6 @@
 #ifdef SI_DEBUG
 #define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
 
-static const char* s_tok_strs[];
 static const char* s_stmt_type_strs[];
 static const char* s_binary_op_strs[];
 static const char* s_unary_op_strs[];
@@ -30,7 +29,7 @@ void print_all_tokens(Lexer lexer)
     {
         Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
         printf("%-15s: Len: %-4u   %.*s\n", 
-               s_tok_strs[tok->kind],
+               tok_kind_to_str(tok->kind),
                tok->loc.len,
                (int)tok->loc.len, 
                tok->loc.start);
@@ -164,6 +163,11 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
     const SourceLoc* loc = &expr->loc;
     switch(expr->kind)
     {
+    case EXPR_ARRAY_ACCESS:
+        printf("ARRAY ACCESS ] (Type: %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.array_access.array_expr, depth + 1, true);
+        print_expr(expr->expr.array_access.index_expr, depth + 1, true);
+        return;
     case EXPR_BINARY:
         printf("BINARY \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], 
                debug_type_to_str(expr->type));
@@ -248,86 +252,6 @@ static void print_constant(const ASTExpr* expr)
         break;
     }
 }
-
-static const char* s_tok_strs[] = {
-    [TOKEN_INVALID]         = "Invalid",
-    [TOKEN_IDENT]           = "Identifier",
-    [TOKEN_INT_LITERAL]     = "Integer Literal",
-    [TOKEN_CHAR_LITERAL]    = "Char Literal",
-    [TOKEN_FLOAT_LITERAL]   = "Float Literal",
-    [TOKEN_STRING_LITERAL]  = "String Literal",
-    [TOKEN_AMP]             = "Ampersand",
-    [TOKEN_ASTERISK]        = "Asterisk",
-    [TOKEN_LOG_NOT]         = "Logical Not",
-    [TOKEN_BIT_NOT]         = "Bitwise Not",
-    [TOKEN_BIT_OR]          = "Bitwise Or",
-    [TOKEN_BIT_XOR]         = "Bitwise Xor",
-    [TOKEN_COLON]           = "Colon",
-    [TOKEN_SEMI]            = "Semicolon",
-    [TOKEN_ASSIGN]          = "Assign",
-    [TOKEN_LT]              = "Less Than",
-    [TOKEN_GT]              = "Greater Than",
-    [TOKEN_DIV]             = "Divide",
-    [TOKEN_DOT]             = "Dot",
-    [TOKEN_COMMA]           = "Comma",
-    [TOKEN_LBRACE]          = "Left Brace",
-    [TOKEN_LBRACKET]        = "Left Bracket",
-    [TOKEN_LPAREN]          = "Left Paren",
-    [TOKEN_RPAREN]          = "Right Paren",
-    [TOKEN_RBRACKET]        = "Right Bracket",
-    [TOKEN_RBRACE]          = "Right Brace",
-    [TOKEN_ADD]             = "Add",
-    [TOKEN_SUB]             = "Subtract",
-    [TOKEN_MODULO]          = "Modulo",
-    [TOKEN_QUESTION]        = "Question Mark",
-    [TOKEN_LSHR]            = "Logical Shift Right",
-    [TOKEN_ASHR]            = "Arithmetic Shift Right",
-    [TOKEN_SHL]             = "Shift Left",
-    [TOKEN_LOG_AND]         = "Logical And",
-    [TOKEN_LOG_OR]          = "Logical Or",
-    [TOKEN_EQ]              = "Equal",
-    [TOKEN_NE]              = "Not Equal",
-    [TOKEN_LE]              = "Less Than Or Equal",
-    [TOKEN_GE]              = "Greater Than Or Equal",
-    [TOKEN_BIT_AND_ASSIGN]  = "Bitwise And Assign",
-    [TOKEN_BIT_OR_ASSIGN]   = "Bitwise Or Assign",
-    [TOKEN_BIT_XOR_ASSIGN]  = "Bitwise Xor Assign",
-    [TOKEN_ADD_ASSIGN]      = "Add Assign",
-    [TOKEN_SUB_ASSIGN]      = "Subtract Assign",
-    [TOKEN_MUL_ASSIGN]      = "Multiply Assign",
-    [TOKEN_DIV_ASSIGN]      = "Divide Assign",
-    [TOKEN_MOD_ASSIGN]      = "Modulo Assign",
-    [TOKEN_LSHR_ASSIGN]     = "Logical Shift Right Assign",
-    [TOKEN_ASHR_ASSIGN]     = "Arithmetic Shift Right Assign",
-    [TOKEN_SHL_ASSIGN]      = "Shift Left Assign",
-    [TOKEN_INCREM]          = "Increment",
-    [TOKEN_DECREM]          = "Decrement",
-
-    [TOKEN_AS]              = "as",
-    [TOKEN_CONST]           = "const",
-    [TOKEN_ELSE]            = "else",
-    [TOKEN_EXTERN]          = "extern",
-    [TOKEN_IF]              = "if",
-    [TOKEN_PUB]             = "pub",
-    [TOKEN_PRIV]            = "priv",
-    [TOKEN_PROT]            = "prot",
-    [TOKEN_RETURN]          = "return",
-    [TOKEN_MODULE]          = "mod",
-
-    [TOKEN_VOID]            = "void",
-    [TOKEN_BOOL]            = "bool",
-    [TOKEN_U8]              = "u8",
-    [TOKEN_S8]              = "s8",
-    [TOKEN_U16]             = "u16",
-    [TOKEN_S16]             = "s16",
-    [TOKEN_U32]             = "u32",
-    [TOKEN_S32]             = "s32",
-    [TOKEN_U64]             = "u64",
-    [TOKEN_S64]             = "s64",
-    [TOKEN_F32]             = "f32",
-    [TOKEN_F64]             = "f64",
-    [TOKEN_EOF]             = "End Of File",
-};
 
 static const char* s_stmt_type_strs[] = {
     [STMT_INVALID]     = "Invalid",

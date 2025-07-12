@@ -36,6 +36,7 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt);
 static void emit_if(CodegenContext* c, ASTStmt* stmt);
 static void emit_while(CodegenContext* c, ASTStmt* stmt);
 static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval);
+static LLVMValueRef emit_array_access(CodegenContext* c, ASTExpr* expr, bool is_lval);
 static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_cast(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr);
@@ -358,6 +359,8 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
 {
     switch(expr->kind)
     {
+    case EXPR_ARRAY_ACCESS:
+        return emit_array_access(c, expr, is_lval);
     case EXPR_BINARY:
         return emit_binary(c, expr);
     case EXPR_CAST:
@@ -381,6 +384,15 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
     default:
         SIC_UNREACHABLE();
     }
+}
+
+static LLVMValueRef emit_array_access(CodegenContext* c, ASTExpr* expr, bool is_lval)
+{
+    ASTExprAAccess* aa = &expr->expr.array_access;
+    LLVMValueRef array = emit_expr(c, aa->array_expr, false);
+    LLVMValueRef index[2] = { LLVMConstInt(LLVMInt64Type(), 0, false), emit_expr(c, aa->index_expr, false) };
+    LLVMValueRef elem_ptr = LLVMBuildGEP2(c->builder, get_llvm_type(c, aa->array_expr->type), array, index, 2, "");
+    return is_lval ? elem_ptr : LLVMBuildLoad2(c->builder, get_llvm_type(c, expr->type), elem_ptr, "");
 }
 
 static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr)
@@ -551,16 +563,16 @@ static LLVMValueRef emit_ident(CodegenContext* c, ASTExpr* expr, bool is_lval)
     switch(obj->var.type->kind)
     {
     case TYPE_BOOL:
-    case TYPE_U8:
-    case TYPE_U16:
-    case TYPE_U32:
-    case TYPE_U64:
-    case TYPE_S8:
-    case TYPE_S16:
-    case TYPE_S32:
-    case TYPE_S64:
-    case TYPE_F32:
-    case TYPE_F64:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
     case TYPE_POINTER:
         return is_lval ? obj->llvm_ref : LLVMBuildLoad2(c->builder, get_llvm_type(c, obj->var.type), obj->llvm_ref, "");
     case TYPE_SS_ARRAY:
@@ -648,18 +660,18 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_VOID:
         return type->llvm_ref = LLVMVoidType();
     case TYPE_BOOL:
-    case TYPE_U8:
-    case TYPE_U16:
-    case TYPE_U32:
-    case TYPE_U64:
-    case TYPE_S8:
-    case TYPE_S16:
-    case TYPE_S32:
-    case TYPE_S64:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
         return type->llvm_ref = LLVMIntType(type->builtin.size * 8);
-    case TYPE_F32:
+    case TYPE_FLOAT:
         return type->llvm_ref = LLVMFloatType();
-    case TYPE_F64:
+    case TYPE_DOUBLE:
         return type->llvm_ref = LLVMDoubleType();
     case TYPE_POINTER:
         return type->llvm_ref = c->ptr_type;

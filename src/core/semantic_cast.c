@@ -103,16 +103,16 @@ void implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast)
     switch(expr_to_cast->type->kind)
     {
     case TYPE_BOOL:
-    case TYPE_U8:
-    case TYPE_U16:
-    case TYPE_U32:
-    case TYPE_S8:
-    case TYPE_S16:
-    case TYPE_S32:
-        good = implicit_cast(c, expr_to_cast, g_type_u64);
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+        good = implicit_cast(c, expr_to_cast, g_type_ulong);
         break;
-    case TYPE_F32:
-        good = implicit_cast(c, expr_to_cast, g_type_f64);
+    case TYPE_FLOAT:
+        good = implicit_cast(c, expr_to_cast, g_type_double);
         break;
     default:
         return;
@@ -121,11 +121,8 @@ void implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast)
         SIC_UNREACHABLE();
 }
 
-static bool cast_rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit)
-{
-    SIC_UNREACHABLE();
-}
-
+static bool cast_rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit) { SIC_UNREACHABLE(); }
+static bool cast_rule_always(UNUSED CastParams* params, UNUSED bool explicit) { return true; }
 static bool cast_rule_explicit_only(CastParams* params, bool explicit)
 {
     if(explicit)
@@ -154,7 +151,15 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
     return false;
 }
 
-static bool cast_rule_always(UNUSED CastParams* params, UNUSED bool explicit) { return true; }
+static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
+{
+    (void)params;
+    if(explicit)
+        return true;
+
+    SIC_TODO_MSG("Implicit ptr conversion");
+}
+
 
 // Casting functions
 static void cast_any_to_void(ASTExpr* cast, ASTExpr* inner)
@@ -309,9 +314,8 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
 
 static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 {
-    (void)cast;
     (void)inner;
-
+    cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
 
@@ -327,32 +331,33 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define FLTINT { cast_rule_explicit_only, cast_float_to_int }
 #define PTRBOO { cast_rule_always       , cast_ptr_to_bool }
 #define PTRINT { cast_rule_explicit_only, cast_ptr_to_int }
-#define PTRPTR { cast_rule_explicit_only, cast_ptr_to_ptr }
+#define PTRPTR { cast_rule_ptr_to_ptr, cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    //                     VOID    BOOL    INT     FLOAT   PTR
-    [CAST_GROUP_VOID]  = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_BOOL]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_INT]   = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR },
-    [CAST_GROUP_FLOAT] = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW },
-    [CAST_GROUP_PTR]   = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR },
+    //                     VOID    BOOL    INT     FLOAT   PTR    ARRAY
+    [CAST_GROUP_VOID]  = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_BOOL]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_INT]   = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW },
+    [CAST_GROUP_FLOAT] = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW },
+    [CAST_GROUP_PTR]   = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR },
+    [CAST_GROUP_ARRAY] = { NOALLW, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_INVALID]       = CAST_GROUP_INVALID,
     [TYPE_VOID]          = CAST_GROUP_VOID,
     [TYPE_BOOL]          = CAST_GROUP_BOOL,
-    [TYPE_U8]            = CAST_GROUP_INT,
-    [TYPE_U16]           = CAST_GROUP_INT,
-    [TYPE_U32]           = CAST_GROUP_INT,
-    [TYPE_U64]           = CAST_GROUP_INT,
-    [TYPE_S8]            = CAST_GROUP_INT,
-    [TYPE_S16]           = CAST_GROUP_INT,
-    [TYPE_S32]           = CAST_GROUP_INT,
-    [TYPE_S64]           = CAST_GROUP_INT,
-    [TYPE_F32]           = CAST_GROUP_FLOAT,
-    [TYPE_F64]           = CAST_GROUP_FLOAT,
+    [TYPE_UBYTE]         = CAST_GROUP_INT,
+    [TYPE_USHORT]        = CAST_GROUP_INT,
+    [TYPE_UINT]          = CAST_GROUP_INT,
+    [TYPE_ULONG]         = CAST_GROUP_INT,
+    [TYPE_BYTE]          = CAST_GROUP_INT,
+    [TYPE_SHORT]         = CAST_GROUP_INT,
+    [TYPE_INT]           = CAST_GROUP_INT,
+    [TYPE_LONG]          = CAST_GROUP_INT,
+    [TYPE_FLOAT]         = CAST_GROUP_FLOAT,
+    [TYPE_DOUBLE]        = CAST_GROUP_FLOAT,
     [TYPE_POINTER]       = CAST_GROUP_PTR,
     [TYPE_SS_ARRAY]      = CAST_GROUP_ARRAY,
-    [TYPE_DS_ARRAY]      = CAST_GROUP_PTR,
+    [TYPE_DS_ARRAY]      = CAST_GROUP_ARRAY,
 };

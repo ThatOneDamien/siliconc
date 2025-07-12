@@ -141,14 +141,6 @@ static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
     return expr;
 }
 
-static inline ASTExpr* new_unary(Lexer* l, UnaryOpKind kind, ASTExpr* inner)
-{
-    ASTExpr* expr = new_expr(l, EXPR_UNARY);
-    expr->expr.unary.kind = kind;
-    expr->expr.unary.child = inner;
-    return expr;
-}
-
 static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
 {
     while(true)
@@ -742,20 +734,18 @@ static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
     return cast;
 }
 
-static ASTExpr* parse_array_access(Lexer* l, ASTExpr* ptr_expr)
+static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 {
-    ASTExpr* add = new_expr(l, EXPR_BINARY);
-    add->expr.binary.kind = BINARY_ADD;
-    add->expr.binary.lhs = ptr_expr;
-    ASTExpr* deref = new_unary(l, UNARY_DEREF, add);
+    ASTExpr* access = new_expr(l, EXPR_ARRAY_ACCESS);
+    access->expr.array_access.array_expr = array_expr;
     advance(l);
 
-    ASTExpr* index = parse_expr(l, PREC_ASSIGN);
-    if(index->kind == EXPR_INVALID || !consume(l, TOKEN_RBRACKET))
+    ASTExpr* index_expr = parse_expr(l, PREC_ASSIGN);
+    if(index_expr->kind == EXPR_INVALID || !consume(l, TOKEN_RBRACKET))
         return BAD_EXPR;
 
-    add->expr.binary.rhs = index;
-    return deref;
+    access->expr.array_access.index_expr = index_expr;
+    return access;
 }
 
 static ASTExpr* parse_paren_expr(Lexer* l)
@@ -801,7 +791,7 @@ static ASTExpr* parse_int_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > 0xFFFFFFFF ? g_type_u64 : g_type_u32;
+    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
     advance(l);
@@ -823,7 +813,7 @@ static ASTExpr* parse_char_literal(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_INTEGER;
     expr->expr.constant.val.i = peek(l)->chr.val;
-    expr->type = g_type_u8;
+    expr->type = g_type_ubyte;
     advance(l);
     return expr;
 }
@@ -836,7 +826,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
     // TODO: Add capability to concat multiple string literals if they are
     //       side-by-side
     expr->expr.constant.val.s = peek(l)->str.val;
-    expr->type = type_pointer_to(g_type_u8);
+    expr->type = type_pointer_to(g_type_ubyte);
     advance(l);
     return expr;
 }

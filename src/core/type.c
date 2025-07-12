@@ -3,46 +3,46 @@
 
 #define BUILTIN_DEF(TYPE, SIZE) { .kind = TYPE, .qualifiers = QUALIFIER_NONE, .builtin = {SIZE} }
 
-static Type s_void = BUILTIN_DEF(TYPE_VOID,  0);
-static Type s_bool = BUILTIN_DEF(TYPE_BOOL,  1);
-static Type s_u8   = BUILTIN_DEF(TYPE_U8  ,  1);
-static Type s_u16  = BUILTIN_DEF(TYPE_U16 ,  2);
-static Type s_u32  = BUILTIN_DEF(TYPE_U32 ,  4);
-static Type s_u64  = BUILTIN_DEF(TYPE_U64 ,  8);
-static Type s_s8   = BUILTIN_DEF(TYPE_S8  ,  1);
-static Type s_s16  = BUILTIN_DEF(TYPE_S16 ,  2);
-static Type s_s32  = BUILTIN_DEF(TYPE_S32 ,  4);
-static Type s_s64  = BUILTIN_DEF(TYPE_S64 ,  8);
-static Type s_f32  = BUILTIN_DEF(TYPE_F32 ,  4);
-static Type s_f64  = BUILTIN_DEF(TYPE_F64 ,  8);
+static Type s_void   = BUILTIN_DEF(TYPE_VOID   ,  0);
+static Type s_bool   = BUILTIN_DEF(TYPE_BOOL   ,  1);
+static Type s_ubyte  = BUILTIN_DEF(TYPE_UBYTE  ,  1);
+static Type s_ushort = BUILTIN_DEF(TYPE_USHORT ,  2);
+static Type s_uint   = BUILTIN_DEF(TYPE_UINT   ,  4);
+static Type s_ulong  = BUILTIN_DEF(TYPE_ULONG  ,  8);
+static Type s_byte   = BUILTIN_DEF(TYPE_BYTE   ,  1);
+static Type s_short  = BUILTIN_DEF(TYPE_SHORT  ,  2);
+static Type s_int    = BUILTIN_DEF(TYPE_INT    ,  4);
+static Type s_long   = BUILTIN_DEF(TYPE_LONG   ,  8);
+static Type s_float  = BUILTIN_DEF(TYPE_FLOAT  ,  4);
+static Type s_double = BUILTIN_DEF(TYPE_DOUBLE ,  8);
 
 // Builtin-types
-Type* g_type_void = &s_void;
-Type* g_type_bool = &s_bool;
-Type* g_type_u8   = &s_u8;
-Type* g_type_u16  = &s_u16;
-Type* g_type_u32  = &s_u32;
-Type* g_type_u64  = &s_u64;
-Type* g_type_s8   = &s_s8;
-Type* g_type_s16  = &s_s16;
-Type* g_type_s32  = &s_s32;
-Type* g_type_s64  = &s_s64;
-Type* g_type_f32  = &s_f32;
-Type* g_type_f64  = &s_f64;
+Type* g_type_void   = &s_void;
+Type* g_type_bool   = &s_bool;
+Type* g_type_ubyte  = &s_ubyte;
+Type* g_type_ushort = &s_ushort;
+Type* g_type_uint   = &s_uint;
+Type* g_type_ulong  = &s_ulong;
+Type* g_type_byte   = &s_byte;
+Type* g_type_short  = &s_short;
+Type* g_type_int    = &s_int;
+Type* g_type_long   = &s_long;
+Type* g_type_float  = &s_float;
+Type* g_type_double = &s_double;
 
 static Type* builtin_type_lookup[] = {
-    [TOKEN_VOID - TOKEN_TYPENAME_START] = &s_void,
-    [TOKEN_BOOL - TOKEN_TYPENAME_START] = &s_bool,
-    [TOKEN_U8   - TOKEN_TYPENAME_START] = &s_u8,
-    [TOKEN_U16  - TOKEN_TYPENAME_START] = &s_u16,
-    [TOKEN_U32  - TOKEN_TYPENAME_START] = &s_u32,
-    [TOKEN_U64  - TOKEN_TYPENAME_START] = &s_u64,
-    [TOKEN_S8   - TOKEN_TYPENAME_START] = &s_s8,
-    [TOKEN_S16  - TOKEN_TYPENAME_START] = &s_s16,
-    [TOKEN_S32  - TOKEN_TYPENAME_START] = &s_s32,
-    [TOKEN_S64  - TOKEN_TYPENAME_START] = &s_s64,
-    [TOKEN_F32  - TOKEN_TYPENAME_START] = &s_f32,
-    [TOKEN_F64  - TOKEN_TYPENAME_START] = &s_f64,
+    [TOKEN_VOID   - TOKEN_TYPENAME_START] = &s_void,
+    [TOKEN_BOOL   - TOKEN_TYPENAME_START] = &s_bool,
+    [TOKEN_UBYTE  - TOKEN_TYPENAME_START] = &s_ubyte,
+    [TOKEN_USHORT - TOKEN_TYPENAME_START] = &s_ushort,
+    [TOKEN_UINT   - TOKEN_TYPENAME_START] = &s_uint,
+    [TOKEN_ULONG  - TOKEN_TYPENAME_START] = &s_ulong,
+    [TOKEN_BYTE   - TOKEN_TYPENAME_START] = &s_byte,
+    [TOKEN_SHORT  - TOKEN_TYPENAME_START] = &s_short,
+    [TOKEN_INT    - TOKEN_TYPENAME_START] = &s_int,
+    [TOKEN_LONG   - TOKEN_TYPENAME_START] = &s_long,
+    [TOKEN_FLOAT  - TOKEN_TYPENAME_START] = &s_float,
+    [TOKEN_DOUBLE - TOKEN_TYPENAME_START] = &s_double,
 };
 
 Type* type_from_token(TokenKind type_token)
@@ -85,16 +85,16 @@ bool type_equal(Type* t1, Type* t2)
     {
     case TYPE_VOID:
     case TYPE_BOOL:
-    case TYPE_U8:
-    case TYPE_U16:
-    case TYPE_U32:
-    case TYPE_U64:
-    case TYPE_S8:
-    case TYPE_S16:
-    case TYPE_S32:
-    case TYPE_S64:
-    case TYPE_F32:
-    case TYPE_F64:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
         return t1->kind == t2->kind;
     case TYPE_POINTER:
     case TYPE_DS_ARRAY:
@@ -126,8 +126,12 @@ uint32_t type_alignment(Type* ty)
     SIC_ASSERT(ty != NULL);
     if(type_is_builtin(ty))
         return ty->builtin.size;
-    if(type_is_pointer(ty) || ty->kind == TYPE_SS_ARRAY)
+    if(ty->kind == TYPE_POINTER)
         return 8;
+    if(ty->kind == TYPE_SS_ARRAY)
+        return type_alignment(ty->ss_array.elem_type);
+    if(ty->kind == TYPE_DS_ARRAY)
+        return type_alignment(ty->ds_array.elem_type);
 
     SIC_UNREACHABLE();
 }
@@ -136,18 +140,18 @@ const char* type_to_string(Type* type)
 {
     SIC_ASSERT(type != NULL);
     static const char* type_names[] = {
-        [TYPE_VOID]    = "void",
-        [TYPE_BOOL]    = "bool",
-        [TYPE_U8]      = "u8",
-        [TYPE_U16]     = "u16",
-        [TYPE_U32]     = "u32",
-        [TYPE_U64]     = "u64",
-        [TYPE_S8]      = "s8",
-        [TYPE_S16]     = "s16",
-        [TYPE_S32]     = "s32",
-        [TYPE_S64]     = "s64",
-        [TYPE_F32]     = "f32",
-        [TYPE_F64]     = "f64",
+        [TYPE_VOID]   = "void",
+        [TYPE_BOOL]   = "bool",
+        [TYPE_UBYTE]  = "ubyte",
+        [TYPE_USHORT] = "ushort",
+        [TYPE_UINT]   = "uint",
+        [TYPE_ULONG]  = "ulong",
+        [TYPE_BYTE]   = "byte",
+        [TYPE_SHORT]  = "short",
+        [TYPE_INT]    = "int",
+        [TYPE_LONG]   = "long",
+        [TYPE_FLOAT]  = "float",
+        [TYPE_DOUBLE] = "double",
     };
 
     if(type_is_builtin(type))

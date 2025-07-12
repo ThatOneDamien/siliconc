@@ -28,6 +28,7 @@ typedef struct ASTDeclDA        ASTDeclDA;
 // AST Structs
 typedef struct ASTBlock         ASTBlock;
 typedef struct ASTDeclaration   ASTDeclaration;
+typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
@@ -169,6 +170,12 @@ struct ASTDeclaration
     ASTExpr* init_expr;
 };
 
+struct ASTExprAAccess
+{
+    ASTExpr* array_expr;
+    ASTExpr* index_expr;
+};
+
 struct ASTExprBinary
 {
     ASTExpr*     lhs;
@@ -214,6 +221,7 @@ struct ASTExpr
 
     union
     {
+        ASTExprAAccess  array_access;
         ASTExprBinary   binary;
         ASTExprCall     call;
         ASTExprCast     cast;

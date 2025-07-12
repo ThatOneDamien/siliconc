@@ -1,6 +1,7 @@
 #include "semantics.h"
 
 // Expr kind functions
+static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
@@ -28,6 +29,14 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
 {
     switch(expr->kind)
     {
+    case EXPR_ARRAY_ACCESS: {
+        ASTExprAAccess* aa = &expr->expr.array_access;
+        analyze_expr(c, aa->array_expr);
+        analyze_expr(c, aa->index_expr);
+        if(!analyze_array_access(c, expr))
+            expr->kind = EXPR_INVALID;
+        return;
+    }
     case EXPR_BINARY: {
         ASTExprBinary* bin = &expr->expr.binary;
         analyze_expr(c, bin->lhs);
@@ -79,6 +88,13 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
     default:
         SIC_UNREACHABLE();
     }
+}
+
+static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
+{
+    (void)c;
+    expr->type = type_get_base(expr->expr.array_access.array_expr->type);
+    return true;
 }
 
 static bool analyze_binary(SemaContext* c, ASTExpr* expr)
@@ -363,6 +379,8 @@ static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, 
 {
     switch(left->kind)
     {
+    case EXPR_ARRAY_ACCESS:
+        break;
     case EXPR_IDENT:
         if(left->expr.ident->kind != OBJ_VAR)
         {
@@ -470,20 +488,20 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child)
         expr->expr.constant.kind = CONSTANT_INTEGER;
         switch(child->type->kind)
         {
-        case TYPE_U8:
-            expr->type = child->expr.constant.val.i > 0x7F ? g_type_s16 : g_type_s8;
+        case TYPE_UBYTE:
+            expr->type = child->expr.constant.val.i > 0x7F ? g_type_short : g_type_byte;
             return true;
-        case TYPE_U16:
-            expr->type = child->expr.constant.val.i > 0x7FFF ? g_type_s32 : g_type_s16;
+        case TYPE_USHORT:
+            expr->type = child->expr.constant.val.i > 0x7FFF ? g_type_int : g_type_short;
             return true;
-        case TYPE_U32:
-            expr->type = child->expr.constant.val.i > 0x7FFFFFFF ? g_type_s64 : g_type_s32;
+        case TYPE_UINT:
+            expr->type = child->expr.constant.val.i > 0x7FFFFFFF ? g_type_long : g_type_int;
             return true;
-        case TYPE_U64:
-        case TYPE_S8:
-        case TYPE_S16:
-        case TYPE_S32:
-        case TYPE_S64:
+        case TYPE_ULONG:
+        case TYPE_BYTE:
+        case TYPE_SHORT:
+        case TYPE_INT:
+        case TYPE_LONG:
             return true;
         default:
             SIC_UNREACHABLE();
@@ -502,14 +520,14 @@ static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2)
     TypeKind kind2 = t2->kind;
     // TODO: Optimize this section, it should be really easy by changing the order of
     //       the TypeKind enum, but for now I just want it working.
-    if(kind1 == TYPE_F64 && kind2 != TYPE_F64)
+    if(kind1 == TYPE_DOUBLE && kind2 != TYPE_DOUBLE)
         return implicit_cast(c, e2, t1);
-    if(kind2 == TYPE_F64 && kind1 != TYPE_F64)
+    if(kind2 == TYPE_DOUBLE && kind1 != TYPE_DOUBLE)
         return implicit_cast(c, e1, t2);
 
-    if(kind1 == TYPE_F32 && kind2 != TYPE_F32)
+    if(kind1 == TYPE_FLOAT && kind2 != TYPE_FLOAT)
         return implicit_cast(c, e2, t1);
-    if(kind2 == TYPE_F32 && kind1 != TYPE_F32)
+    if(kind2 == TYPE_FLOAT && kind1 != TYPE_FLOAT)
         return implicit_cast(c, e1, t2);
 
     if(!type_is_integer(t1))
@@ -581,6 +599,6 @@ static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2)
 static void promote_int_type(SemaContext* c, ASTExpr* expr)
 {
     SIC_ASSERT(type_is_integer(expr->type));
-    if(type_size(expr->type) < 4 && !implicit_cast(c, expr, g_type_s32))
+    if(type_size(expr->type) < 4 && !implicit_cast(c, expr, g_type_int))
         SIC_UNREACHABLE();
 }
