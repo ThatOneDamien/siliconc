@@ -19,7 +19,7 @@ static inline const char* debug_type_to_str(Type* type)
     if(type == NULL)
         return "Unknown";
     if(type->kind == TYPE_PRE_SEMA_ARRAY)
-        return str_format("Pre-Sema-Array %s[]", type_to_string(type->pre_sema_array.elem_type));
+        return str_format("Pre-Sema-Array %s[]", type_to_string(type->array.elem_type));
     return type_to_string(type);
 }
 
@@ -93,6 +93,8 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
     printf("( %s )\n", s_stmt_type_strs[stmt->kind]);
     switch(stmt->kind)
     {
+    case STMT_AMBIGUOUS:
+        break;
     case STMT_BLOCK: {
         ASTStmt* cur = stmt->stmt.block.body;
         while(cur != NULL)
@@ -148,7 +150,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         break;
     }
     default:
-        break;
+        SIC_TODO_MSG("Update Debug Statement");
     }
 
 }
@@ -211,7 +213,7 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
         printf("Nop ]\n");
         return;
     case EXPR_PRE_SEMANTIC_IDENT: {
-        printf("Pre-Sema Identifier \'%.*s\' ]\n", loc->len, loc->start);
+        printf("Pre-Sema Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
         return;
     }
     case EXPR_UNARY:
@@ -220,8 +222,7 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
         print_expr(expr->expr.unary.child, depth + 1, true);
         return;
     default:
-        printf("%.*s ]\n", loc->len, loc->start);
-        return;
+        SIC_TODO_MSG("Update Debug Expression");
     }
 }
 
@@ -255,6 +256,7 @@ static void print_constant(const ASTExpr* expr)
 
 static const char* s_stmt_type_strs[] = {
     [STMT_INVALID]     = "Invalid",
+    [STMT_AMBIGUOUS]   = "Ambiguous Statement",
     [STMT_BLOCK]       = "Block",
     [STMT_IF]          = "If Statement",
     [STMT_SINGLE_DECL] = "Single Declaration",

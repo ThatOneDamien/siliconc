@@ -12,12 +12,12 @@ typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
 
 // Type Structs
-typedef struct TypePreSemaArray TypeDSArray;
+typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
 typedef struct FuncSignature*   TypeFuncPtr;
 typedef struct Type*            TypePointer;
-typedef struct TypePreSemaArray TypePreSemaArray; 
-typedef struct TypeSSArray      TypeSSArray;
+typedef struct SourceLoc        TypeUnresolved;
+typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
 
 // Dynamic Array Structs
@@ -26,6 +26,7 @@ typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTDeclDA        ASTDeclDA;
 
 // AST Structs
+typedef struct Type*            ASTAmbiguous;
 typedef struct ASTBlock         ASTBlock;
 typedef struct ASTDeclaration   ASTDeclaration;
 typedef struct ASTExprAAccess   ASTExprAAccess;
@@ -104,37 +105,36 @@ struct Lexer
     LookAhead        la_buf;
 };
 
+struct TypeArray
+{
+    Type* elem_type;
+    union
+    {
+        ASTExpr* size_expr;
+        uint64_t ss_size;
+    };
+};
+
 struct TypeBuiltin
 {
     uint32_t size;
-};
-
-struct TypePreSemaArray
-{
-    Type*    elem_type;
-    ASTExpr* size_expr;
-};
-
-struct TypeSSArray
-{
-    Type*    elem_type;
-    uint64_t elem_cnt;
 };
 
 struct Type
 {
     TypeKind      kind;
     TypeQualifier qualifiers;
+    ResolveStatus status;
     void*         llvm_ref;
 
     union
     {
-        TypeBuiltin      builtin;
-        TypeDSArray      ds_array;
-        TypeFuncPtr      func_ptr;
-        TypePointer      pointer_base;
-        TypePreSemaArray pre_sema_array;
-        TypeSSArray      ss_array;
+        TypeArray      array;
+        TypeBuiltin    builtin;
+        TypeFuncPtr    func_ptr;
+        TypePointer    pointer_base;
+        TypeUnresolved unresolved;
+        TypeUserdef    user_def;
     };
 };
 
@@ -251,12 +251,13 @@ struct ASTWhile
 
 struct ASTStmt
 {
-    StmtKind kind;
-    ASTStmt* next;
-    Token    token;
+    StmtKind  kind;
+    ASTStmt*  next;
+    SourceLoc loc;
 
     union
     {
+        ASTAmbiguous    ambiguous;
         ASTBlock        block;
         ASTDeclaration  single_decl;
         ASTDeclDA       multi_decl;
@@ -307,6 +308,7 @@ struct Scope
 {
     Scope*  parent;
     HashMap vars;
+    HashMap types;
 };
 
 struct CompilationUnit

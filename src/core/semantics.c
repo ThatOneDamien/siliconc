@@ -19,6 +19,7 @@ void semantic_analysis(CompilationUnit* unit)
     ObjectDA* funcs = &context.unit->funcs;
     ObjectDA* vars  = &context.unit->vars;
     hashmap_initn(&context.unit_scope.vars, funcs->size + vars->size);
+    hashmap_init(&context.unit_scope.types);
     for(size_t i = 0; i < funcs->size; ++i)
     {
         // For now, I only allow one declaration/definition of a function
@@ -65,8 +66,31 @@ static void analyze_function(SemaContext* c, Object* function)
 
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
 {
+RETRY:
     switch(stmt->kind)
     {
+    case STMT_AMBIGUOUS: {
+        Type* possible_type = stmt->stmt.ambiguous;
+        Object* obj = find_obj(c, &possible_type->unresolved);
+        if(obj == NULL)
+        {
+            sema_error(c, &possible_type->unresolved, 
+                       "Reference to undefined symbol \'%.*s\'",
+                       possible_type->unresolved.len, possible_type->unresolved.start);
+            return;
+        }
+        Lexer l;
+        lexer_set_pos_in_unit(&l, c->unit, &possible_type->unresolved);
+        if(obj->kind == OBJ_FUNC || obj->kind == OBJ_VAR)
+        {
+            stmt->kind = STMT_EXPR_STMT;
+            stmt->stmt.expr = parse_ambiguous_expr(&l);
+            analyze_expr(c, stmt->stmt.expr);
+            return;
+        }
+        parse_ambiguous_decl(&l, stmt);
+        goto RETRY;
+    }
     case STMT_BLOCK: {
         push_scope(c);
         ASTStmt* sub_stmt = stmt->stmt.block.body;
@@ -107,7 +131,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
         }
         else if(ret_type->kind != TYPE_VOID)
         {
-            sema_error(c, &stmt->token.loc,
+            sema_error(c, &stmt->loc,
                        "Function returning non-void should have expression in return statement.");
         }
         return;
@@ -172,7 +196,11 @@ Object* find_obj(SemaContext* c, SourceLoc* symbol)
         Object* o = hashmap_getn(&sc->vars, symbol->start, symbol->len);
         if(o != NULL)
             return o;
+        o = hashmap_getn(&sc->types, symbol->start, symbol->len);
+        if(o != NULL)
+            return o;
     }
+    
     return NULL;
 }
 
@@ -181,6 +209,7 @@ static void push_scope(SemaContext* c)
     Scope* new_scope = CALLOC_STRUCT(Scope);
     new_scope->parent = c->cur_scope;
     hashmap_init(&new_scope->vars);
+    hashmap_init(&new_scope->types);
     c->cur_scope = new_scope;
 }
 

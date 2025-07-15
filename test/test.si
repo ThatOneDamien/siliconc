@@ -8,10 +8,16 @@ priv void printf(ubyte* fmt, ...);
 
 pub uint main(uint argc)
 {
-    ubyte[3] str;
-    str[0] = 'b';
-    str[1] = '\n';
-    str[2] = '\0';
-    printf(str as ubyte*);
+    ubyte[argc] arg_strs;
+    ulong i = 0;
+    user_t a;
+    while(i < argc - 1)
+    {
+        arg_strs[i] = i as ubyte + '0';
+        i += 1;
+    }
+    arg_strs[argc - 1] = '\0';
+    printf("%s\n", arg_strs as ubyte*); 
+
     return 0;
 }

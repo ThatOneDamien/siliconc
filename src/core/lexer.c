@@ -42,6 +42,20 @@ void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
         lexer_advance(lexer);
 }
 
+void lexer_set_pos_in_unit(Lexer* lexer, CompilationUnit* unit, SourceLoc* start)
+{
+    SIC_ASSERT(lexer != NULL);
+    SIC_ASSERT(start != NULL);
+    lexer->unit       = unit;
+    lexer->src_start  = start->start;
+    lexer->cur_pos    = start->start;
+    lexer->cur_line   = start->line_num;
+    lexer->line_start = start->line_start;
+    memset(&lexer->la_buf, 0, sizeof(LookAhead));
+    for(size_t i = 0; i < LOOK_AHEAD_SIZE; ++i)
+        lexer_advance(lexer);
+}
+
 bool lexer_advance(Lexer* lexer)
 {
     SIC_ASSERT(lexer != NULL);

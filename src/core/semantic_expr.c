@@ -93,7 +93,7 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
     (void)c;
-    expr->type = type_get_base(expr->expr.array_access.array_expr->type);
+    expr->type = type_pointer_base(expr->expr.array_access.array_expr->type);
     return true;
 }
 
@@ -251,7 +251,7 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
         // array. This check is not done for ds-arrays or when the index expression 
         // is calculated at runtime. 
         if(left->type->kind == TYPE_SS_ARRAY && right->kind == EXPR_CONSTANT && 
-           right->expr.constant.val.i >= left->type->ss_array.elem_cnt)
+           right->expr.constant.val.i >= left->type->array.ss_size)
         {
             // TODO: Make this a warning?
             sema_error(c, &expr->loc, "Array index will overflow the size of the array.");
@@ -375,7 +375,7 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
 
 }
 
-static bool analyze_assign(UNUSED SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
     switch(left->kind)
     {
@@ -453,10 +453,8 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child)
         expr->type = child->type->pointer_base;
         return true;
     case TYPE_SS_ARRAY:
-        expr->type = child->type->ss_array.elem_type;
-        return true;
     case TYPE_DS_ARRAY:
-        expr->type = child->type->ds_array.elem_type;
+        expr->type = child->type->array.elem_type;
         return true;
     default:
         sema_error(c, &expr->loc, "Cannot dereference non-pointer type %s.",

@@ -6,6 +6,7 @@
 #include <llvm-c/TargetMachine.h>
 
 typedef struct CodegenContext CodegenContext;
+typedef struct GenValue       GenValue;
 struct CodegenContext
 {
     const Module*          module;
@@ -23,6 +24,20 @@ struct CodegenContext
     LLVMBasicBlockRef      cur_bb;
 
     LLVMTypeRef            ptr_type;
+};
+
+typedef enum
+{
+    GEN_VAL_RVALUE = 0,
+    GEN_VAL_ADDRESS,
+} GenValueKind;
+
+struct GenValue
+{
+    LLVMValueRef value;
+    Type*        type;
+    GenValueKind kind;
+
 };
 
 static void gen_module(CodegenContext* c, Module* module);
@@ -48,6 +63,7 @@ static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef
 static LLVMBasicBlockRef emit_basic_block(CodegenContext* c, const char* label);
 
 static LLVMTypeRef   get_llvm_type(CodegenContext* c, Type* type);
+static LLVMValueRef  load_rvalue(CodegenContext* c, LLVMValueRef pointer, Type* type);
 static LLVMTargetRef get_llvm_target(const char* triple);
 static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *context);
 
@@ -390,9 +406,23 @@ static LLVMValueRef emit_array_access(CodegenContext* c, ASTExpr* expr, bool is_
 {
     ASTExprAAccess* aa = &expr->expr.array_access;
     LLVMValueRef array = emit_expr(c, aa->array_expr, false);
-    LLVMValueRef index[2] = { LLVMConstInt(LLVMInt64Type(), 0, false), emit_expr(c, aa->index_expr, false) };
-    LLVMValueRef elem_ptr = LLVMBuildGEP2(c->builder, get_llvm_type(c, aa->array_expr->type), array, index, 2, "");
-    return is_lval ? elem_ptr : LLVMBuildLoad2(c->builder, get_llvm_type(c, expr->type), elem_ptr, "");
+    LLVMValueRef index[2] = { NULL, emit_expr(c, aa->index_expr, false) };
+    LLVMValueRef elem_ptr;
+    Type* arr_type = aa->array_expr->type;
+    // TODO: Fix this with proper struct that holds SSA values and their
+    //       corresponding type. As of right now this is just a hack to get this to
+    //       work.
+    if(arr_type->kind == TYPE_SS_ARRAY)
+    {
+        index[0] = LLVMConstInt(LLVMInt64Type(), 0, false);
+        elem_ptr = LLVMBuildGEP2(c->builder, get_llvm_type(c, arr_type), array, index, 2, "");
+    }
+    else
+    {
+        elem_ptr = LLVMBuildGEP2(c->builder, get_llvm_type(c, type_pointer_base(arr_type)), array, index + 1, 1, "");
+    }
+
+    return is_lval ? elem_ptr : load_rvalue(c, elem_ptr, expr->type);
 }
 
 static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr)
@@ -574,9 +604,10 @@ static LLVMValueRef emit_ident(CodegenContext* c, ASTExpr* expr, bool is_lval)
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER:
-        return is_lval ? obj->llvm_ref : LLVMBuildLoad2(c->builder, get_llvm_type(c, obj->var.type), obj->llvm_ref, "");
+        return is_lval ? obj->llvm_ref : load_rvalue(c, obj->llvm_ref, obj->var.type);
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
+        SIC_ASSERT(!is_lval);
         return obj->llvm_ref;
     default:
         SIC_UNREACHABLE();
@@ -594,7 +625,6 @@ static LLVMValueRef emit_unary(CodegenContext* c, ASTExpr* expr, bool is_lval)
     case UNARY_ADDR_OF:
         SIC_TODO();
     case UNARY_DEREF:
-        printf("here %d\n", is_lval);
         return is_lval ? inner : LLVMBuildLoad2(c->builder, get_llvm_type(c, expr->type), inner, "");
     case UNARY_NEG:
         SIC_TODO();
@@ -609,6 +639,14 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
     SIC_ASSERT(obj->kind == OBJ_VAR);
     scratch_clear();
     scratch_appendn(obj->symbol.start, obj->symbol.len);
+    if(obj->var.type->kind == TYPE_DS_ARRAY)
+    {
+        obj->llvm_ref = LLVMBuildArrayAlloca(c->builder, 
+                                             get_llvm_type(c, obj->var.type), 
+                                             emit_expr(c, obj->var.type->array.size_expr, false), 
+                                             scratch_string());
+        return;
+    }
     obj->llvm_ref = emit_alloca(c, scratch_string(), get_llvm_type(c, obj->var.type), type_alignment(obj->var.type));
 }
 
@@ -676,10 +714,34 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_POINTER:
         return type->llvm_ref = c->ptr_type;
     case TYPE_SS_ARRAY:
-        return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->ss_array.elem_type), type->ss_array.elem_cnt);
+        return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
     case TYPE_DS_ARRAY:
-        SIC_TODO();
-        // return type->llvm_ref = LLVMArrayType2();
+        return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
+static LLVMValueRef load_rvalue(CodegenContext* c, LLVMValueRef pointer, Type* type)
+{
+    switch(type->kind)
+    {
+    case TYPE_BOOL:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
+    case TYPE_POINTER:
+        return LLVMBuildLoad2(c->builder, get_llvm_type(c, type), pointer, "");
+    case TYPE_SS_ARRAY:
+    case TYPE_DS_ARRAY:
+        return pointer;
     default:
         SIC_UNREACHABLE();
     }

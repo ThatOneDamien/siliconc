@@ -17,6 +17,6 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Short Term Implementation Plans
-- Create structs for parsing stage (e.g. ASTExpr, ASTIf, etc.)
-- Separate the parsing stage into a parser and semantic analyzer, currently
-  the stages are performed concurrently
+- Update how the type struct works, possible adding a cache for useful variants
+  of types like a pointer.
+- Add user-defined types like structs, enums, typedefs, unions, and possibly bitfields

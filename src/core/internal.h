@@ -42,16 +42,24 @@ static inline void sic_error_at(const char* filepath, const SourceLoc* loc, cons
 }
 
 // Lexer functions
-void   lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
-bool   lexer_advance(Lexer* lexer);
+void lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
+void lexer_set_pos_in_unit(Lexer* lexer, CompilationUnit* unit, SourceLoc* start);
+bool lexer_advance(Lexer* lexer);
 static inline bool token_is_typename(TokenKind kind)
 {
     return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;
 }
 
+static inline bool token_is_keyword(TokenKind kind)
+{
+    return kind >= TOKEN_KEYWORD_START && kind <= TOKEN_KEYWORD_END;
+}
+
 // Parser functions
-void parser_init(void);
-void parse_unit(CompilationUnit* unit);
+void     parser_init(void);
+void     parse_unit(CompilationUnit* unit);
+void     parse_ambiguous_decl(Lexer* l, ASTStmt* ambiguous);
+ASTExpr* parse_ambiguous_expr(Lexer* l); 
 
 // Semantic analysis functions
 void semantic_analysis(CompilationUnit* unit);
@@ -63,7 +71,7 @@ TokenKind sym_map_getn(const char* str, size_t len);
 
 // Type functions
 Type*       type_from_token(TokenKind type_token);
-Type*       type_copy(Type* orig);
+Type*       type_copy(const Type* orig);
 Type*       type_pointer_to(Type* base);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
 bool        type_equal(Type* t1, Type* t2);
@@ -102,14 +110,19 @@ static inline bool type_is_numeric(Type* ty)
 
 static inline bool type_is_pointer(Type* ty)
 {
-    return ty->kind == TYPE_POINTER || ty->kind == TYPE_DS_ARRAY;
+    return ty->kind == TYPE_POINTER;
 }
 
-static inline Type* type_get_base(Type* ptr_ty)
+static inline bool type_is_array(Type* ty)
 {
-    if(ptr_ty->kind == TYPE_SS_ARRAY)
-        return ptr_ty->ss_array.elem_type;
+    return ty->kind == TYPE_SS_ARRAY || ty->kind == TYPE_DS_ARRAY;
+}
+
+static inline Type* type_pointer_base(Type* ptr_ty)
+{
+    if(type_is_array(ptr_ty))
+        return ptr_ty->array.elem_type;
     if(!type_is_pointer(ptr_ty))
         SIC_UNREACHABLE();
-    return ptr_ty->kind == TYPE_POINTER ? ptr_ty->pointer_base : ptr_ty->ds_array.elem_type;
+    return ptr_ty->pointer_base;
 }

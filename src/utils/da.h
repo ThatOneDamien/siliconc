@@ -89,15 +89,6 @@
         (da)->size = (new_size);        \
     } while(0)
 
-
-typedef struct StringBuilder StringBuilder;
-struct StringBuilder
-{
-    char*  data;
-    size_t size;
-    size_t capacity;
-};
-
 typedef struct StringArray StringArray;
 struct StringArray
 {

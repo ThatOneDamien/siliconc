@@ -65,8 +65,10 @@ typedef enum
     // Keywords
     TOKEN_AS,
     TOKEN_KEYWORD_START = TOKEN_AS,
+    TOKEN_BITFIELD,
     TOKEN_CONST,
     TOKEN_ELSE,
+    TOKEN_ENUM,
     TOKEN_EXTERN,
     TOKEN_FALSE,
     TOKEN_IF,
@@ -75,7 +77,10 @@ typedef enum
     TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
+    TOKEN_STRUCT,
     TOKEN_TRUE,
+    TOKEN_TYPEDEF,
+    TOKEN_UNION,
     TOKEN_WHILE,
 
     // Built-in/Primitive type names (Still part of keywords)
@@ -203,6 +208,7 @@ typedef enum
 {
     STMT_INVALID = 0,
 
+    STMT_AMBIGUOUS,
     STMT_BLOCK,
     STMT_IF,
     STMT_SINGLE_DECL,
@@ -215,9 +221,14 @@ typedef enum
 typedef enum
 {
     OBJ_INVALID = 0,
-    OBJ_VAR,
+    OBJ_BITFIELD,
+    OBJ_ENUM,
+    OBJ_ENUM_VALUE,
     OBJ_FUNC,
-    OBJ_TYPEDEF
+    OBJ_STRUCT,
+    OBJ_TYPEDEF,
+    OBJ_UNION,
+    OBJ_VAR,
 } ObjKind;
 
 typedef enum
@@ -254,10 +265,19 @@ typedef enum
     TYPE_SS_ARRAY, // Statically sized array (i.e. an array whose size is known at compile-time)
     TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
     TYPE_PRE_SEMA_ARRAY,
+
+    TYPE_USER_DEF,
     __TYPE_COUNT,
     // TODO: Add structs, unions, arrays, pointers, etc
 
 } TypeKind;
+
+typedef enum
+{
+    STATUS_UNRESOLVED,
+    STATUS_RESOLVING,
+    STATUS_RESOLVED
+} ResolveStatus;
 
 typedef enum
 {

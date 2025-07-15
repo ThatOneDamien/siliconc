@@ -1,7 +1,13 @@
 #include "internal.h"
 #include "utils/error.h"
 
-#define BUILTIN_DEF(TYPE, SIZE) { .kind = TYPE, .qualifiers = QUALIFIER_NONE, .builtin = {SIZE} }
+#define BUILTIN_DEF(TYPE, SIZE)     \
+{                                   \
+    .kind = TYPE,                   \
+    .status = STATUS_RESOLVED,      \
+    .qualifiers = QUALIFIER_NONE,   \
+    .builtin = { SIZE }             \
+}
 
 static Type s_void   = BUILTIN_DEF(TYPE_VOID   ,  0);
 static Type s_bool   = BUILTIN_DEF(TYPE_BOOL   ,  1);
@@ -51,7 +57,7 @@ Type* type_from_token(TokenKind type_token)
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 
-Type* type_copy(Type* orig)
+Type* type_copy(const Type* orig)
 {
     SIC_ASSERT(orig != NULL);
     Type* new_type = MALLOC_STRUCT(Type);
@@ -72,8 +78,8 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
     Type* new_type = CALLOC_STRUCT(Type);
     new_type->kind = TYPE_PRE_SEMA_ARRAY;
-    new_type->pre_sema_array.elem_type = elem_ty;
-    new_type->pre_sema_array.size_expr = size_expr;
+    new_type->array.elem_type = elem_ty;
+    new_type->array.size_expr = size_expr;
     return new_type;
 }
 
@@ -81,6 +87,8 @@ bool type_equal(Type* t1, Type* t2)
 {
     SIC_ASSERT(t1 != NULL);
     SIC_ASSERT(t2 != NULL);
+    if(t1->kind != t2->kind)
+        return false;
     switch(t1->kind)
     {
     case TYPE_VOID:
@@ -95,14 +103,12 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_LONG:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
-        return t1->kind == t2->kind;
+        return true;
     case TYPE_POINTER:
+        return type_equal(t1->pointer_base, t2->pointer_base);
     case TYPE_DS_ARRAY:
-        return type_is_pointer(t2) && type_equal(type_get_base(t1), type_get_base(t2));
     case TYPE_SS_ARRAY:
-        return t2->kind == TYPE_SS_ARRAY && 
-               t1->ss_array.elem_cnt == t2->ss_array.elem_cnt &&
-               type_equal(t1->ss_array.elem_type, t2->ss_array.elem_type);
+        return false;
     default:
         SIC_UNREACHABLE();
     }
@@ -116,7 +122,7 @@ uint32_t type_size(Type* ty)
     if(type_is_pointer(ty))
         return 8;
     if(ty->kind == TYPE_SS_ARRAY)
-        return type_size(ty->ss_array.elem_type) * ty->ss_array.elem_cnt;
+        return type_size(ty->array.elem_type) * ty->array.ss_size;
 
     SIC_UNREACHABLE();
 }
@@ -128,10 +134,8 @@ uint32_t type_alignment(Type* ty)
         return ty->builtin.size;
     if(ty->kind == TYPE_POINTER)
         return 8;
-    if(ty->kind == TYPE_SS_ARRAY)
-        return type_alignment(ty->ss_array.elem_type);
-    if(ty->kind == TYPE_DS_ARRAY)
-        return type_alignment(ty->ds_array.elem_type);
+    if(ty->kind == TYPE_SS_ARRAY || ty->kind == TYPE_DS_ARRAY)
+        return type_alignment(ty->array.elem_type);
 
     SIC_UNREACHABLE();
 }
@@ -159,9 +163,9 @@ const char* type_to_string(Type* type)
     if(type->kind == TYPE_POINTER)
         return str_format("%s*", type_to_string(type->pointer_base));
     if(type->kind == TYPE_DS_ARRAY)
-        return str_format("%s[]", type_to_string(type->pre_sema_array.elem_type));
+        return str_format("%s[]", type_to_string(type->array.elem_type));
     if(type->kind == TYPE_SS_ARRAY)
-        return str_format("%s[%lu]", type_to_string(type->ss_array.elem_type), type->ss_array.elem_cnt);
+        return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
 
     SIC_UNREACHABLE();
 }
