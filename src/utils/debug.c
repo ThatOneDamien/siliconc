@@ -104,6 +104,9 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         }
         break;
     }
+    case STMT_EXPR_STMT:
+        print_expr(stmt->stmt.expr, depth + 1, true);
+        break;
     case STMT_IF:
         PRINT_DEPTH(depth + 1);
         printf("cond: ");
@@ -115,19 +118,18 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         printf("else: ");
         print_stmt(stmt->stmt.if_.else_stmt, depth + 1, false);
         break;
-    case STMT_EXPR_STMT:
-        print_expr(stmt->stmt.expr, depth + 1, true);
+    case STMT_MULTI_DECL: {
+        const ASTDeclDA* decls = &stmt->stmt.multi_decl;
+        for(size_t i = 0; i < decls->size; ++i)
+        {
+            PRINT_DEPTH(depth + 1);
+            printf("%.*s = ", decls->data[i].obj->symbol.len, decls->data[i].obj->symbol.start);
+            print_expr(decls->data[i].init_expr, depth + 1, false);
+        }
         break;
+    }
     case STMT_RETURN:
         print_expr(stmt->stmt.return_.ret_expr, depth + 1, true);
-        break;
-    case STMT_WHILE:
-        PRINT_DEPTH(depth + 1);
-        printf("cond: ");
-        print_expr(stmt->stmt.while_.cond, depth + 1, false);
-        PRINT_DEPTH(depth + 1);
-        printf("body: ");
-        print_stmt(stmt->stmt.while_.body, depth + 1, false);
         break;
     case STMT_SINGLE_DECL: {
         const ASTDeclaration* decl = &stmt->stmt.single_decl;
@@ -139,20 +141,20 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
             printf("( Uninitialized )\n");
         break;
     }
-    case STMT_MULTI_DECL: {
-        const ASTDeclDA* decls = &stmt->stmt.multi_decl;
-        for(size_t i = 0; i < decls->size; ++i)
-        {
-            PRINT_DEPTH(depth + 1);
-            printf("%.*s = ", decls->data[i].obj->symbol.len, decls->data[i].obj->symbol.start);
-            print_expr(decls->data[i].init_expr, depth + 1, false);
-        }
+    case STMT_TYPE_DECL:
+        SIC_TODO();
+    case STMT_WHILE:
+        PRINT_DEPTH(depth + 1);
+        printf("cond: ");
+        print_expr(stmt->stmt.while_.cond, depth + 1, false);
+        PRINT_DEPTH(depth + 1);
+        printf("body: ");
+        print_stmt(stmt->stmt.while_.body, depth + 1, false);
+        break;
+    case STMT_INVALID:
         break;
     }
-    default:
-        SIC_TODO_MSG("Update Debug Statement");
-    }
-
+    SIC_UNREACHABLE();
 }
 
 static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
@@ -201,9 +203,7 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
             printf("Function \'%.*s\' ]\n", loc->len, loc->start);
             return;
         default:
-            printf("Unknown Identifier\n");
-            SIC_ERROR_DBG("Unknown identifier encountered.");
-            return;
+            SIC_UNREACHABLE();
         }
     }
     case EXPR_INVALID:
@@ -216,14 +216,15 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
         printf("Pre-Sema Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
         return;
     }
+    case EXPR_TERNARY:
+        SIC_TODO();
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));
         print_expr(expr->expr.unary.child, depth + 1, true);
         return;
-    default:
-        SIC_TODO_MSG("Update Debug Expression");
     }
+    SIC_UNREACHABLE();
 }
 
 static void print_constant(const ASTExpr* expr)

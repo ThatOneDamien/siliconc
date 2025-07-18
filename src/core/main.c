@@ -44,20 +44,23 @@ int main(int argc, char* argv[])
         {
         case FT_SI:
             compile(cur_input);
-            break;
+            continue;
         case FT_LLVM_IR:
         case FT_ASM:
             SIC_TODO();
-            break;
+            continue;
         case FT_OBJ:
             if(g_args.mode == MODE_LINK)
                 da_append(&g_compiler.linker_inputs, *cur_input);
             else
                 fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->full_path);
-            break;
-        default:
+            continue;
+        case FT_UNKNOWN:
+        case FT_SHARED:
+        case FT_STATIC:
             sic_error_fatal("Input file \'%s\' has invalid extension.", cur_input->full_path);
         }
+        SIC_UNREACHABLE();
     }
 
     if(sic_error_cnt() > 0)
@@ -146,12 +149,23 @@ static void compile(const SIFile* input)
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
 
     unit->file = *input;
+
     parse_unit(unit);
-    print_unit(unit);
-    printf("\n\n\n");
+#ifdef SI_DEBUG
+    if(g_args.emit_debug_output)
+    {
+        print_unit(unit);
+        printf("\n\n\n");
+    }
+#endif
+
     semantic_analysis(unit);
 #ifdef SI_DEBUG
-    print_unit(unit);
+    if(g_args.emit_debug_output)
+    {
+        print_unit(unit);
+        printf("\n\n\n");
+    }
 #endif
 }
 

@@ -17,6 +17,9 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Short Term Implementation Plans
+- Change the lexer to lex all at once, not sure exactly how this would work because
+  errors would either be out of order with regard to the parsing and semantic analysis
+  stages, or I would have to store them to be emitted when actaully passing over the token.
 - Update how the type struct works, possible adding a cache for useful variants
   of types like a pointer.
 - Add user-defined types like structs, enums, typedefs, unions, and possibly bitfields

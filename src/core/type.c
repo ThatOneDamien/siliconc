@@ -108,10 +108,14 @@ bool type_equal(Type* t1, Type* t2)
         return type_equal(t1->pointer_base, t2->pointer_base);
     case TYPE_DS_ARRAY:
     case TYPE_SS_ARRAY:
+    case TYPE_USER_DEF:
         return false;
-    default:
-        SIC_UNREACHABLE();
+    case TYPE_INVALID:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 uint32_t type_size(Type* ty)
@@ -130,12 +134,34 @@ uint32_t type_size(Type* ty)
 uint32_t type_alignment(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
-    if(type_is_builtin(ty))
+    SIC_ASSERT(ty->status == STATUS_RESOLVED);
+    switch(ty->kind)
+    {
+    case TYPE_BOOL:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
         return ty->builtin.size;
-    if(ty->kind == TYPE_POINTER)
+    case TYPE_POINTER:
         return 8;
-    if(ty->kind == TYPE_SS_ARRAY || ty->kind == TYPE_DS_ARRAY)
+    case TYPE_SS_ARRAY:
+    case TYPE_DS_ARRAY:
         return type_alignment(ty->array.elem_type);
+    case TYPE_USER_DEF:
+        return ty->user_def->struct_.size;
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        SIC_UNREACHABLE();
+    }
 
     SIC_UNREACHABLE();
 }

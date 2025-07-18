@@ -11,9 +11,10 @@ void gen_ir(ModulePTRDA* modules)
     {
     case IR_LLVM: {
         llvm_codegen(modules);
+        return;
+    }
+    case IR_NONE:
         break;
     }
-    default:
-        SIC_TODO();
-    }
+    SIC_UNREACHABLE();
 }

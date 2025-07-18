@@ -24,6 +24,10 @@ typedef struct Type             Type;
 typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTDeclDA        ASTDeclDA;
+typedef struct CompUnitDA       CompUnitDA;
+typedef struct SIFileDA         SIFileDA;
+typedef struct ModuleDA         ModuleDA;
+typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
 typedef struct Type*            ASTAmbiguous;
@@ -35,7 +39,9 @@ typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct Object*          ASTExprIdent;
+typedef struct ASTExprMAccess   ASTExprMAccess;
 typedef struct ASTExprUnary     ASTExprUnary;
+typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
@@ -45,17 +51,15 @@ typedef struct ASTStmt          ASTStmt;
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
 typedef struct ObjFunc          ObjFunc;
+typedef struct ObjStruct        ObjStruct;
 typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
 
 // Semantic Analysis Structs
 typedef struct Scope            Scope;
 
+// Compiler-wide important structs
 typedef struct CompilationUnit  CompilationUnit;
-typedef struct CompUnitDA       CompUnitDA;
-typedef struct SIFileDA         SIFileDA;
-typedef struct ModuleDA         ModuleDA;
-typedef struct ModulePTRDA      ModulePTRDA;
 typedef struct Module           Module;
 typedef struct Cmdline          Cmdline;
 typedef struct CompilerContext  CompilerContext;
@@ -207,10 +211,22 @@ struct ASTExprConstant
     } val;
 };
 
+struct ASTExprMAccess
+{
+    ASTExpr* parent_expr;
+    Object*  member;
+};
+
 struct ASTExprUnary
 {
     ASTExpr*    child;
     UnaryOpKind kind;
+};
+
+struct ASTExprUAccess
+{
+    ASTExpr* parent_expr;
+    ASTExpr* member_expr;
 };
 
 struct ASTExpr
@@ -227,7 +243,9 @@ struct ASTExpr
         ASTExprCast     cast;
         ASTExprConstant constant;
         ASTExprIdent    ident;
+        ASTExprMAccess  member_access;
         ASTExprUnary    unary;
+        ASTExprUAccess  unresolved_access;
     } expr;
 };
 
@@ -283,9 +301,18 @@ struct ObjFunc
     ObjectDA       local_objs;
 };
 
+struct ObjStruct
+{
+    ObjectDA      members;
+    ResolveStatus status;
+    uint32_t      size;
+    uint32_t      align;
+};
+
 struct ObjVar
 {
-    Type* type;
+    Type*    type;
+    uint32_t member_idx;
 };
 
 struct Object
@@ -298,8 +325,9 @@ struct Object
 
     union
     {
-        ObjFunc  func; // Components of function
-        ObjVar   var;  // Components of variable
+        ObjFunc   func;     // Components of function
+        ObjStruct struct_;  // Components of bitfield, struct, or union
+        ObjVar    var;      // Components of variable
     };
 
 };
@@ -315,6 +343,7 @@ struct CompilationUnit
 {
     SIFile   file;
     ObjectDA funcs;
+    ObjectDA types;
     ObjectDA vars;
 };
 
@@ -367,6 +396,9 @@ struct Cmdline
     bool            emit_ir;
     bool            emit_asm;
     bool            hash_hash_hash;
+#ifdef SI_DEBUG
+    bool            emit_debug_output;
+#endif
 };
 
 struct CompilerContext

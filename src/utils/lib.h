@@ -10,6 +10,7 @@
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 #define SCRATCH_SIZE (1 << 14)
 
 typedef struct HashEntry     HashEntry;

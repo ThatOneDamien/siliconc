@@ -5,6 +5,7 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
+static bool analyze_unresolved_access(SemaContext* c, ASTExpr* expr);
 
 // Binary functions
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
@@ -70,7 +71,7 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         expr->expr.ident = ident;
         expr->type = ident->var.type;
         expr->kind = EXPR_IDENT;
-        break;
+        return;
     }
     case EXPR_UNARY: {
         ASTExprUnary* unary = &expr->expr.unary;
@@ -79,15 +80,21 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
             expr->kind = EXPR_INVALID;
         return;
     }
+    case EXPR_UNRESOLVED_ACCESS: {
+        ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+        analyze_expr(c, uaccess);
+    }
     case EXPR_CONSTANT:
     case EXPR_INVALID:
     case EXPR_NOP:
         return;
     case EXPR_TERNARY:
         SIC_TODO();
-    default:
-        SIC_UNREACHABLE();
+    case EXPR_IDENT:
+    case EXPR_MEMBER_ACCESS:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
@@ -147,9 +154,10 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
     case BINARY_LSHR_ASSIGN:
     case BINARY_ASHR_ASSIGN:
         return analyze_op_assign(c, expr, left, right);
-    default:
-        SIC_UNREACHABLE();
+    case BINARY_INVALID:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static bool analyze_call(SemaContext* c, ASTExpr* expr)
@@ -221,9 +229,15 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
         return analyze_deref(c, expr, child);
     case UNARY_NEG:
         return analyze_negate(c, expr, child);
-    default:
-        SIC_UNREACHABLE();
+    case UNARY_INVALID:
+        break;
     }
+    SIC_UNREACHABLE();
+}
+
+static bool analyze_unresolved_access(SemaContext* c, ASTExpr* expr)
+{
+    
 }
 
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)

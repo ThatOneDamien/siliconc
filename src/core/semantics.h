@@ -26,5 +26,6 @@ bool    analyze_cast(SemaContext* c, ASTExpr* cast);
 bool    implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired);
 void    implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast);
 bool    resolve_type(SemaContext* c, Type* type);
+bool    resolve_struct_type(SemaContext* c, Object* obj);
 void    declare_obj(SemaContext* c, Object* obj);
 Object* find_obj(SemaContext* c, SourceLoc* symbol);

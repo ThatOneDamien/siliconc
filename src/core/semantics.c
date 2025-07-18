@@ -17,9 +17,19 @@ void semantic_analysis(CompilationUnit* unit)
     context.cur_scope = &context.unit_scope;
 
     ObjectDA* funcs = &context.unit->funcs;
+    ObjectDA* types = &context.unit->types;
     ObjectDA* vars  = &context.unit->vars;
     hashmap_initn(&context.unit_scope.vars, funcs->size + vars->size);
-    hashmap_init(&context.unit_scope.types);
+    hashmap_initn(&context.unit_scope.types, types->size);
+    for(size_t i = 0; i < types->size; ++i)
+    {
+        Object* type = types->data[i];
+        if(find_obj(&context, &type->symbol) != NULL)
+            sema_error(&context, &type->symbol, "Symbol redefined.");
+        hashmap_putn(&context.unit_scope.types, type->symbol.start, type->symbol.len, type);
+    }
+
+
     for(size_t i = 0; i < funcs->size; ++i)
     {
         // For now, I only allow one declaration/definition of a function
@@ -39,6 +49,9 @@ void semantic_analysis(CompilationUnit* unit)
             sema_error(&context, &var->symbol, "Symbol redefined.");
         hashmap_putn(&context.unit_scope.vars, var->symbol.start, var->symbol.len, var);
     }
+
+    for(size_t i = 0; i < types->size; ++i)
+        resolve_struct_type(&context, types->data[i]);
 
     for(size_t i = 0; i < funcs->size; ++i)
         analyze_function(&context, funcs->data[i]);
@@ -102,6 +115,9 @@ RETRY:
         pop_scope(c);
         return;
     }
+    case STMT_EXPR_STMT:
+        analyze_expr(c, stmt->stmt.expr);
+        return;
     case STMT_IF: {
         ASTIf* if_stmt = &stmt->stmt.if_;
         analyze_expr(c, if_stmt->cond);
@@ -111,11 +127,22 @@ RETRY:
             analyze_stmt(c, if_stmt->else_stmt);
         return;
     }
-    case STMT_EXPR_STMT:
-        analyze_expr(c, stmt->stmt.expr);
+    case STMT_MULTI_DECL: {
+        ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
+        if(!resolve_type(c, decl_list->data[0].obj->var.type))
+            return;
+        for(size_t i = 0; i < decl_list->size; ++i)
+        {
+            ASTDeclaration* decl = decl_list->data + i;
+            declare_obj(c, decl->obj);
+            if(decl->init_expr != NULL)
+            {
+                analyze_expr(c, decl->init_expr);
+                implicit_cast(c, decl->init_expr, decl->obj->var.type);
+            }
+        }
         return;
-    case STMT_INVALID:
-        return;
+    }
     case STMT_RETURN: {
         Type* ret_type = c->cur_func->func.signature->ret_type;
         if(stmt->stmt.return_.ret_expr != NULL)
@@ -136,13 +163,6 @@ RETRY:
         }
         return;
     }
-    case STMT_WHILE: {
-        ASTWhile* while_stmt = &stmt->stmt.while_;
-        analyze_expr(c, while_stmt->cond);
-        implicit_cast(c, while_stmt->cond, g_type_bool);
-        analyze_stmt(c, while_stmt->body);
-        return;
-    }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         if(!resolve_type(c, decl->obj->var.type))
@@ -155,25 +175,19 @@ RETRY:
         }
         return;
     }
-    case STMT_MULTI_DECL: {
-        ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        if(!resolve_type(c, decl_list->data[0].obj->var.type))
-            return;
-        for(size_t i = 0; i < decl_list->size; ++i)
-        {
-            ASTDeclaration* decl = decl_list->data + i;
-            declare_obj(c, decl->obj);
-            if(decl->init_expr != NULL)
-            {
-                analyze_expr(c, decl->init_expr);
-                implicit_cast(c, decl->init_expr, decl->obj->var.type);
-            }
-        }
+    case STMT_TYPE_DECL:
+        SIC_TODO();
+    case STMT_WHILE: {
+        ASTWhile* while_stmt = &stmt->stmt.while_;
+        analyze_expr(c, while_stmt->cond);
+        implicit_cast(c, while_stmt->cond, g_type_bool);
+        analyze_stmt(c, while_stmt->body);
         return;
     }
-    default:
-        SIC_UNREACHABLE();
+    case STMT_INVALID:
+        return;
     }
+    SIC_UNREACHABLE();
 }
 
 void declare_obj(SemaContext* c, Object* obj)

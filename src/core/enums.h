@@ -151,10 +151,12 @@ typedef enum
     EXPR_CONSTANT,
     EXPR_FUNC_CALL,
     EXPR_IDENT,
+    EXPR_MEMBER_ACCESS,
     EXPR_NOP,
     EXPR_PRE_SEMANTIC_IDENT,
     EXPR_TERNARY,
     EXPR_UNARY,
+    EXPR_UNRESOLVED_ACCESS,
 } ExprKind;
 
 typedef enum
@@ -215,6 +217,7 @@ typedef enum
     STMT_MULTI_DECL,
     STMT_EXPR_STMT,
     STMT_RETURN,
+    STMT_TYPE_DECL,
     STMT_WHILE,
 } StmtKind;
 

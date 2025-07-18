@@ -5,6 +5,8 @@ static bool resolve_user(SemaContext* c, Type* user_ty);
 
 bool resolve_type(SemaContext* c, Type* type)
 {
+    SIC_ASSERT(c != NULL);
+    SIC_ASSERT(type != NULL);
     if(type->status == STATUS_RESOLVED)
         return true;
     if(type->status == STATUS_RESOLVING)
@@ -12,7 +14,8 @@ bool resolve_type(SemaContext* c, Type* type)
     switch(type->kind)
     {
     case TYPE_POINTER:
-        return resolve_type(c, type->pointer_base);
+        type->status = STATUS_RESOLVED;
+        return true;
     case TYPE_PRE_SEMA_ARRAY:
         return resolve_array(c, type);
     case TYPE_USER_DEF:
@@ -20,6 +23,58 @@ bool resolve_type(SemaContext* c, Type* type)
     default:
         SIC_UNREACHABLE();
     }
+}
+
+bool resolve_struct_type(SemaContext* c, Object* obj)
+{
+    SIC_ASSERT(c != NULL);
+    SIC_ASSERT(obj != NULL);
+
+    ObjStruct* struct_ = &obj->struct_;
+    if(struct_->status == STATUS_RESOLVED)
+        return true;
+    if(struct_->status == STATUS_RESOLVING)
+    {
+        // TODO: This error message can be improved greatly
+        sema_error(c, &obj->symbol, "Recursive structure definition.");
+        return false;
+    }
+
+    switch(obj->kind)
+    {
+    case OBJ_BITFIELD:
+    case OBJ_ENUM:
+        SIC_TODO();
+    case OBJ_STRUCT: {
+        struct_->status = STATUS_RESOLVING;
+        bool success = true;
+        for(size_t i = 0; i < struct_->members.size; ++i)
+        {
+            Type* next_ty = struct_->members.data[i]->var.type;
+            if(!resolve_type(c, next_ty))
+            {
+                success = false;
+                continue;
+            }
+            uint32_t align = type_alignment(next_ty);
+            SIC_ASSERT(is_pow_of_2(align));
+            struct_->size = ALIGN_UP(struct_->size, align) + type_size(next_ty);
+            struct_->align = MAX(struct_->align, align);
+
+        }
+        struct_->status = STATUS_RESOLVED;
+        return success;
+    }
+    case OBJ_TYPEDEF:
+    case OBJ_UNION:
+        SIC_TODO();
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_INVALID:
+    case OBJ_VAR:
+        SIC_UNREACHABLE();
+    }
+    SIC_UNREACHABLE();
 }
 
 static bool resolve_array(SemaContext* c, Type* arr_ty)
@@ -58,7 +113,6 @@ static bool resolve_user(SemaContext* c, Type* user_ty)
         sema_error(c, &user_ty->unresolved, "Unknown typename.");
         return false;
     }
-
     switch(type_obj->kind)
     {
     case OBJ_BITFIELD:
@@ -68,14 +122,14 @@ static bool resolve_user(SemaContext* c, Type* user_ty)
     case OBJ_UNION:
         user_ty->user_def = type_obj;
         user_ty->status = STATUS_RESOLVED;
-        return true;
+        return resolve_struct_type(c, type_obj);
     case OBJ_FUNC:
     case OBJ_VAR:
     case OBJ_ENUM_VALUE:
-        // TODO: Fix this one too!
         sema_error(c, &user_ty->unresolved, "Symbol does not refer to a type.");
         return false;
-    default:
-        SIC_UNREACHABLE();
+    case OBJ_INVALID:
+        break;
     }
+    SIC_UNREACHABLE();
 }

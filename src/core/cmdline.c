@@ -50,6 +50,10 @@ void process_cmdln_args(int argc, char* argv[])
             print_help();
         else if(strcmp(arg, "###") == 0)
             g_args.hash_hash_hash = true;
+#ifdef SI_DEBUG
+        else if(strcmp(arg, "v") == 0)
+            g_args.emit_debug_output = true;
+#endif
         else
             sic_error_weak("Unknown argument \'-%s\', ignoring.", arg);
     }

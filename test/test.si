@@ -6,11 +6,18 @@
 
 priv void printf(ubyte* fmt, ...);
 
+priv struct String
+{
+    ubyte* data;
+    int    size;
+}
+
 pub uint main(uint argc)
 {
     ubyte[argc] arg_strs;
     ulong i = 0;
-    user_t a;
+    String a;
+    a.data = "okay";
     while(i < argc - 1)
     {
         arg_strs[i] = i as ubyte + '0';

@@ -266,16 +266,12 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         }
         return;
     }
+    case STMT_EXPR_STMT:
+        emit_expr(c, stmt->stmt.expr, false);
+        return;
     case STMT_IF: 
         emit_if(c, stmt);
         break;
-    case STMT_SINGLE_DECL: {
-        ASTDeclaration* decl = &stmt->stmt.single_decl;
-        emit_var_alloca(c, decl->obj);
-        if(decl->init_expr != NULL)
-            LLVMBuildStore(c->builder, emit_expr(c, decl->init_expr, false), decl->obj->llvm_ref);
-        return;
-    }
     case STMT_MULTI_DECL:
         for(size_t i = 0; i < stmt->stmt.multi_decl.size; ++i)
         {
@@ -285,9 +281,6 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
                 LLVMBuildStore(c->builder, emit_expr(c, decl->init_expr, false), decl->obj->llvm_ref);
         }
         return;
-    case STMT_EXPR_STMT:
-        emit_expr(c, stmt->stmt.expr, false);
-        return;
     case STMT_RETURN:
         if(c->cur_func->func.signature->ret_type->kind == TYPE_VOID)
             LLVMBuildRetVoid(c->builder);
@@ -295,12 +288,22 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
             LLVMBuildRet(c->builder, emit_expr(c, stmt->stmt.return_.ret_expr, false));
         c->cur_bb = NULL;
         return;
+    case STMT_SINGLE_DECL: {
+        ASTDeclaration* decl = &stmt->stmt.single_decl;
+        emit_var_alloca(c, decl->obj);
+        if(decl->init_expr != NULL)
+            LLVMBuildStore(c->builder, emit_expr(c, decl->init_expr, false), decl->obj->llvm_ref);
+        return;
+    }
     case STMT_WHILE:
         emit_while(c, stmt);
         return;
-    default:
-        SIC_UNREACHABLE();
+    case STMT_AMBIGUOUS:
+    case STMT_INVALID:
+    case STMT_TYPE_DECL:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static void emit_if(CodegenContext* c, ASTStmt* stmt)
@@ -397,9 +400,11 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
         SIC_TODO();
     case EXPR_UNARY:
         return emit_unary(c, expr, is_lval);
-    default:
-        SIC_UNREACHABLE();
+    case EXPR_INVALID:
+    case EXPR_PRE_SEMANTIC_IDENT:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef emit_array_access(CodegenContext* c, ASTExpr* expr, bool is_lval)
@@ -493,9 +498,21 @@ static LLVMValueRef emit_binary(CodegenContext* c, ASTExpr* expr)
         return LLVMBuildAnd(c->builder, lhs, rhs, "");
     case BINARY_ASSIGN:
         return LLVMBuildStore(c->builder, rhs, lhs);
-    default:
-        SIC_UNREACHABLE();
+    case BINARY_INVALID:
+    case BINARY_ADD_ASSIGN:
+    case BINARY_SUB_ASSIGN:
+    case BINARY_MUL_ASSIGN:
+    case BINARY_DIV_ASSIGN:
+    case BINARY_MOD_ASSIGN:
+    case BINARY_BIT_OR_ASSIGN:
+    case BINARY_BIT_XOR_ASSIGN:
+    case BINARY_BIT_AND_ASSIGN:
+    case BINARY_SHL_ASSIGN:
+    case BINARY_LSHR_ASSIGN:
+    case BINARY_ASHR_ASSIGN:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef emit_cast(CodegenContext* c, ASTExpr* expr)
@@ -536,9 +553,10 @@ static LLVMValueRef emit_cast(CodegenContext* c, ASTExpr* expr)
     }
     case CAST_REINTERPRET:
         return inner;
-    default:
-        SIC_UNREACHABLE();
+    case CAST_INVALID:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr)
@@ -559,9 +577,10 @@ static LLVMValueRef emit_constant(CodegenContext* c, ASTExpr* expr)
         LLVMSetInitializer(global_string, constant);
         return global_string;
     }
-    default:
-        SIC_UNREACHABLE();
+    case CONSTANT_INVALID:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef emit_function_call(CodegenContext* c, ASTExpr* expr)
@@ -609,9 +628,14 @@ static LLVMValueRef emit_ident(CodegenContext* c, ASTExpr* expr, bool is_lval)
     case TYPE_DS_ARRAY:
         SIC_ASSERT(!is_lval);
         return obj->llvm_ref;
-    default:
-        SIC_UNREACHABLE();
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_USER_DEF:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef emit_unary(CodegenContext* c, ASTExpr* expr, bool is_lval)
@@ -628,10 +652,10 @@ static LLVMValueRef emit_unary(CodegenContext* c, ASTExpr* expr, bool is_lval)
         return is_lval ? inner : LLVMBuildLoad2(c->builder, get_llvm_type(c, expr->type), inner, "");
     case UNARY_NEG:
         SIC_TODO();
-    default:
-        SIC_UNREACHABLE();
+    case UNARY_INVALID:
+        break;
     }
-
+    SIC_UNREACHABLE();
 }
 
 static void emit_var_alloca(CodegenContext* c, Object* obj)
@@ -717,9 +741,23 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
     case TYPE_DS_ARRAY:
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
-    default:
-        SIC_UNREACHABLE();
+    case TYPE_USER_DEF: {
+        Object* user = type->user_def;
+        LLVMTypeRef* element_types = malloc(sizeof(LLVMTypeRef) * user->struct_.members.size);
+        for(size_t i = 0; i < user->struct_.members.size; ++i)
+            element_types[i] = get_llvm_type(c, user->struct_.members.data[i]->var.type);
+        scratch_clear();
+        scratch_appendn(user->symbol.start, user->symbol.len);
+        type->llvm_ref = LLVMStructCreateNamed(c->global_context, scratch_string());
+        LLVMStructSetBody(type->llvm_ref, element_types, user->struct_.members.size, false);
+        return type->llvm_ref;
     }
+    case TYPE_INVALID:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        break;
+    }
+    SIC_UNREACHABLE();
 }
 
 static LLVMValueRef load_rvalue(CodegenContext* c, LLVMValueRef pointer, Type* type)
@@ -742,9 +780,14 @@ static LLVMValueRef load_rvalue(CodegenContext* c, LLVMValueRef pointer, Type* t
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
         return pointer;
-    default:
-        SIC_UNREACHABLE();
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_USER_DEF:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static LLVMTargetRef get_llvm_target(const char* triple)

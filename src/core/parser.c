@@ -18,7 +18,7 @@ static bool      parse_top_level(Lexer* l);
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
 static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
-// static bool      parse_struct_decl();
+static Object*   parse_struct_decl(Lexer* l, ObjAccess access);
 
 // Grammar parsing
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
@@ -30,16 +30,6 @@ static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjAttr attribs);
 static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence);
-static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
-static ASTExpr* parse_identifier_expr(Lexer* l);
-static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
-static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
-static ASTExpr* parse_array_access(Lexer* l, ASTExpr* expr_to_cast);
-static ASTExpr* parse_unary_prefix(Lexer* l);
-static ASTExpr* parse_int_literal(Lexer* l);
-static ASTExpr* parse_bool_literal(Lexer* l);
-static ASTExpr* parse_char_literal(Lexer* l);
-static ASTExpr* parse_string_literal(Lexer* l);
 
 // Inline helpers
 
@@ -194,6 +184,7 @@ void parse_unit(CompilationUnit* unit)
     Lexer l;
     lexer_init_unit(&l, unit);
     da_init(&unit->funcs, 0);
+    da_init(&unit->types, 0);
     da_init(&unit->vars, 0);
     // if(try_consume(&l, TOKEN_MODULE))
     // {
@@ -228,10 +219,15 @@ static bool parse_top_level(Lexer* l)
     case TOKEN_BITFIELD:
     case TOKEN_ENUM:
     case TOKEN_MODULE:
-    case TOKEN_STRUCT:
         SIC_TODO();
+    case TOKEN_STRUCT:
+        advance(l);
+        Object* struct_ = parse_struct_decl(l, access);
+        if(struct_ == NULL)
+            return false;
+        da_append(&l->unit->types, struct_);
+        return true;
     case TOKEN_TYPEDEF:
-
     case TOKEN_UNION:
         SIC_TODO();
     default: {
@@ -326,6 +322,46 @@ static ObjAccess parse_access(Lexer* l)
     }
     advance(l);
     return access;
+}
+
+static Object* parse_struct_decl(Lexer* l, ObjAccess access)
+{
+    Object* obj = new_obj(l, OBJ_STRUCT, access, ATTR_NONE);
+    da_init(&obj->struct_.members, 8);
+    if(tok_equal(l, TOKEN_IDENT))
+        advance(l);
+    else // If there is no identifier, we assume it is an anonymous struct
+        obj->symbol.start = NULL;
+
+    CONSUME_OR_RET(NULL, l, TOKEN_LBRACE);
+    if(tok_equal(l, TOKEN_RBRACE))
+        ERROR_AND_RET(NULL, l, "Struct declaration is empty.");
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        Type* ty;
+        parse_type_base(l, &ty, NULL);
+        ty = parse_type_tail(l, ty);
+        if(ty == NULL)
+            ERROR_AND_RET(NULL, l, "Expected type specifier.");
+
+        // For now we don't allow anonymous members. This will change
+        EXPECT_OR_RET(NULL, l, TOKEN_IDENT);
+        Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
+        advance(l);
+        CONSUME_OR_RET(NULL, l, TOKEN_SEMI);
+        member->var.type = ty;
+        da_append(&obj->struct_.members, member);
+        // uint32_t align = type_alignment(ty);
+        // uint32_t size = type_size(ty);
+        // SIC_ASSERT(is_pow_of_2(align));
+        // obj->struct_.size = ALIGN_UP(obj->struct_.size, align) + size;
+        // obj->struct_.align = MAX(obj->struct_.align, align);
+    }
+    // Debug checking
+    // SIC_ASSERT(is_pow_of_2(obj->struct_.align));
+    // obj->struct_.size = ALIGN_UP(obj->struct_.size, obj->struct_.align);
+    // SIC_ASSERT(obj->struct_.size > 0 && (obj->struct_.size & (obj->struct_.align - 1)) == 0);
+    return obj;
 }
 
 static bool parse_attribute(Lexer* l, ObjAttr* attribs)
@@ -740,12 +776,6 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     return binary;
 }
 
-static ASTExpr* parse_identifier_expr(Lexer* l)
-{
-    ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
-    advance(l);
-    return expr;
-}
 
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
 {
@@ -801,6 +831,23 @@ static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 
     access->expr.array_access.index_expr = index_expr;
     return access;
+}
+
+static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
+{
+    ASTExpr* access = new_expr(l, EXPR_UNRESOLVED_ACCESS);
+    access->expr.unresolved_access.parent_expr = struct_expr;
+    EXPECT_OR_RET(BAD_EXPR, l, TOKEN_IDENT);
+    access->expr.unresolved_access.member_expr = parse_expr(l, PREC_PRIMARY_POSTFIX);
+    advance(l);
+    return access;
+}
+
+static ASTExpr* parse_identifier_expr(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
+    advance(l);
+    return expr;
 }
 
 static ASTExpr* parse_paren_expr(Lexer* l)
@@ -903,7 +950,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    // [TOKEN_DOT]             = { NULL, NULL, PREC_PRIMARY_POSTFIX },
+    [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
     [TOKEN_LBRACKET]        = { NULL, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
