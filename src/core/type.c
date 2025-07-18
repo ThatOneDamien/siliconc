@@ -184,14 +184,34 @@ const char* type_to_string(Type* type)
         [TYPE_DOUBLE] = "double",
     };
 
-    if(type_is_builtin(type))
+    switch(type->kind)
+    {
+    case TYPE_VOID:
+    case TYPE_BOOL:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
         return type_names[type->kind];
-    if(type->kind == TYPE_POINTER)
+    case TYPE_POINTER:
         return str_format("%s*", type_to_string(type->pointer_base));
-    if(type->kind == TYPE_DS_ARRAY)
-        return str_format("%s[]", type_to_string(type->array.elem_type));
-    if(type->kind == TYPE_SS_ARRAY)
+    case TYPE_SS_ARRAY:
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
+    case TYPE_DS_ARRAY:
+        return str_format("%s[]", type_to_string(type->array.elem_type));
+    case TYPE_USER_DEF:
+        return str_format("%.*s", type->user_def->symbol.len, type->user_def->symbol.start);
+    case TYPE_INVALID:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        break;
+    }
 
     SIC_UNREACHABLE();
 }

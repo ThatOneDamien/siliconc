@@ -82,7 +82,10 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
     }
     case EXPR_UNRESOLVED_ACCESS: {
         ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-        analyze_expr(c, uaccess);
+        analyze_expr(c, uaccess->parent_expr);
+        if(!analyze_unresolved_access(c, expr))
+            expr->kind = EXPR_INVALID;
+        return;
     }
     case EXPR_CONSTANT:
     case EXPR_INVALID:
@@ -237,7 +240,34 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_unresolved_access(SemaContext* c, ASTExpr* expr)
 {
-    
+    ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    ASTExpr* parent = uaccess->parent_expr;
+    if(parent->kind == EXPR_INVALID)
+        return false;
+
+    if(parent->type->kind != TYPE_USER_DEF)
+    {
+        sema_error(c, &uaccess->member_expr->loc, "Attempted to access member of incompatable type \'%s\'.",
+                   type_to_string(parent->type));
+        return false;
+    }
+
+    ObjectDA* members = &parent->type->user_def->struct_.members;
+    for(size_t i = 0; i < members->size; ++i)
+        if(members->data[i]->symbol.len == uaccess->member_expr->loc.len &&
+           memcmp(members->data[i]->symbol.start, uaccess->member_expr->loc.start, members->data[i]->symbol.len) == 0)
+        {
+            expr->kind = EXPR_MEMBER_ACCESS;
+            expr->expr.member_access.parent_expr = parent;
+            expr->expr.member_access.member = members->data[i];
+            expr->type = members->data[i]->var.type;
+            return true;
+        }
+
+    sema_error(c, &uaccess->member_expr->loc, "Struct %.*s has no member %.*s.",
+               parent->type->user_def->symbol.len, parent->type->user_def->symbol.start,
+               uaccess->member_expr->loc.len, uaccess->member_expr->loc.start);
+    return false;
 }
 
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
@@ -394,6 +424,7 @@ static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
     switch(left->kind)
     {
     case EXPR_ARRAY_ACCESS:
+    case EXPR_MEMBER_ACCESS:
         break;
     case EXPR_IDENT:
         if(left->expr.ident->kind != OBJ_VAR)

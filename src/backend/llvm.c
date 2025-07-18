@@ -393,6 +393,8 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
         return emit_function_call(c, expr);
     case EXPR_IDENT:
         return emit_ident(c, expr, is_lval);
+    case EXPR_MEMBER_ACCESS:
+        SIC_TODO();
     case EXPR_NOP:
         SIC_ASSERT(!is_lval);
         return NULL;
@@ -402,6 +404,7 @@ static LLVMValueRef emit_expr(CodegenContext* c, ASTExpr* expr, bool is_lval)
         return emit_unary(c, expr, is_lval);
     case EXPR_INVALID:
     case EXPR_PRE_SEMANTIC_IDENT:
+    case EXPR_UNRESOLVED_ACCESS:
         break;
     }
     SIC_UNREACHABLE();

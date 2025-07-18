@@ -173,7 +173,6 @@ static ExprParseRule expr_rules[__TOKEN_COUNT];
 #define BAD_STMT (&s_badstmt)
 #define BAD_EXPR (&s_badexpr)
 
-
 void parser_init(void)
 {
 }
@@ -739,13 +738,11 @@ static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence)
         ERROR_AND_RET(BAD_EXPR, l, "Expected an expression.");
 
     ASTExpr* left = prefix(l);
-    while(true)
+    while(left->kind != EXPR_INVALID)
     {
         TokenKind kind = peek(l)->kind;
         if(expr_rules[kind].precedence < precedence)
             break;
-        if(left->kind == EXPR_INVALID)
-            return left;
 
         ExprInfixFunc infix = expr_rules[kind].infix;
         if(infix == NULL)
@@ -836,9 +833,10 @@ static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
 {
     ASTExpr* access = new_expr(l, EXPR_UNRESOLVED_ACCESS);
+    advance(l);
     access->expr.unresolved_access.parent_expr = struct_expr;
     EXPECT_OR_RET(BAD_EXPR, l, TOKEN_IDENT);
-    access->expr.unresolved_access.member_expr = parse_expr(l, PREC_PRIMARY_POSTFIX);
+    access->expr.unresolved_access.member_expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
     advance(l);
     return access;
 }

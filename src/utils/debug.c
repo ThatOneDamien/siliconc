@@ -94,7 +94,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
     switch(stmt->kind)
     {
     case STMT_AMBIGUOUS:
-        break;
+        return;
     case STMT_BLOCK: {
         ASTStmt* cur = stmt->stmt.block.body;
         while(cur != NULL)
@@ -102,11 +102,11 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
             print_stmt(cur, depth + 1, true);
             cur = cur->next;
         }
-        break;
+        return;
     }
     case STMT_EXPR_STMT:
         print_expr(stmt->stmt.expr, depth + 1, true);
-        break;
+        return;
     case STMT_IF:
         PRINT_DEPTH(depth + 1);
         printf("cond: ");
@@ -117,7 +117,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         PRINT_DEPTH(depth + 1);
         printf("else: ");
         print_stmt(stmt->stmt.if_.else_stmt, depth + 1, false);
-        break;
+        return;
     case STMT_MULTI_DECL: {
         const ASTDeclDA* decls = &stmt->stmt.multi_decl;
         for(size_t i = 0; i < decls->size; ++i)
@@ -126,11 +126,11 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
             printf("%.*s = ", decls->data[i].obj->symbol.len, decls->data[i].obj->symbol.start);
             print_expr(decls->data[i].init_expr, depth + 1, false);
         }
-        break;
+        return;
     }
     case STMT_RETURN:
         print_expr(stmt->stmt.return_.ret_expr, depth + 1, true);
-        break;
+        return;
     case STMT_SINGLE_DECL: {
         const ASTDeclaration* decl = &stmt->stmt.single_decl;
         PRINT_DEPTH(depth + 1);
@@ -139,7 +139,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
             print_expr(decl->init_expr, depth + 1, false);
         else
             printf("( Uninitialized )\n");
-        break;
+        return;
     }
     case STMT_TYPE_DECL:
         SIC_TODO();
@@ -150,7 +150,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         PRINT_DEPTH(depth + 1);
         printf("body: ");
         print_stmt(stmt->stmt.while_.body, depth + 1, false);
-        break;
+        return;
     case STMT_INVALID:
         break;
     }
@@ -209,6 +209,10 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
     case EXPR_INVALID:
         printf("Invalid ]\n");
         return;
+    case EXPR_MEMBER_ACCESS:
+        printf("Member Access ] (Type: %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.member_access.parent_expr, depth + 1, true);
+        return;
     case EXPR_NOP:
         printf("Nop ]\n");
         return;
@@ -222,6 +226,11 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));
         print_expr(expr->expr.unary.child, depth + 1, true);
+        return;
+    case EXPR_UNRESOLVED_ACCESS:
+        printf("Unresolved Access ]\n");
+        print_expr(expr->expr.unresolved_access.parent_expr, depth + 1, true);
+        print_expr(expr->expr.unresolved_access.member_expr, depth + 1, true);
         return;
     }
     SIC_UNREACHABLE();
@@ -264,6 +273,7 @@ static const char* s_stmt_type_strs[] = {
     [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_RETURN]      = "Return Statement",
+    [STMT_TYPE_DECL]   = "Type Declaration",
     [STMT_WHILE]       = "While Statement",
 };
 
