@@ -196,7 +196,6 @@ struct ASTExprCall
 struct ASTExprCast
 {
     ASTExpr* expr_to_cast;
-    Type*    cast_type;
     CastKind kind;
 };
 

@@ -26,6 +26,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_SUB]             = "-",
     [TOKEN_MODULO]          = "%",
     [TOKEN_QUESTION]        = "?",
+    [TOKEN_ARROW]           = "->",
     [TOKEN_LSHR]            = ">>",
     [TOKEN_ASHR]            = ">>>",
     [TOKEN_SHL]             = "<<",

@@ -1,9 +1,9 @@
 #include "semantics.h"
 
 static bool resolve_array(SemaContext* c, Type* arr_ty);
-static bool resolve_user(SemaContext* c, Type* user_ty);
+static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer);
 
-bool resolve_type(SemaContext* c, Type* type)
+bool resolve_type(SemaContext* c, Type* type, bool is_pointer)
 {
     SIC_ASSERT(c != NULL);
     SIC_ASSERT(type != NULL);
@@ -15,17 +15,21 @@ bool resolve_type(SemaContext* c, Type* type)
     {
     case TYPE_POINTER:
         type->status = STATUS_RESOLVED;
-        return true;
+        return resolve_type(c, type->pointer_base, true);
     case TYPE_PRE_SEMA_ARRAY:
         return resolve_array(c, type);
-    case TYPE_USER_DEF:
-        return resolve_user(c, type);
+    case TYPE_ENUM:
+    case TYPE_TYPEDEF:
+    case TYPE_UNION:
+        SIC_TODO();
+    case TYPE_STRUCT:
+        return resolve_user(c, type, is_pointer);
     default:
         SIC_UNREACHABLE();
     }
 }
 
-bool resolve_struct_type(SemaContext* c, Object* obj)
+bool resolve_struct_type(SemaContext* c, Object* obj, bool is_pointer)
 {
     SIC_ASSERT(c != NULL);
     SIC_ASSERT(obj != NULL);
@@ -35,6 +39,8 @@ bool resolve_struct_type(SemaContext* c, Object* obj)
         return true;
     if(struct_->status == STATUS_RESOLVING)
     {
+        if(is_pointer)
+            return true;
         // TODO: This error message can be improved greatly
         sema_error(c, &obj->symbol, "Recursive structure definition.");
         return false;
@@ -51,7 +57,7 @@ bool resolve_struct_type(SemaContext* c, Object* obj)
         for(size_t i = 0; i < struct_->members.size; ++i)
         {
             Type* next_ty = struct_->members.data[i]->var.type;
-            if(!resolve_type(c, next_ty))
+            if(!resolve_type(c, next_ty, false))
             {
                 success = false;
                 continue;
@@ -81,7 +87,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
 {
     Type* elem_type = arr_ty->array.elem_type;
     ASTExpr* size_expr = arr_ty->array.size_expr;
-    if(!resolve_type(c, elem_type))
+    if(!resolve_type(c, elem_type, false))
         return false;
 
     analyze_expr(c, size_expr);
@@ -91,6 +97,8 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
     if(size_expr->kind == EXPR_INVALID || !type_is_integer(size_expr->type) ||
        !implicit_cast(c, size_expr, g_type_ulong))
         return false;
+
+    arr_ty->status = STATUS_RESOLVED;
 
     if(size_expr->kind == EXPR_CONSTANT)
     {
@@ -105,7 +113,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
     return true;
 }
 
-static bool resolve_user(SemaContext* c, Type* user_ty)
+static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
 {
     Object* type_obj = find_obj(c, &user_ty->unresolved);
     if(type_obj == NULL)
@@ -117,12 +125,14 @@ static bool resolve_user(SemaContext* c, Type* user_ty)
     {
     case OBJ_BITFIELD:
     case OBJ_ENUM:
-    case OBJ_STRUCT:
     case OBJ_TYPEDEF:
     case OBJ_UNION:
+        SIC_TODO();
+    case OBJ_STRUCT:
+        user_ty->kind = TYPE_STRUCT;
         user_ty->user_def = type_obj;
         user_ty->status = STATUS_RESOLVED;
-        return resolve_struct_type(c, type_obj);
+        return resolve_struct_type(c, type_obj, is_pointer);
     case OBJ_FUNC:
     case OBJ_VAR:
     case OBJ_ENUM_VALUE:

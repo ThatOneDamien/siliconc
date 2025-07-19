@@ -10,8 +10,8 @@ static const char* s_binary_op_strs[];
 static const char* s_unary_op_strs[];
 static const char* s_access_strs[];
 static void print_func(const Object* func);
-static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth);
-static void print_expr(const ASTExpr* expr, int depth, bool print_depth);
+static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int length);
+static void print_expr(const ASTExpr* expr, int depth, const char* name, int length);
 static void print_constant(const ASTExpr* expr);
 
 static inline const char* debug_type_to_str(Type* type)
@@ -25,7 +25,7 @@ static inline const char* debug_type_to_str(Type* type)
 
 void print_all_tokens(Lexer lexer)
 {
-    while(lexer_advance(&lexer))
+    while(lexer.la_buf.buf[lexer.la_buf.head].kind != TOKEN_EOF)
     {
         Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
         printf("%-15s: Len: %-4u   %.*s\n", 
@@ -33,6 +33,7 @@ void print_all_tokens(Lexer lexer)
                tok->loc.len,
                (int)tok->loc.len, 
                tok->loc.start);
+        lexer_advance(&lexer);
     }
 }
 
@@ -77,19 +78,20 @@ static void print_func(const Object* func)
     ASTStmt* cur_stmt = comps->body;
     while(cur_stmt != NULL)
     {
-        print_stmt(cur_stmt, 2, true);
+        print_stmt(cur_stmt, 2, NULL, 0);
         cur_stmt = cur_stmt->next;
     }
     printf("\n");
 }
 
-static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
+static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int length)
 {
     if(stmt == NULL)
         return;
 
-    if(print_depth)
-        PRINT_DEPTH(depth);
+    PRINT_DEPTH(depth);
+    if(name != NULL)
+        printf("%.*s: ", length, name);
     printf("( %s )\n", s_stmt_type_strs[stmt->kind]);
     switch(stmt->kind)
     {
@@ -99,44 +101,35 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
         ASTStmt* cur = stmt->stmt.block.body;
         while(cur != NULL)
         {
-            print_stmt(cur, depth + 1, true);
+            print_stmt(cur, depth + 1, NULL, 0);
             cur = cur->next;
         }
         return;
     }
     case STMT_EXPR_STMT:
-        print_expr(stmt->stmt.expr, depth + 1, true);
+        print_expr(stmt->stmt.expr, depth + 1, NULL, 0);
         return;
     case STMT_IF:
-        PRINT_DEPTH(depth + 1);
-        printf("cond: ");
-        print_expr(stmt->stmt.if_.cond, depth + 1, false);
-        PRINT_DEPTH(depth + 1);
-        printf("then: ");
-        print_stmt(stmt->stmt.if_.then_stmt, depth + 1, false);
-        PRINT_DEPTH(depth + 1);
-        printf("else: ");
-        print_stmt(stmt->stmt.if_.else_stmt, depth + 1, false);
+        print_expr(stmt->stmt.if_.cond, depth + 1, "cond", 4);
+        print_stmt(stmt->stmt.if_.then_stmt, depth + 1, "then", 4);
+        print_stmt(stmt->stmt.if_.else_stmt, depth + 1, "else", 4);
         return;
     case STMT_MULTI_DECL: {
         const ASTDeclDA* decls = &stmt->stmt.multi_decl;
         for(size_t i = 0; i < decls->size; ++i)
         {
-            PRINT_DEPTH(depth + 1);
-            printf("%.*s = ", decls->data[i].obj->symbol.len, decls->data[i].obj->symbol.start);
-            print_expr(decls->data[i].init_expr, depth + 1, false);
+            ASTDeclaration* decl = &decls->data[i];
+            print_expr(decl->init_expr, depth + 1, decl->obj->symbol.start, decl->obj->symbol.len);
         }
         return;
     }
     case STMT_RETURN:
-        print_expr(stmt->stmt.return_.ret_expr, depth + 1, true);
+        print_expr(stmt->stmt.return_.ret_expr, depth + 1, NULL, 0);
         return;
     case STMT_SINGLE_DECL: {
         const ASTDeclaration* decl = &stmt->stmt.single_decl;
-        PRINT_DEPTH(depth + 1);
-        printf("%.*s = ", decl->obj->symbol.len, decl->obj->symbol.start);
         if(decl->init_expr != NULL)
-            print_expr(decl->init_expr, depth + 1, false);
+            print_expr(decl->init_expr, depth + 1, decl->obj->symbol.start, decl->obj->symbol.len);
         else
             printf("( Uninitialized )\n");
         return;
@@ -144,12 +137,8 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE:
-        PRINT_DEPTH(depth + 1);
-        printf("cond: ");
-        print_expr(stmt->stmt.while_.cond, depth + 1, false);
-        PRINT_DEPTH(depth + 1);
-        printf("body: ");
-        print_stmt(stmt->stmt.while_.body, depth + 1, false);
+        print_expr(stmt->stmt.while_.cond, depth + 1, "cond", 4);
+        print_stmt(stmt->stmt.while_.body, depth + 1, "body", 4);
         return;
     case STMT_INVALID:
         break;
@@ -157,39 +146,41 @@ static void print_stmt(const ASTStmt* stmt, int depth, bool print_depth)
     SIC_UNREACHABLE();
 }
 
-static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
+static void print_expr(const ASTExpr* expr, int depth, const char* name, int length)
 {
     if(expr == NULL)
         return;
-    if(print_depth)
-        PRINT_DEPTH(depth);
+
+    PRINT_DEPTH(depth);
+    if(name != NULL)
+        printf("%.*s: ", length, name);
     printf("[ ");
     const SourceLoc* loc = &expr->loc;
     switch(expr->kind)
     {
     case EXPR_ARRAY_ACCESS:
         printf("ARRAY ACCESS ] (Type: %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.array_access.array_expr, depth + 1, true);
-        print_expr(expr->expr.array_access.index_expr, depth + 1, true);
+        print_expr(expr->expr.array_access.array_expr, depth + 1, NULL, 0);
+        print_expr(expr->expr.array_access.index_expr, depth + 1, NULL, 0);
         return;
     case EXPR_BINARY:
         printf("BINARY \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], 
                debug_type_to_str(expr->type));
-        print_expr(expr->expr.binary.lhs, depth + 1, true);
-        print_expr(expr->expr.binary.rhs, depth + 1, true);
+        print_expr(expr->expr.binary.lhs, depth + 1, NULL, 0);
+        print_expr(expr->expr.binary.rhs, depth + 1, NULL, 0);
         return;
     case EXPR_CAST:
         printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.cast.expr_to_cast, depth + 1, true);
+        print_expr(expr->expr.cast.expr_to_cast, depth + 1, NULL, 0);
         return;
     case EXPR_CONSTANT:
         print_constant(expr);
         return;
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.call.func_expr, depth + 1, true);
+        print_expr(expr->expr.call.func_expr, depth + 1, NULL, 0);
         for(size_t i = 0; i < expr->expr.call.args.size; ++i)
-            print_expr(expr->expr.call.args.data[i], depth + 1, true);
+            print_expr(expr->expr.call.args.data[i], depth + 1, NULL, 0);
         return;
     case EXPR_IDENT: {
         Object* obj = expr->expr.ident;
@@ -211,7 +202,7 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
         return;
     case EXPR_MEMBER_ACCESS:
         printf("Member Access ] (Type: %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.member_access.parent_expr, depth + 1, true);
+        print_expr(expr->expr.member_access.parent_expr, depth + 1, NULL, 0);
         return;
     case EXPR_NOP:
         printf("Nop ]\n");
@@ -225,12 +216,17 @@ static void print_expr(const ASTExpr* expr, int depth, bool print_depth)
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));
-        print_expr(expr->expr.unary.child, depth + 1, true);
+        print_expr(expr->expr.unary.child, depth + 1, NULL, 0);
         return;
-    case EXPR_UNRESOLVED_ACCESS:
-        printf("Unresolved Access ]\n");
-        print_expr(expr->expr.unresolved_access.parent_expr, depth + 1, true);
-        print_expr(expr->expr.unresolved_access.member_expr, depth + 1, true);
+    case EXPR_UNRESOLVED_ARR:
+        printf("Unresolved Arrow ]\n");
+        print_expr(expr->expr.unresolved_access.parent_expr, depth + 1, NULL, 0);
+        print_expr(expr->expr.unresolved_access.member_expr, depth + 1, NULL, 0);
+        return;
+    case EXPR_UNRESOLVED_DOT:
+        printf("Unresolved Dot ]\n");
+        print_expr(expr->expr.unresolved_access.parent_expr, depth + 1, NULL, 0);
+        print_expr(expr->expr.unresolved_access.member_expr, depth + 1, NULL, 0);
         return;
     }
     SIC_UNREACHABLE();

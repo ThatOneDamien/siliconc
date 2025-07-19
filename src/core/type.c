@@ -108,8 +108,12 @@ bool type_equal(Type* t1, Type* t2)
         return type_equal(t1->pointer_base, t2->pointer_base);
     case TYPE_DS_ARRAY:
     case TYPE_SS_ARRAY:
-    case TYPE_USER_DEF:
         return false;
+    case TYPE_ENUM:
+    case TYPE_STRUCT:
+    case TYPE_TYPEDEF:
+    case TYPE_UNION:
+        return t1->user_def == t2->user_def;
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:
@@ -154,7 +158,11 @@ uint32_t type_alignment(Type* ty)
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
         return type_alignment(ty->array.elem_type);
-    case TYPE_USER_DEF:
+    case TYPE_ENUM:
+    case TYPE_TYPEDEF:
+        SIC_TODO();
+    case TYPE_STRUCT:
+    case TYPE_UNION:
         return ty->user_def->struct_.size;
     case TYPE_INVALID:
     case TYPE_VOID:
@@ -183,6 +191,7 @@ const char* type_to_string(Type* type)
         [TYPE_FLOAT]  = "float",
         [TYPE_DOUBLE] = "double",
     };
+    // TODO: Make this use the scratch buffer.
 
     switch(type->kind)
     {
@@ -205,7 +214,10 @@ const char* type_to_string(Type* type)
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
     case TYPE_DS_ARRAY:
         return str_format("%s[]", type_to_string(type->array.elem_type));
-    case TYPE_USER_DEF:
+    case TYPE_ENUM:
+    case TYPE_STRUCT:
+    case TYPE_TYPEDEF:
+    case TYPE_UNION:
         return str_format("%.*s", type->user_def->symbol.len, type->user_def->symbol.start);
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:

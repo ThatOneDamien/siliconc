@@ -5,7 +5,8 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
-static bool analyze_unresolved_access(SemaContext* c, ASTExpr* expr);
+static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr);
+static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr);
 
 // Binary functions
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
@@ -80,10 +81,17 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
             expr->kind = EXPR_INVALID;
         return;
     }
-    case EXPR_UNRESOLVED_ACCESS: {
+    case EXPR_UNRESOLVED_ARR: {
         ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
         analyze_expr(c, uaccess->parent_expr);
-        if(!analyze_unresolved_access(c, expr))
+        if(!analyze_unresolved_arrow(c, expr))
+            expr->kind = EXPR_INVALID;
+        return;
+    }
+    case EXPR_UNRESOLVED_DOT: {
+        ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+        analyze_expr(c, uaccess->parent_expr);
+        if(!analyze_unresolved_dot(c, expr))
             expr->kind = EXPR_INVALID;
         return;
     }
@@ -102,7 +110,26 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
-    (void)c;
+    ASTExpr* arr = expr->expr.array_access.array_expr;
+    ASTExpr* index = expr->expr.array_access.index_expr;
+    if(arr->kind == EXPR_INVALID || index->kind == EXPR_INVALID)
+        return false;
+
+    if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
+    {
+        sema_error(c, &expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
+                   type_to_string(arr->type));
+        return false;
+    }
+
+    if(arr->type->kind == TYPE_SS_ARRAY && index->kind == EXPR_CONSTANT && 
+       index->expr.constant.val.i >= arr->type->array.ss_size)
+    {
+        // TODO: Make this a warning?
+        sema_error(c, &expr->loc, "Array index will overflow the size of the array.");
+        return false;
+    }
+
     expr->type = type_pointer_base(expr->expr.array_access.array_expr->type);
     return true;
 }
@@ -238,36 +265,83 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_unresolved_access(SemaContext* c, ASTExpr* expr)
+static Object* resolve_member(SemaContext* c, Type* type, SourceLoc* symbol)
+{
+    ObjectDA* members = &type->user_def->struct_.members;
+    for(size_t i = 0; i < members->size; ++i)
+        if(members->data[i]->symbol.len == symbol->len &&
+           memcmp(members->data[i]->symbol.start, symbol->start, symbol->len) == 0)
+            return members->data[i];
+    sema_error(c, symbol, "Struct %.*s has no member %.*s.",
+               type->user_def->symbol.len, type->user_def->symbol.start,
+               symbol->len, symbol->start);
+    return NULL;
+}
+
+static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
     if(parent->kind == EXPR_INVALID)
         return false;
 
-    if(parent->type->kind != TYPE_USER_DEF)
+    if(parent->type->kind != TYPE_POINTER || !type_is_user_def(parent->type->pointer_base))
+    {
+        sema_error(c, &expr->loc, "Arrow operator can only be used on pointers to structure-like types.");
+        return false;
+    }
+
+    ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
+    deref->type = parent->type->pointer_base;
+    deref->loc = expr->loc;
+    deref->kind = EXPR_UNARY;
+    deref->expr.unary.kind = UNARY_DEREF;
+    deref->expr.unary.child = parent;
+    Object* member = resolve_member(c, deref->type, &uaccess->member_expr->loc);
+    if(member == NULL)
+        return false;
+
+    expr->kind = EXPR_MEMBER_ACCESS;
+    expr->expr.member_access.parent_expr = deref;
+    expr->expr.member_access.member = member;
+    expr->type = member->var.type;
+    return true;
+}
+
+static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
+{
+    ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    ASTExpr* parent = uaccess->parent_expr;
+    if(parent->kind == EXPR_INVALID)
+        return false;
+
+    if(parent->type->kind == TYPE_POINTER && type_is_user_def(parent->type->pointer_base))
+    {
+        ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
+        deref->type = parent->type->pointer_base;
+        deref->loc = expr->loc;
+        deref->kind = EXPR_UNARY;
+        deref->expr.unary.kind = UNARY_DEREF;
+        deref->expr.unary.child = parent;
+        parent = deref;
+    }
+    else if(!type_is_user_def(parent->type))
     {
         sema_error(c, &uaccess->member_expr->loc, "Attempted to access member of incompatable type \'%s\'.",
                    type_to_string(parent->type));
         return false;
     }
 
-    ObjectDA* members = &parent->type->user_def->struct_.members;
-    for(size_t i = 0; i < members->size; ++i)
-        if(members->data[i]->symbol.len == uaccess->member_expr->loc.len &&
-           memcmp(members->data[i]->symbol.start, uaccess->member_expr->loc.start, members->data[i]->symbol.len) == 0)
-        {
-            expr->kind = EXPR_MEMBER_ACCESS;
-            expr->expr.member_access.parent_expr = parent;
-            expr->expr.member_access.member = members->data[i];
-            expr->type = members->data[i]->var.type;
-            return true;
-        }
+    Object* member = resolve_member(c, parent->type, &uaccess->member_expr->loc);
+    
+    if(member == NULL)
+        return false;
 
-    sema_error(c, &uaccess->member_expr->loc, "Struct %.*s has no member %.*s.",
-               parent->type->user_def->symbol.len, parent->type->user_def->symbol.start,
-               uaccess->member_expr->loc.len, uaccess->member_expr->loc.start);
-    return false;
+    expr->kind = EXPR_MEMBER_ACCESS;
+    expr->expr.member_access.parent_expr = parent;
+    expr->expr.member_access.member = member;
+    expr->type = member->var.type;
+    return true;
 }
 
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)

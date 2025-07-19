@@ -36,6 +36,7 @@ typedef enum
     TOKEN_MODULO,           // %
     TOKEN_QUESTION,         // ?
 
+    TOKEN_ARROW,            // ->
     TOKEN_LSHR,             // >>
     TOKEN_ASHR,             // >>>
     TOKEN_SHL,              // <<
@@ -122,6 +123,7 @@ typedef enum
     CAST_GROUP_FLOAT,
     CAST_GROUP_PTR,
     CAST_GROUP_ARRAY,
+    CAST_GROUP_STRUCT,
     __CAST_GROUP_COUNT,
 } CastGroup;
 
@@ -156,7 +158,8 @@ typedef enum
     EXPR_PRE_SEMANTIC_IDENT,
     EXPR_TERNARY,
     EXPR_UNARY,
-    EXPR_UNRESOLVED_ACCESS,
+    EXPR_UNRESOLVED_ARR,
+    EXPR_UNRESOLVED_DOT,
 } ExprKind;
 
 typedef enum
@@ -269,7 +272,12 @@ typedef enum
     TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
     TYPE_PRE_SEMA_ARRAY,
 
-    TYPE_USER_DEF,
+    TYPE_ENUM,
+    TYPE_USER_DEF_START = TYPE_ENUM,
+    TYPE_STRUCT,
+    TYPE_TYPEDEF,
+    TYPE_UNION,
+    TYPE_USER_DEF_END   = TYPE_UNION,
     __TYPE_COUNT,
     // TODO: Add structs, unions, arrays, pointers, etc
 

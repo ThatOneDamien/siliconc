@@ -44,7 +44,7 @@ static inline void sic_error_at(const char* filepath, const SourceLoc* loc, cons
 // Lexer functions
 void lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
 void lexer_set_pos_in_unit(Lexer* lexer, CompilationUnit* unit, SourceLoc* start);
-bool lexer_advance(Lexer* lexer);
+void lexer_advance(Lexer* lexer);
 static inline bool token_is_typename(TokenKind kind)
 {
     return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;
@@ -116,6 +116,11 @@ static inline bool type_is_pointer(Type* ty)
 static inline bool type_is_array(Type* ty)
 {
     return ty->kind == TYPE_SS_ARRAY || ty->kind == TYPE_DS_ARRAY;
+}
+
+static inline bool type_is_user_def(Type* ty)
+{
+    return ty->kind >= TYPE_USER_DEF_START && ty->kind <= TYPE_USER_DEF_END;
 }
 
 static inline Type* type_pointer_base(Type* ptr_ty)

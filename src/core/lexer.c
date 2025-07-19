@@ -21,10 +21,10 @@ static inline char   next_nl(Lexer* lexer);
 static inline void   backtrack_nl(Lexer* lexer);
 static inline bool   consume_nl(Lexer* lexer);
 static inline Token* next_token_loc(Lexer* lexer);
-static inline bool   extract_identifier(Lexer* lexer, Token* t);
-static inline bool   extract_char_literal(Lexer* lexer, Token* t);
-static inline bool   extract_string_literal(Lexer* lexer, Token* t);
-static inline bool   extract_num_literal(Lexer* lexer, Token* t);
+static inline void   extract_identifier(Lexer* lexer, Token* t);
+static inline void   extract_char_literal(Lexer* lexer, Token* t);
+static inline void   extract_string_literal(Lexer* lexer, Token* t);
+static inline void   extract_num_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
 static inline int    escaped_char(const char** pos, uint64_t* real);
 
@@ -56,7 +56,7 @@ void lexer_set_pos_in_unit(Lexer* lexer, CompilationUnit* unit, SourceLoc* start
         lexer_advance(lexer);
 }
 
-bool lexer_advance(Lexer* lexer)
+void lexer_advance(Lexer* lexer)
 {
     SIC_ASSERT(lexer != NULL);
 
@@ -64,19 +64,19 @@ bool lexer_advance(Lexer* lexer)
 
     Token* t = next_token_loc(lexer);
     if(t->kind == TOKEN_EOF)
-        return false;
-
-    t->loc.line_start = lexer->line_start;
-    t->loc.line_num   = lexer->cur_line;
-    t->loc.start      = lexer->cur_pos;
-    t->kind           = TOKEN_INVALID;
+        return;
 
     if(at_eof(lexer))
     {
         t->kind = TOKEN_EOF;
         t->loc.len = 0;
-        return true;
+        return;
     }
+
+    t->loc.line_start = lexer->line_start;
+    t->loc.line_num   = lexer->cur_line;
+    t->loc.start      = lexer->cur_pos;
+    t->kind           = TOKEN_INVALID;
 
     char c = peek(lexer);
     next(lexer);
@@ -85,44 +85,44 @@ bool lexer_advance(Lexer* lexer)
     {
     case '~':
         t->kind = TOKEN_BIT_NOT;
-        return true;
+        return;
     case ';':
         t->kind = TOKEN_SEMI;
-        return true;
+        return;
     case '.':
         t->kind = (consume(lexer, '.') && consume(lexer, '.')) ? 
                     TOKEN_ELLIPSIS : TOKEN_DOT;
-        return true;
+        return;
     case ',':
         t->kind = TOKEN_COMMA;
-        return true;
+        return;
     case '{':
         t->kind = TOKEN_LBRACE;
-        return true;
+        return;
     case '[':
         t->kind = TOKEN_LBRACKET;
-        return true;
+        return;
     case '(':
         t->kind = TOKEN_LPAREN;
-        return true;
+        return;
     case ')':
         t->kind = TOKEN_RPAREN;
-        return true;
+        return;
     case ']':
         t->kind = TOKEN_RBRACKET;
-        return true;
+        return;
     case '}':
         t->kind = TOKEN_RBRACE;
-        return true;
+        return;
     case '?':
         t->kind = TOKEN_QUESTION;
-        return true;
+        return;
     case ':':
         if(consume(lexer, ':'))
             t->kind = TOKEN_SCOPE_RES;
         else
             t->kind = TOKEN_COLON;
-        return true;
+        return;
     case '&':
         if(consume(lexer, '&'))
             t->kind = TOKEN_LOG_AND;
@@ -130,19 +130,19 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_BIT_AND_ASSIGN;
         else
             t->kind = TOKEN_AMP;
-        return true;
+        return;
     case '*':
         if(consume(lexer, '='))
             t->kind = TOKEN_MUL_ASSIGN;
         else
             t->kind = TOKEN_ASTERISK;
-        return true;
+        return;
     case '!':
         if(consume(lexer, '='))
             t->kind = TOKEN_NE;
         else
             t->kind = TOKEN_LOG_NOT;
-        return true;
+        return;
     case '|':
         if(consume(lexer, '|'))
             t->kind = TOKEN_LOG_OR;
@@ -150,19 +150,19 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_BIT_OR_ASSIGN;
         else
             t->kind = TOKEN_BIT_OR;
-        return true;
+        return;
     case '^':
         if(consume(lexer, '='))
             t->kind = TOKEN_BIT_XOR_ASSIGN;
         else
             t->kind = TOKEN_BIT_XOR;
-        return true;
+        return;
     case '=':
         if(consume(lexer, '='))
             t->kind = TOKEN_EQ;
         else
             t->kind = TOKEN_ASSIGN;
-        return true;
+        return;
     case '<':
         if(consume(lexer, '<'))
             t->kind = consume(lexer, '=') ? TOKEN_SHL_ASSIGN : TOKEN_SHL;
@@ -170,7 +170,7 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_LE;
         else
             t->kind = TOKEN_LT;
-        return true;
+        return;
     case '>':
         if(consume(lexer, '>'))
         {
@@ -183,13 +183,13 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_GE;
         else
             t->kind = TOKEN_GT;
-        return true;
+        return;
     case '/':
         if(consume(lexer, '='))
             t->kind = TOKEN_DIV_ASSIGN;
         else
             t->kind = TOKEN_DIV;
-        return true;
+        return;
     case '+':
         if(consume(lexer, '='))
             t->kind = TOKEN_ADD_ASSIGN;
@@ -197,39 +197,45 @@ bool lexer_advance(Lexer* lexer)
             t->kind = TOKEN_INCREM;
         else
             t->kind = TOKEN_ADD;
-        return true;
+        return;
     case '-':
         if(consume(lexer, '='))
             t->kind = TOKEN_SUB_ASSIGN;
+        else if(consume(lexer, '>'))
+            t->kind = TOKEN_ARROW;
         else if(consume(lexer, '-'))
             t->kind = TOKEN_DECREM;
         else
             t->kind = TOKEN_SUB;
-        return true;
+        return;
     case '%':
         if(consume(lexer, '='))
             t->kind = TOKEN_MOD_ASSIGN;
         else
             t->kind = TOKEN_MODULO;
-        return true;
+        return;
     case '\'':
-        return extract_char_literal(lexer, t);
+        extract_char_literal(lexer, t);
+        return;
     case '\"':
-        return extract_string_literal(lexer, t);
+        extract_string_literal(lexer, t);
+        return;
     case '_':
     CASE_IDENT:
-        return extract_identifier(lexer, t);
+        extract_identifier(lexer, t);
+        return;
     default:
         if(c_is_num(c))
         {
             backtrack(lexer);
-            return extract_num_literal(lexer, t);
+            extract_num_literal(lexer, t);
+            return;
         }
         if(c_is_alpha(c))
             goto CASE_IDENT;
 
         SIC_ERROR_DBG_ARGS("Encountered unknown character. %d", c);
-        return false;
+        return;
     }
 }
 
@@ -323,7 +329,7 @@ static inline Token* next_token_loc(Lexer* lexer)
     return res;
 }
 
-static inline bool extract_identifier(Lexer* lexer, Token* t)
+static inline void extract_identifier(Lexer* lexer, Token* t)
 {
     while(c_is_undalphanum(peek(lexer)))
         next(lexer);
@@ -332,10 +338,9 @@ static inline bool extract_identifier(Lexer* lexer, Token* t)
     t->kind = sym_map_getn(t->loc.start, t->loc.len);
     if(t->kind == TOKEN_INVALID)
         t->kind = TOKEN_IDENT;
-    return true;
 }
 
-static inline bool extract_char_literal(Lexer* lexer, Token* t)
+static inline void extract_char_literal(Lexer* lexer, Token* t)
 {
     t->loc.start++;
     if(peek(lexer) == '\\')
@@ -347,7 +352,7 @@ static inline bool extract_char_literal(Lexer* lexer, Token* t)
             t->loc.len = 2;
             sic_error_at(lexer->unit->file.full_path, &t->loc, 
                          "Invalid escape sequence.");
-            return false;
+            return;
         }
         t->chr.width = escape_len;
     }
@@ -363,15 +368,14 @@ static inline bool extract_char_literal(Lexer* lexer, Token* t)
         t->loc.start--;
         sic_error_at(lexer->unit->file.full_path, &t->loc,
                      "Multi-character char literal, or just missing \'.");
-        return false;
+        return;
     }
     t->loc.len = lexer->cur_pos - t->loc.start;
     t->kind = TOKEN_CHAR_LITERAL;
     next(lexer);
-    return true;
 }
 
-static inline bool extract_string_literal(Lexer* lexer, Token* t)
+static inline void extract_string_literal(Lexer* lexer, Token* t)
 {
     char c;
     const char* orig = lexer->cur_pos;
@@ -383,13 +387,13 @@ static inline bool extract_string_literal(Lexer* lexer, Token* t)
         {
             sic_error_at(lexer->unit->file.full_path, &t->loc, 
                          "Encountered newline character while lexing string literal. Did you forget a '\"'?");
-            return false;
+            return;
         }
         if(c == '\0')
         {
             sic_error_at(lexer->unit->file.full_path, &t->loc, 
                          "Encountered end of file while lexing string literal. Did you forget a '\"'?");
-            return false;
+            return;
         }
         next(lexer);
     }
@@ -419,7 +423,8 @@ static inline bool extract_string_literal(Lexer* lexer, Token* t)
                 sic_error_at(lexer->unit->file.full_path, &escape_loc, 
                              "Invalid escape sequence.");
                 next(lexer);
-                return false;
+                t->kind = TOKEN_INVALID;
+                return;
             }
             memcpy(real_string + len, &value, escape_len);
             len += escape_len;
@@ -433,10 +438,9 @@ static inline bool extract_string_literal(Lexer* lexer, Token* t)
     t->str.len = len;
 
     next(lexer);
-    return true;
 }
 
-static inline bool extract_num_literal(Lexer* lexer, Token* t)
+static inline void extract_num_literal(Lexer* lexer, Token* t)
 {
     // Scan prefix
     if(peek(lexer) == '0')
@@ -444,14 +448,11 @@ static inline bool extract_num_literal(Lexer* lexer, Token* t)
         switch(peek_next(lexer))
         {
         case 'x': // Hex literal
-            SIC_ERROR_DBG("Unimplemented hex literal.");
-            return false;
+            SIC_TODO_MSG("Hex literal.");
         case 'o':
-            SIC_ERROR_DBG("Unimplemented octal literal.");
-            return false;
+            SIC_TODO_MSG("Octal literal.");
         case 'b':
-            SIC_ERROR_DBG("Unimplemented binary literal.");
-            return false;
+            SIC_TODO_MSG("Binary literal.");
         }
     }
 
@@ -475,12 +476,11 @@ static inline bool extract_num_literal(Lexer* lexer, Token* t)
         t->kind = TOKEN_INVALID;
         t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
         sic_error_at(lexer->unit->file.full_path, &t->loc, "Invalid numeric literal.");
-        return false;
+        return;
     }
     
     t->kind = is_float ? TOKEN_FLOAT_LITERAL : TOKEN_INT_LITERAL;
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-    return true;
 }
 
 static inline bool extract_num_suffix(Lexer* lexer, bool* is_float)
@@ -489,8 +489,7 @@ static inline bool extract_num_suffix(Lexer* lexer, bool* is_float)
     // No suffix
     if(!c_is_alpha(peek(lexer)))
         return true;
-    SIC_ERROR_DBG("Unimplemented suffix.");
-    return false;
+    SIC_TODO_MSG("Unimplemented numeric suffix.");
 }
 
 static inline int escaped_char(const char** pos, uint64_t* real)

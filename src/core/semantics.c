@@ -51,7 +51,7 @@ void semantic_analysis(CompilationUnit* unit)
     }
 
     for(size_t i = 0; i < types->size; ++i)
-        resolve_struct_type(&context, types->data[i]);
+        resolve_struct_type(&context, types->data[i], false);
 
     for(size_t i = 0; i < funcs->size; ++i)
         analyze_function(&context, funcs->data[i]);
@@ -129,7 +129,7 @@ RETRY:
     }
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        if(!resolve_type(c, decl_list->data[0].obj->var.type))
+        if(!resolve_type(c, decl_list->data[0].obj->var.type, false))
             return;
         for(size_t i = 0; i < decl_list->size; ++i)
         {
@@ -165,7 +165,7 @@ RETRY:
     }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
-        if(!resolve_type(c, decl->obj->var.type))
+        if(!resolve_type(c, decl->obj->var.type, false))
             return;
         declare_obj(c, decl->obj);
         if(decl->init_expr != NULL)

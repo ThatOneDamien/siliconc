@@ -74,18 +74,17 @@ static inline bool expect(Lexer* l, TokenKind kind)
 
 static inline void advance(Lexer* l)
 {
-    if(!lexer_advance(l))
-        return;
+    do
+    {
+        lexer_advance(l);
+    } while(tok_equal(l, TOKEN_INVALID));
 }
 
 static inline void advance_many(Lexer* l, uint32_t steps)
 {
     SIC_ASSERT(steps > 1);
     for(uint32_t i = 0; i < steps; ++i)
-    {
-        if(!lexer_advance(l))
-            return;
-    }
+        advance(l);
 }
 
 static inline bool try_consume(Lexer* l, TokenKind kind)
@@ -335,6 +334,9 @@ static Object* parse_struct_decl(Lexer* l, ObjAccess access)
     CONSUME_OR_RET(NULL, l, TOKEN_LBRACE);
     if(tok_equal(l, TOKEN_RBRACE))
         ERROR_AND_RET(NULL, l, "Struct declaration is empty.");
+
+    uint32_t member_idx = 0;
+    ObjectDA* members = &obj->struct_.members;
     while(!try_consume(l, TOKEN_RBRACE))
     {
         Type* ty;
@@ -344,22 +346,30 @@ static Object* parse_struct_decl(Lexer* l, ObjAccess access)
             ERROR_AND_RET(NULL, l, "Expected type specifier.");
 
         // For now we don't allow anonymous members. This will change
-        EXPECT_OR_RET(NULL, l, TOKEN_IDENT);
+        EXPECT_OR_RET(obj, l, TOKEN_IDENT);
+
+        SourceLoc* this_sym = &peek(l)->loc;
+        for(uint32_t i = 0; i < member_idx; ++i)
+        {
+            SourceLoc* other_sym = &members->data[i]->symbol;
+            if(other_sym->len == this_sym->len &&
+               memcmp(other_sym->start, this_sym->start, this_sym->len) == 0)
+            {
+                parser_error(l, "Duplicate member \'%.*s\'",
+                             this_sym->len, this_sym->start);
+                goto SKIP_DUPLICATE;
+            }
+        }
         Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
-        advance(l);
-        CONSUME_OR_RET(NULL, l, TOKEN_SEMI);
         member->var.type = ty;
-        da_append(&obj->struct_.members, member);
-        // uint32_t align = type_alignment(ty);
-        // uint32_t size = type_size(ty);
-        // SIC_ASSERT(is_pow_of_2(align));
-        // obj->struct_.size = ALIGN_UP(obj->struct_.size, align) + size;
-        // obj->struct_.align = MAX(obj->struct_.align, align);
+        member->var.member_idx = member_idx++;
+        da_append(members, member);
+
+SKIP_DUPLICATE:
+        advance(l);
+        CONSUME_OR_RET(obj, l, TOKEN_SEMI);
     }
-    // Debug checking
-    // SIC_ASSERT(is_pow_of_2(obj->struct_.align));
-    // obj->struct_.size = ALIGN_UP(obj->struct_.size, obj->struct_.align);
-    // SIC_ASSERT(obj->struct_.size > 0 && (obj->struct_.size & (obj->struct_.align - 1)) == 0);
+
     return obj;
 }
 
@@ -437,7 +447,7 @@ static bool parse_type_base(Lexer* l, Type** type, ObjAttr* attribs)
     if(ty == NULL && tok_equal(l, TOKEN_IDENT))
     {
         ty = CALLOC_STRUCT(Type);
-        ty->kind = TYPE_USER_DEF;
+        ty->kind = TYPE_STRUCT;
         ty->status = STATUS_UNRESOLVED;
         ty->unresolved = peek(l)->loc;
         ty->qualifiers = qual;
@@ -569,6 +579,7 @@ static ASTStmt* parse_stmt_block(Lexer* l)
             cur_stmt->next->stmt.ambiguous = type;
             cur_stmt = cur_stmt->next;
             recover_to(l, s_stmt_recover_list, 2);
+            try_consume(l, TOKEN_SEMI);
             continue;
         }
         type = parse_type_tail(l, type);
@@ -676,7 +687,9 @@ RECOVER:
 
 static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjAttr attribs)
 {
-    ASTStmt* decl_stmt = overwrite != NULL ? overwrite : new_stmt(l, STMT_SINGLE_DECL);
+    ASTStmt* decl_stmt = overwrite == NULL ? CALLOC_STRUCT(ASTStmt) : overwrite;
+    decl_stmt->kind = STMT_SINGLE_DECL;
+    decl_stmt->loc = peek(l)->loc;
     Object* var = CALLOC_STRUCT(Object);
     var->kind = OBJ_VAR;
     var->attribs = attribs;
@@ -811,7 +824,7 @@ static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
     if(ty == NULL)
         ERROR_AND_RET(BAD_EXPR, l, "Expected a type after keyword \'as\'.");
     cast->expr.cast.expr_to_cast = expr_to_cast;
-    cast->expr.cast.cast_type = ty;
+    cast->type = ty;
 
     return cast;
 }
@@ -832,7 +845,8 @@ static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
 {
-    ASTExpr* access = new_expr(l, EXPR_UNRESOLVED_ACCESS);
+    ASTExpr* access = new_expr(l, tok_equal(l, TOKEN_ARROW) ? EXPR_UNRESOLVED_ARR : 
+                                                              EXPR_UNRESOLVED_DOT);
     advance(l);
     access->expr.unresolved_access.parent_expr = struct_expr;
     EXPECT_OR_RET(BAD_EXPR, l, TOKEN_IDENT);
@@ -926,7 +940,11 @@ static ASTExpr* parse_string_literal(Lexer* l)
     // TODO: Add capability to concat multiple string literals if they are
     //       side-by-side
     expr->expr.constant.val.s = peek(l)->str.val;
-    expr->type = type_pointer_to(g_type_ubyte);
+    expr->type = CALLOC_STRUCT(Type);
+    expr->type->kind = TYPE_SS_ARRAY;
+    expr->type->status = STATUS_RESOLVED;
+    expr->type->array.elem_type = g_type_ubyte; // TODO: Add char type, make this the underlying type
+    expr->type->array.ss_size = peek(l)->str.len + 1;
     advance(l);
     return expr;
 }
@@ -956,6 +974,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_QUESTION]        = { NULL, NULL, PREC_TERNARY },
+    [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },

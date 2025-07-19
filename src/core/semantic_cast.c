@@ -30,7 +30,7 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     params.sema_context = c;
     params.expr = cast;
     params.from = cast->expr.cast.expr_to_cast->type;
-    params.to   = cast->expr.cast.cast_type;
+    params.to   = cast->type;
     params.from_group = s_type_to_group[params.from->kind];
     params.to_group   = s_type_to_group[params.to->kind];
     if(type_equal(params.from, params.to))
@@ -51,7 +51,6 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     if(!rule.able(&params, true))
         return false;
 
-    cast->type = params.to;
     if(rule.convert != NULL)
         rule.convert(cast, cast->expr.cast.expr_to_cast);
 
@@ -299,7 +298,12 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
         // Handle constants
     }
 
-    SIC_TODO();
+    ASTExpr* intermediate = MALLOC_STRUCT(ASTExpr);
+    memcpy(intermediate, cast, sizeof(ASTExpr));
+    intermediate->expr.cast.kind = CAST_PTR_TO_INT;
+    intermediate->type = g_type_ulong;
+    cast->expr.cast.expr_to_cast = intermediate;
+    cast->expr.cast.kind = CAST_INT_TO_BOOL;
 }
 
 static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
@@ -334,30 +338,35 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define PTRPTR { cast_rule_ptr_to_ptr, cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    //                     VOID    BOOL    INT     FLOAT   PTR    ARRAY
-    [CAST_GROUP_VOID]  = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_BOOL]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_INT]   = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW },
-    [CAST_GROUP_FLOAT] = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW },
-    [CAST_GROUP_PTR]   = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR },
-    [CAST_GROUP_ARRAY] = { NOALLW, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW },
+    //                      VOID    BOOL    INT     FLOAT   PTR     ARRAY   STRUCT
+    [CAST_GROUP_VOID]   = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_BOOL]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_INT]    = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW },
+    [CAST_GROUP_FLOAT]  = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_PTR]    = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW },
+    [CAST_GROUP_ARRAY]  = { TOVOID, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW, NOALLW },
+    [CAST_GROUP_STRUCT] = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
-    [TYPE_INVALID]       = CAST_GROUP_INVALID,
-    [TYPE_VOID]          = CAST_GROUP_VOID,
-    [TYPE_BOOL]          = CAST_GROUP_BOOL,
-    [TYPE_UBYTE]         = CAST_GROUP_INT,
-    [TYPE_USHORT]        = CAST_GROUP_INT,
-    [TYPE_UINT]          = CAST_GROUP_INT,
-    [TYPE_ULONG]         = CAST_GROUP_INT,
-    [TYPE_BYTE]          = CAST_GROUP_INT,
-    [TYPE_SHORT]         = CAST_GROUP_INT,
-    [TYPE_INT]           = CAST_GROUP_INT,
-    [TYPE_LONG]          = CAST_GROUP_INT,
-    [TYPE_FLOAT]         = CAST_GROUP_FLOAT,
-    [TYPE_DOUBLE]        = CAST_GROUP_FLOAT,
-    [TYPE_POINTER]       = CAST_GROUP_PTR,
-    [TYPE_SS_ARRAY]      = CAST_GROUP_ARRAY,
-    [TYPE_DS_ARRAY]      = CAST_GROUP_ARRAY,
+    [TYPE_INVALID]  = CAST_GROUP_INVALID,
+    [TYPE_VOID]     = CAST_GROUP_VOID,
+    [TYPE_BOOL]     = CAST_GROUP_BOOL,
+    [TYPE_UBYTE]    = CAST_GROUP_INT,
+    [TYPE_USHORT]   = CAST_GROUP_INT,
+    [TYPE_UINT]     = CAST_GROUP_INT,
+    [TYPE_ULONG]    = CAST_GROUP_INT,
+    [TYPE_BYTE]     = CAST_GROUP_INT,
+    [TYPE_SHORT]    = CAST_GROUP_INT,
+    [TYPE_INT]      = CAST_GROUP_INT,
+    [TYPE_LONG]     = CAST_GROUP_INT,
+    [TYPE_FLOAT]    = CAST_GROUP_FLOAT,
+    [TYPE_DOUBLE]   = CAST_GROUP_FLOAT,
+    [TYPE_POINTER]  = CAST_GROUP_PTR,
+    [TYPE_SS_ARRAY] = CAST_GROUP_ARRAY,
+    [TYPE_DS_ARRAY] = CAST_GROUP_ARRAY,
+    [TYPE_ENUM]     = CAST_GROUP_INVALID,
+    [TYPE_STRUCT]   = CAST_GROUP_STRUCT,
+    [TYPE_TYPEDEF]  = CAST_GROUP_INVALID,
+    [TYPE_UNION]    = CAST_GROUP_INVALID,
 };
