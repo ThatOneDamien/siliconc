@@ -1,6 +1,7 @@
 #pragma once
+#include <stdint.h>
 
-typedef enum
+typedef enum : uint8_t
 {
     TOKEN_INVALID = 0,
 
@@ -74,6 +75,7 @@ typedef enum
     TOKEN_FALSE,
     TOKEN_IF,
     TOKEN_MODULE,
+    TOKEN_NULLPTR,
     TOKEN_PRIV,
     TOKEN_PROT,
     TOKEN_PUB,
@@ -105,19 +107,21 @@ typedef enum
     __TOKEN_COUNT
 } TokenKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     CONSTANT_INVALID = 0,
     CONSTANT_INTEGER,
     CONSTANT_BOOL,
     CONSTANT_FLOAT,
     CONSTANT_STRING,
+    CONSTANT_POINTER,
 } ConstantKind;
 
-typedef enum
+typedef enum : int8_t
 {
     CAST_GROUP_INVALID = -1,
     CAST_GROUP_VOID = 0,
+    CAST_GROUP_NULLPTR,
     CAST_GROUP_BOOL,
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
@@ -127,7 +131,7 @@ typedef enum
     __CAST_GROUP_COUNT,
 } CastGroup;
 
-typedef enum
+typedef enum : uint8_t
 {
     CAST_INVALID = 0,
     CAST_FLOAT_TO_SINT,
@@ -143,7 +147,7 @@ typedef enum
     CAST_REINTERPRET,
 } CastKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     EXPR_INVALID = 0,
     
@@ -155,6 +159,7 @@ typedef enum
     EXPR_IDENT,
     EXPR_MEMBER_ACCESS,
     EXPR_NOP,
+    EXPR_POSTFIX,
     EXPR_PRE_SEMANTIC_IDENT,
     EXPR_TERNARY,
     EXPR_UNARY,
@@ -162,7 +167,7 @@ typedef enum
     EXPR_UNRESOLVED_DOT,
 } ExprKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     BINARY_INVALID = 0,
     BINARY_ADD,
@@ -200,16 +205,20 @@ typedef enum
     BINARY_OP_ASSIGN_END = BINARY_ASHR_ASSIGN,
 } BinaryOpKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     UNARY_INVALID = 0,
 
     UNARY_ADDR_OF,
+    UNARY_BIT_NOT,
+    UNARY_DEC,
     UNARY_DEREF,
+    UNARY_INC,
+    UNARY_LOG_NOT,
     UNARY_NEG,
 } UnaryOpKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     STMT_INVALID = 0,
 
@@ -224,7 +233,7 @@ typedef enum
     STMT_WHILE,
 } StmtKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     OBJ_INVALID = 0,
     OBJ_BITFIELD,
@@ -237,11 +246,12 @@ typedef enum
     OBJ_VAR,
 } ObjKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     TYPE_INVALID = 0,
     TYPE_VOID,
     TYPE_BUILTIN_START  = TYPE_VOID,
+    TYPE_NULLPTR,
     TYPE_BOOL,
 
     TYPE_UBYTE,
@@ -283,14 +293,14 @@ typedef enum
 
 } TypeKind;
 
-typedef enum
+typedef enum : uint8_t
 {
     STATUS_UNRESOLVED,
     STATUS_RESOLVING,
     STATUS_RESOLVED
 } ResolveStatus;
 
-typedef enum
+typedef enum : uint8_t
 {
     ACCESS_PRIVATE,     // Accessible only to compilation unit
     ACCESS_PROTECTED,   // Accessible only to module (default behavior)
@@ -299,13 +309,13 @@ typedef enum
     ACCESS_DEFAULT = ACCESS_PROTECTED,
 } ObjAccess;
 
-typedef enum
+typedef enum : uint8_t
 {
     ATTR_NONE   = 0,
     ATTR_EXTERN = (1 << 0),
 } ObjAttr;
 
-typedef enum
+typedef enum : uint8_t
 {
     QUALIFIER_NONE = 0,
     QUALIFIER_CONST = (1 << 0),
@@ -313,7 +323,7 @@ typedef enum
     // QUALIFIER_RESTRICT = (1 << 2),
 } TypeQualifier;
 
-typedef enum
+typedef enum : uint8_t
 {
     PREC_NONE = 0,
     PREC_ASSIGN,
@@ -331,7 +341,7 @@ typedef enum
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
-typedef enum
+typedef enum : uint8_t
 {
     IR_NONE = 0,
     IR_LLVM,
@@ -339,16 +349,35 @@ typedef enum
 } IRTarget;
 
 // Could be expanded later to support multiple architectures.
-typedef enum
+typedef enum : uint8_t
 {
     TARGET_NONE = 0,
     TARGET_x86_64,
 } CompileTarget;
 
-typedef enum
+typedef enum : uint8_t
 {
     MODE_NONE = 0,   // NULL Mode
     MODE_COMPILE,    // Compile
     MODE_ASSEMBLE,   // Compile + Assemble
     MODE_LINK        // Compile + Assemble + Link
 } CompileMode;
+
+typedef enum : uint8_t
+{
+    DIAG_NOTE = 0,
+    DIAG_WARNING,
+    DIAG_ERROR,
+    DIAG_FATAL,
+} DiagnosticType;
+
+typedef enum : uint8_t
+{
+    FT_UNKNOWN = 0, // Unknown
+    FT_SI,          // Silicon source file
+    FT_LLVM_IR,     // LLVM IR File (.ll)
+    FT_ASM,         // Assembly file
+    FT_OBJ,         // Object file
+    FT_STATIC,      // Static library (.a)
+    FT_SHARED,      // Shared object/library (.so)
+} FileType;

@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "utils/error.h"
 
 #define BUILTIN_DEF(TYPE, SIZE)     \
 {                                   \
@@ -9,46 +8,48 @@
     .builtin = { SIZE }             \
 }
 
-static Type s_void   = BUILTIN_DEF(TYPE_VOID   ,  0);
-static Type s_bool   = BUILTIN_DEF(TYPE_BOOL   ,  1);
-static Type s_ubyte  = BUILTIN_DEF(TYPE_UBYTE  ,  1);
-static Type s_ushort = BUILTIN_DEF(TYPE_USHORT ,  2);
-static Type s_uint   = BUILTIN_DEF(TYPE_UINT   ,  4);
-static Type s_ulong  = BUILTIN_DEF(TYPE_ULONG  ,  8);
-static Type s_byte   = BUILTIN_DEF(TYPE_BYTE   ,  1);
-static Type s_short  = BUILTIN_DEF(TYPE_SHORT  ,  2);
-static Type s_int    = BUILTIN_DEF(TYPE_INT    ,  4);
-static Type s_long   = BUILTIN_DEF(TYPE_LONG   ,  8);
-static Type s_float  = BUILTIN_DEF(TYPE_FLOAT  ,  4);
-static Type s_double = BUILTIN_DEF(TYPE_DOUBLE ,  8);
+static Type s_void    = BUILTIN_DEF(TYPE_VOID    ,  0);
+static Type s_nullptr = BUILTIN_DEF(TYPE_NULLPTR ,  8);
+static Type s_bool    = BUILTIN_DEF(TYPE_BOOL    ,  1);
+static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE   ,  1);
+static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT  ,  2);
+static Type s_uint    = BUILTIN_DEF(TYPE_UINT    ,  4);
+static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG   ,  8);
+static Type s_byte    = BUILTIN_DEF(TYPE_BYTE    ,  1);
+static Type s_short   = BUILTIN_DEF(TYPE_SHORT   ,  2);
+static Type s_int     = BUILTIN_DEF(TYPE_INT     ,  4);
+static Type s_long    = BUILTIN_DEF(TYPE_LONG    ,  8);
+static Type s_float   = BUILTIN_DEF(TYPE_FLOAT   ,  4);
+static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE  ,  8);
 
 // Builtin-types
-Type* g_type_void   = &s_void;
-Type* g_type_bool   = &s_bool;
-Type* g_type_ubyte  = &s_ubyte;
-Type* g_type_ushort = &s_ushort;
-Type* g_type_uint   = &s_uint;
-Type* g_type_ulong  = &s_ulong;
-Type* g_type_byte   = &s_byte;
-Type* g_type_short  = &s_short;
-Type* g_type_int    = &s_int;
-Type* g_type_long   = &s_long;
-Type* g_type_float  = &s_float;
-Type* g_type_double = &s_double;
+Type* g_type_void    = &s_void;
+Type* g_type_nullptr = &s_nullptr;
+Type* g_type_bool    = &s_bool;
+Type* g_type_ubyte   = &s_ubyte;
+Type* g_type_ushort  = &s_ushort;
+Type* g_type_uint    = &s_uint;
+Type* g_type_ulong   = &s_ulong;
+Type* g_type_byte    = &s_byte;
+Type* g_type_short   = &s_short;
+Type* g_type_int     = &s_int;
+Type* g_type_long    = &s_long;
+Type* g_type_float   = &s_float;
+Type* g_type_double  = &s_double;
 
 static Type* builtin_type_lookup[] = {
-    [TOKEN_VOID   - TOKEN_TYPENAME_START] = &s_void,
-    [TOKEN_BOOL   - TOKEN_TYPENAME_START] = &s_bool,
-    [TOKEN_UBYTE  - TOKEN_TYPENAME_START] = &s_ubyte,
-    [TOKEN_USHORT - TOKEN_TYPENAME_START] = &s_ushort,
-    [TOKEN_UINT   - TOKEN_TYPENAME_START] = &s_uint,
-    [TOKEN_ULONG  - TOKEN_TYPENAME_START] = &s_ulong,
-    [TOKEN_BYTE   - TOKEN_TYPENAME_START] = &s_byte,
-    [TOKEN_SHORT  - TOKEN_TYPENAME_START] = &s_short,
-    [TOKEN_INT    - TOKEN_TYPENAME_START] = &s_int,
-    [TOKEN_LONG   - TOKEN_TYPENAME_START] = &s_long,
-    [TOKEN_FLOAT  - TOKEN_TYPENAME_START] = &s_float,
-    [TOKEN_DOUBLE - TOKEN_TYPENAME_START] = &s_double,
+    [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
+    [TOKEN_BOOL    - TOKEN_TYPENAME_START] = &s_bool,
+    [TOKEN_UBYTE   - TOKEN_TYPENAME_START] = &s_ubyte,
+    [TOKEN_USHORT  - TOKEN_TYPENAME_START] = &s_ushort,
+    [TOKEN_UINT    - TOKEN_TYPENAME_START] = &s_uint,
+    [TOKEN_ULONG   - TOKEN_TYPENAME_START] = &s_ulong,
+    [TOKEN_BYTE    - TOKEN_TYPENAME_START] = &s_byte,
+    [TOKEN_SHORT   - TOKEN_TYPENAME_START] = &s_short,
+    [TOKEN_INT     - TOKEN_TYPENAME_START] = &s_int,
+    [TOKEN_LONG    - TOKEN_TYPENAME_START] = &s_long,
+    [TOKEN_FLOAT   - TOKEN_TYPENAME_START] = &s_float,
+    [TOKEN_DOUBLE  - TOKEN_TYPENAME_START] = &s_double,
 };
 
 Type* type_from_token(TokenKind type_token)
@@ -114,6 +115,8 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_TYPEDEF:
     case TYPE_UNION:
         return t1->user_def == t2->user_def;
+    case TYPE_NULLPTR:
+        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:
@@ -164,6 +167,8 @@ uint32_t type_alignment(Type* ty)
     case TYPE_STRUCT:
     case TYPE_UNION:
         return ty->user_def->struct_.size;
+    case TYPE_NULLPTR:
+        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
@@ -178,24 +183,26 @@ const char* type_to_string(Type* type)
 {
     SIC_ASSERT(type != NULL);
     static const char* type_names[] = {
-        [TYPE_VOID]   = "void",
-        [TYPE_BOOL]   = "bool",
-        [TYPE_UBYTE]  = "ubyte",
-        [TYPE_USHORT] = "ushort",
-        [TYPE_UINT]   = "uint",
-        [TYPE_ULONG]  = "ulong",
-        [TYPE_BYTE]   = "byte",
-        [TYPE_SHORT]  = "short",
-        [TYPE_INT]    = "int",
-        [TYPE_LONG]   = "long",
-        [TYPE_FLOAT]  = "float",
-        [TYPE_DOUBLE] = "double",
+        [TYPE_VOID]    = "void",
+        [TYPE_NULLPTR] = "nullptr_t",
+        [TYPE_BOOL]    = "bool",
+        [TYPE_UBYTE]   = "ubyte",
+        [TYPE_USHORT]  = "ushort",
+        [TYPE_UINT]    = "uint",
+        [TYPE_ULONG]   = "ulong",
+        [TYPE_BYTE]    = "byte",
+        [TYPE_SHORT]   = "short",
+        [TYPE_INT]     = "int",
+        [TYPE_LONG]    = "long",
+        [TYPE_FLOAT]   = "float",
+        [TYPE_DOUBLE]  = "double",
     };
     // TODO: Make this use the scratch buffer.
 
     switch(type->kind)
     {
     case TYPE_VOID:
+    case TYPE_NULLPTR:
     case TYPE_BOOL:
     case TYPE_UBYTE:
     case TYPE_USHORT:

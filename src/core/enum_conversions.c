@@ -60,6 +60,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_FALSE]           = "false",
     [TOKEN_IF]              = "if",
     [TOKEN_MODULE]          = "mod",
+    [TOKEN_NULLPTR]         = "nullptr",
     [TOKEN_PRIV]            = "priv",
     [TOKEN_PROT]            = "prot",
     [TOKEN_PUB]             = "pub",
@@ -119,7 +120,11 @@ static BinaryOpKind s_tok_to_bin_op[] = {
 
 static UnaryOpKind s_tok_to_unary_op[] = {
     [TOKEN_AMP]      = UNARY_ADDR_OF,
+    [TOKEN_BIT_NOT]  = UNARY_BIT_NOT,
+    [TOKEN_DECREM]   = UNARY_DEC,
     [TOKEN_ASTERISK] = UNARY_DEREF,
+    [TOKEN_INCREM]   = UNARY_INC,
+    [TOKEN_LOG_NOT]  = UNARY_LOG_NOT,
     [TOKEN_SUB]      = UNARY_NEG,
 };
 

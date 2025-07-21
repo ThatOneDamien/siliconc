@@ -152,15 +152,17 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
 
 static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
 {
-    (void)params;
-    if(explicit)
-        return true;
-
-    SIC_TODO_MSG("Implicit ptr conversion");
+    return explicit || type_equal(type_pointer_base(params->from), type_pointer_base(params->from));
 }
 
 
 // Casting functions
+
+static void cast_nullptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
+{
+    memcpy(cast, inner, sizeof(ASTExpr));
+}
+
 static void cast_any_to_void(ASTExpr* cast, ASTExpr* inner)
 {
     (void)cast;
@@ -325,6 +327,7 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 
 #define NOALLW { NULL                   , NULL }
 #define NOTDEF { cast_rule_not_defined  , NULL }
+#define NULPTR { cast_rule_always       , cast_nullptr_to_ptr }
 #define TOVOID { cast_rule_explicit_only, cast_any_to_void }
 #define INTINT { cast_rule_size_change  , cast_int_to_int }
 #define INTBOO { cast_rule_always       , cast_int_to_bool }
@@ -335,22 +338,24 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define FLTINT { cast_rule_explicit_only, cast_float_to_int }
 #define PTRBOO { cast_rule_always       , cast_ptr_to_bool }
 #define PTRINT { cast_rule_explicit_only, cast_ptr_to_int }
-#define PTRPTR { cast_rule_ptr_to_ptr, cast_ptr_to_ptr }
+#define PTRPTR { cast_rule_ptr_to_ptr   , cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    //                      VOID    BOOL    INT     FLOAT   PTR     ARRAY   STRUCT
-    [CAST_GROUP_VOID]   = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_BOOL]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_INT]    = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW },
-    [CAST_GROUP_FLOAT]  = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_PTR]    = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW },
-    [CAST_GROUP_ARRAY]  = { TOVOID, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW, NOALLW },
-    [CAST_GROUP_STRUCT] = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    //                       VOID    NULLPTR BOOL    INT     FLOAT   PTR     ARRAY   STRUCT
+    [CAST_GROUP_VOID]    = { NOTDEF, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_NULLPTR] = { NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NULPTR, NOALLW, NOALLW },
+    [CAST_GROUP_BOOL]    = { TOVOID, NOTDEF, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_INT]     = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW },
+    [CAST_GROUP_FLOAT]   = { TOVOID, NOTDEF, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_PTR]     = { TOVOID, NOTDEF, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW },
+    [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW, NOALLW },
+    [CAST_GROUP_STRUCT]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_INVALID]  = CAST_GROUP_INVALID,
     [TYPE_VOID]     = CAST_GROUP_VOID,
+    [TYPE_NULLPTR]  = CAST_GROUP_NULLPTR,
     [TYPE_BOOL]     = CAST_GROUP_BOOL,
     [TYPE_UBYTE]    = CAST_GROUP_INT,
     [TYPE_USHORT]   = CAST_GROUP_INT,

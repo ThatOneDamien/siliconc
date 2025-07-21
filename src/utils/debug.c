@@ -1,5 +1,4 @@
 #include "debug.h"
-#include "core/core.h"
 #include "core/internal.h"
 
 #ifdef SI_DEBUG
@@ -207,6 +206,11 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name, int len
     case EXPR_NOP:
         printf("Nop ]\n");
         return;
+    case EXPR_POSTFIX:
+        printf("Postfix \'%s\' ] (Type: %s)\n", 
+               s_unary_op_strs[expr->expr.unary.kind], 
+               debug_type_to_str(expr->type));
+        return;
     case EXPR_PRE_SEMANTIC_IDENT: {
         printf("Pre-Sema Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
         return;
@@ -255,7 +259,10 @@ static void print_constant(const ASTExpr* expr)
     case CONSTANT_STRING:
         printf("Constant String \'%.*s\' ]\n", 
                expr->loc.len, expr->loc.start);
-               
+        break;
+    case CONSTANT_POINTER:
+        printf("Constant Integer val: 0x%lX] (Type: %s)\n",
+               constant->val.i, debug_type_to_str(expr->type));
         break;
     }
 }

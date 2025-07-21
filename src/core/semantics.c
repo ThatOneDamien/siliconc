@@ -1,8 +1,9 @@
 #include "semantics.h"
 #include "utils/da.h"
 
-static void    analyze_function(SemaContext* c, Object* function);
-static void    analyze_stmt(SemaContext* c, ASTStmt* stmt);
+static void analyze_function(SemaContext* c, Object* function);
+static void analyze_stmt(SemaContext* c, ASTStmt* stmt);
+static void analyze_declaration(SemaContext* c, ASTDeclaration* decl);
 
 static inline void push_scope(SemaContext* c);
 static inline void pop_scope(SemaContext* c);
@@ -65,6 +66,7 @@ static void analyze_function(SemaContext* c, Object* function)
     for(size_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
+        resolve_type(c, param->var.type, false);
         hashmap_putn(&c->cur_scope->vars, param->symbol.start, param->symbol.len, param);
     }
 
@@ -129,18 +131,9 @@ RETRY:
     }
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        if(!resolve_type(c, decl_list->data[0].obj->var.type, false))
-            return;
-        for(size_t i = 0; i < decl_list->size; ++i)
-        {
-            ASTDeclaration* decl = decl_list->data + i;
-            declare_obj(c, decl->obj);
-            if(decl->init_expr != NULL)
-            {
-                analyze_expr(c, decl->init_expr);
-                implicit_cast(c, decl->init_expr, decl->obj->var.type);
-            }
-        }
+        if(resolve_type(c, decl_list->data[0].obj->var.type, false))
+            for(size_t i = 0; i < decl_list->size; ++i)
+                analyze_declaration(c, decl_list->data + i);
         return;
     }
     case STMT_RETURN: {
@@ -165,14 +158,8 @@ RETRY:
     }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
-        if(!resolve_type(c, decl->obj->var.type, false))
-            return;
-        declare_obj(c, decl->obj);
-        if(decl->init_expr != NULL)
-        {
-            analyze_expr(c, decl->init_expr);
-            implicit_cast(c, decl->init_expr, decl->obj->var.type);
-        }
+        if(resolve_type(c, decl->obj->var.type, false))
+            analyze_declaration(c, decl);
         return;
     }
     case STMT_TYPE_DECL:
@@ -188,6 +175,17 @@ RETRY:
         return;
     }
     SIC_UNREACHABLE();
+}
+
+static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
+{
+    declare_obj(c, decl->obj);
+    if(decl->init_expr != NULL)
+    {
+        analyze_expr(c, decl->init_expr);
+        implicit_cast(c, decl->init_expr, decl->obj->var.type);
+    }
+
 }
 
 void declare_obj(SemaContext* c, Object* obj)

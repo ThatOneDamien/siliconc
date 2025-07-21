@@ -1,5 +1,4 @@
 #include "lib.h"
-#include "core/core.h"
 
 #include <stdint.h>
 #include <stdarg.h>

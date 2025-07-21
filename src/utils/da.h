@@ -1,6 +1,5 @@
 #pragma once
 #include "lib.h"
-#include "core/core.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -89,10 +88,3 @@
         (da)->size = (new_size);        \
     } while(0)
 
-typedef struct StringArray StringArray;
-struct StringArray
-{
-    char** data;
-    size_t size;
-    size_t capacity;
-};

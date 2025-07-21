@@ -1,7 +1,5 @@
 #include "codegen.h"
 #include "codegen-internal.h"
-#include "utils/error.h"
-#include "utils/file_utils.h"
 
 #define INITIAL_CAP (1 << 12)
 

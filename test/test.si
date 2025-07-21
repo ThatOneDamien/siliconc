@@ -4,16 +4,13 @@
  * This should also not appear in the lexer's output.
  */
 
-priv void printf(ubyte* fmt, ...);
+priv extern void printf(ubyte* fmt, ...);
 
-pub uint main()
+pub uint main(int argc, ubyte** argv)
 {
     ubyte* bruh = "okay";
-    ubyte[10][2] a;
-    a[0] = "a";
-    // if(bruh && true)
-    // {
-    //     printf("%s\n", bruh);
-    // }
+    int a = 16;
+    a++;
+    printf("%d\n", c);
     return 0;
 }

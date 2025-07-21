@@ -1,27 +1,8 @@
 #pragma once
-#include "core/core.h"
+#include "lib.h"
 
-typedef struct SIFile SIFile;
 
-typedef enum
-{
-    FT_UNKNOWN = 0, // Unknown
-    FT_SI,          // Silicon source file
-    FT_LLVM_IR,     // LLVM IR File (.ll)
-    FT_ASM,         // Assembly file
-    FT_OBJ,         // Object file
-    FT_STATIC,      // Static library (.a)
-    FT_SHARED,      // Shared object/library (.so)
-} FileType;
 
-struct SIFile
-{
-    const char* full_path;
-    const char* file_name;
-    const char* file_ext;
-    const char* path_end;
-    FileType    type;
-};
 
 SIFile      sifile_new(const char* full_path);
 bool        file_exists(const char* path);

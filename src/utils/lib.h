@@ -1,49 +1,73 @@
 #pragma once
-#include "core/core.h"
-#include "utils/error.h"
-
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "core/structs.h"
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 #define SCRATCH_SIZE (1 << 14)
+#ifdef __GNUC__
+    #define UNUSED __attribute__((unused))
+    #define FALLTHROUGH __attribute__((fallthrough))
+    #define NORETURN __attribute__((noreturn))
+    #define PRINTF_FMT(fmt, va_args) __attribute__((format(printf, fmt, va_args)))
+#else
+    #define UNUSED
+    #define FALLTHROUGH
+    #define NORETURN
+    #define PRINTF_FMT(fmt, va_args)
+#endif
 
-typedef struct HashEntry     HashEntry;
-typedef struct HashMap       HashMap;
-typedef struct MemArena      MemArena;
-typedef struct ScratchBuffer ScratchBuffer;
-
-// TODO: Rename this to something like StringMap,
-//       because I will also need a map for integral types
-//       and it will be much more efficient to have separate
-//       structs and functions than to have 1 general struct
-struct HashEntry
-{
-    HashEntry*  next;
-    const char* key;
-    size_t      key_len;
-    void*       value;
-};
-
-struct HashMap
-{
-    HashEntry* buckets;
-    uint32_t   bucket_cnt;
-    uint32_t   entry_cnt;
-    uint32_t   max_load;
-};
-
-struct MemArena
-{
-    uint8_t* base;
-    size_t   capacity;
-    size_t   allocated;
-};
+#ifdef SI_DEBUG
+    #include <signal.h>
+    #define SIC_ERROR_DBG(msg)                      \
+        do                                          \
+        {                                           \
+            fprintf(stderr, "\033[31m[DEBUG]: ");   \
+            fprintf(stderr, msg);                   \
+            fprintf(stderr, "\033[0m\n");           \
+            raise(SIGTRAP);                         \
+        } while(0)
+    #define SIC_ERROR_DBG_ARGS(msg, ...)        \
+        do                                      \
+        {                                       \
+            fprintf(stderr, "\033[31m");        \
+            fprintf(stderr, msg, __VA_ARGS__);  \
+            fprintf(stderr, "\033[0m\n");       \
+            raise(SIGTRAP);                     \
+        } while(0)
+    #define SIC_ASSERT(cond)                                        \
+        do                                                          \
+        {                                                           \
+            if(!(cond))                                             \
+                SIC_ERROR_DBG_ARGS("Assertion failed (%s:%d): %s",  \
+                                   __FILE__, __LINE__, #cond);      \
+        } while(0)
+    #define SIC_ASSERT_MSG(cond, msg)   \
+        do                              \
+        {                               \
+            if(!(cond))                 \
+                SIC_ERROR_DBG(msg);     \
+        } while(0)
+    #define SIC_ASSERT_ARGS(cond, msg, ...)             \
+        do                                              \
+        {                                               \
+            if(!(cond))                                 \
+                SIC_ERROR_DBG_ARGS(msg, __VA_ARGS__);   \
+        } while(0)
+#else
+    #define SIC_ERROR_DBG(msg)
+    #define SIC_ERROR_DBG_ARGS(msg, ...)
+    #define SIC_ASSERT(cond)
+    #define SIC_ASSERT_MSG(cond, msg)
+    #define SIC_ASSERT_ARGS(cond, msg, ...)
+#endif
 
 struct ScratchBuffer
 {
@@ -51,78 +75,13 @@ struct ScratchBuffer
     size_t len;
 };
 
+// hash.c - Hashmap functions
 void  hashmap_initn(HashMap* map, uint32_t entry_cnt);
 void  hashmap_free(HashMap* map);
 void  hashmap_putn(HashMap* map, const char* key, size_t len, void* val);
 void* hashmap_getn(HashMap* map, const char* key, size_t len);
 bool  hashmap_deleten(HashMap* map, const char* key, size_t len);
 void  hashmap_clear(HashMap* map);
-
-void  global_arenas_init(void);
-void  arena_init(MemArena* arena, size_t capacity);
-void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
-void* global_arena_malloc(size_t size, uint32_t align);
-void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
-
-PRINTF_FMT(1, 2)
-char* str_format(const char* restrict fmt, ...);
-
-extern ScratchBuffer g_scratch;
-
-static inline void scratch_clear() { g_scratch.len = 0; }
-static inline void scratch_appendc(char c) 
-{
-    if(g_scratch.len >= SCRATCH_SIZE)
-        sic_error_fatal("Ran out of space in the scratch buffer. This shouldn't happen.");
-    g_scratch.data[g_scratch.len] = c;
-    g_scratch.len++;
-}
-static inline void scratch_appendn(const char* str, size_t len)
-{
-    if(len + g_scratch.len > SCRATCH_SIZE)
-        sic_error_fatal("Ran out of space in the scratch buffer. This shouldn't happen.");
-    memcpy(g_scratch.data + g_scratch.len, str, len);
-    g_scratch.len += len;
-}
-static inline void scratch_append(const char* str) { scratch_appendn(str, strlen(str)); }
-static inline const char* scratch_string(void) { g_scratch.data[g_scratch.len] = '\0'; return g_scratch.data; }
-PRINTF_FMT(1, 2)
-void scratch_appendf(const char* restrict fmt, ...);
-
-static inline void* cmalloc(size_t size)
-{
-    void* res = malloc(size);
-    if(res == NULL)
-        sic_error_fatal("Failed to cmalloc %zu bytes.", size);
-    return res;
-}
-
-static inline void* ccalloc(size_t nmemb, size_t size)
-{
-    void* res = calloc(nmemb, size);
-    if(res == NULL)
-        sic_error_fatal("Failed to ccalloc %zu bytes.", size);
-    return res;
-}
-
-static inline void* crealloc(void* ptr, size_t size)
-{
-    SIC_ASSERT(ptr != NULL);
-    void* res = realloc(ptr, size);
-    if(res == NULL)
-        sic_error_fatal("Failed to ccalloc %zu bytes.", size);
-    return res;
-}
-
-#ifdef SIC_CMALLOC_ONLY
-#define MALLOC(size)        cmalloc(size)
-#define CALLOC(nmemb, size) ccalloc(nmemb, size)
-#else
-#define MALLOC(size)        global_arena_malloc(size, 8)
-#define CALLOC(nmemb, size) global_arena_calloc(nmemb, size, size)
-#define MALLOC_STRUCT(type) global_arena_malloc(sizeof(type), _Alignof(type))
-#define CALLOC_STRUCT(type) global_arena_calloc(1, sizeof(type), _Alignof(type))
-#endif
 
 static inline void hashmap_init(HashMap* map)
 {
@@ -146,6 +105,125 @@ static inline bool hashmap_delete(HashMap* map, const char* key)
     SIC_ASSERT(key != NULL);
     return hashmap_deleten(map, key, strlen(key));
 }
+
+// arena.c - Arena functions
+void  global_arenas_init(void);
+void  arena_init(MemArena* arena, size_t capacity);
+void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
+void* global_arena_malloc(size_t size, uint32_t align);
+void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
+
+// error.c - Error functions
+extern int g_error_cnt;
+extern int g_warning_cnt;
+
+PRINTF_FMT(2, 3)
+void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...);
+PRINTF_FMT(4, 5)
+void sic_diagnostic_at(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
+                       const char* restrict message, ...);
+void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va);
+void sic_diagnostic_atv(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
+                        const char* restrict message, va_list va);
+PRINTF_FMT(1, 2)
+static inline void sic_error(const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnosticv(DIAG_ERROR, message, va);
+    va_end(va);
+}
+
+PRINTF_FMT(1, 2) NORETURN
+static inline void sic_fatal_error(const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnosticv(DIAG_FATAL, message, va);
+    va_end(va);
+    SIC_ERROR_DBG("Fatal Error Triggered Debug Break.");
+    exit(EXIT_FAILURE);
+}
+
+#define SIC_UNREACHABLE() sic_fatal_error("Compiler encountered an unexpected error, should be unreachable. %s:%d(%s)", __FILE__, __LINE__, __FUNCTION__)
+#define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE__, __LINE__, __FUNCTION__)
+#define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE__, __LINE__, __FUNCTION__, msg)
+
+
+// string.c - Scratch Buffer and String format
+
+extern ScratchBuffer g_scratch;
+
+PRINTF_FMT(1, 2)
+char* str_format(const char* restrict fmt, ...);
+PRINTF_FMT(1, 2)
+void scratch_appendf(const char* restrict fmt, ...);
+
+static inline void scratch_appendc(char c) 
+{
+    if(g_scratch.len >= SCRATCH_SIZE)
+        sic_fatal_error("Ran out of space in the scratch buffer. This shouldn't happen.");
+    g_scratch.data[g_scratch.len] = c;
+    g_scratch.len++;
+}
+static inline void scratch_appendn(const char* str, size_t len)
+{
+    if(len + g_scratch.len > SCRATCH_SIZE)
+        sic_fatal_error("Ran out of space in the scratch buffer. This shouldn't happen.");
+    memcpy(g_scratch.data + g_scratch.len, str, len);
+    g_scratch.len += len;
+}
+
+static inline void scratch_clear()
+{ 
+    g_scratch.len = 0;
+}
+
+static inline void scratch_append(const char* str)
+{
+    scratch_appendn(str, strlen(str));
+}
+static inline const char* scratch_string(void)
+{
+    g_scratch.data[g_scratch.len] = '\0';
+    return g_scratch.data;
+}
+
+static inline void* cmalloc(size_t size)
+{
+    void* res = malloc(size);
+    if(res == NULL)
+        sic_fatal_error("Failed to cmalloc %zu bytes.", size);
+    return res;
+}
+
+static inline void* ccalloc(size_t nmemb, size_t size)
+{
+    void* res = calloc(nmemb, size);
+    if(res == NULL)
+        sic_fatal_error("Failed to ccalloc %zu bytes.", size);
+    return res;
+}
+
+static inline void* crealloc(void* ptr, size_t size)
+{
+    SIC_ASSERT(ptr != NULL);
+    void* res = realloc(ptr, size);
+    if(res == NULL)
+        sic_fatal_error("Failed to ccalloc %zu bytes.", size);
+    return res;
+}
+
+#ifdef SIC_CMALLOC_ONLY
+#define MALLOC(size)        cmalloc(size)
+#define CALLOC(nmemb, size) ccalloc(nmemb, size)
+#else
+#define MALLOC(size)        global_arena_malloc(size, 8)
+#define CALLOC(nmemb, size) global_arena_calloc(nmemb, size, size)
+#define MALLOC_STRUCT(type) global_arena_malloc(sizeof(type), _Alignof(type))
+#define CALLOC_STRUCT(type) global_arena_calloc(1, sizeof(type), _Alignof(type))
+#endif
+
 
 static inline uint32_t next_pow_of_2(uint32_t value)
 {

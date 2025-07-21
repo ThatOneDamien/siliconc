@@ -2,8 +2,7 @@
 #define _DEFAULT_SOURCE
 #include "file_utils.h"
 #include "da.h"
-#include "lib.h"
-#include "core/core.h"
+#include "core/structs.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,7 +13,7 @@
 
 #define FILE_FOUND 0
 
-static StringArray s_tempfiles = {0};
+static StringDA s_tempfiles = {0};
 
 static FileType get_filetype(const char* extension);
 
@@ -26,14 +25,14 @@ SIFile sifile_new(const char* full_path)
     file.file_name = full_path;
     file.file_ext  = NULL;
     if(*full_path == '\0')
-        sic_error_fatal("Tried to use file with empty path.");
+        sic_fatal_error("Tried to use file with empty path.");
     
     for(file.path_end = full_path; *file.path_end != '\0'; ++file.path_end)
     {
         if(*file.path_end == '/')
         {
             if(file.path_end[1] == '\0')
-                sic_error_fatal("File path ends with /. (Indicates directory)");
+                sic_fatal_error("File path ends with /. (Indicates directory)");
             file.file_name = file.path_end + 1;
         }
         else if(*file.path_end == '.')
@@ -100,7 +99,7 @@ char* sifile_read(const SIFile* file)
 ERR:
     if(fd != -1)
         close(fd);
-    sic_error_fatal("Failed to open file \'%s\'", file->full_path);
+    sic_fatal_error("Failed to open file \'%s\'", file->full_path);
     return NULL;
 }
 
@@ -110,7 +109,7 @@ FILE* sifile_open_write(const SIFile* file)
     SIC_ASSERT(file->full_path != NULL);
     FILE* fp = fopen(file->full_path, "w");
     if(!fp)
-        sic_error_fatal("Unable to open/create output file \'%s\'.", file->full_path);
+        sic_fatal_error("Unable to open/create output file \'%s\'.", file->full_path);
     return fp;
 }
 
@@ -195,7 +194,7 @@ SIFile create_tempfile(FileType ft)
 
     int fd = mkstemps(tmppath, ext_len);
     if(fd == -1)
-        sic_error_fatal("Failed to create temporary file.");
+        sic_fatal_error("Failed to create temporary file.");
 
     close(fd);
     da_append(&s_tempfiles, tmppath);

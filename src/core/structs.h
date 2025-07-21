@@ -1,9 +1,16 @@
 #pragma once
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include "enums.h"
-#include "utils/file_utils.h"
-#include "utils/lib.h"
 
 #define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
+
+// Compiler-Wide Data Structures
+typedef struct HashEntry     HashEntry;
+typedef struct HashMap       HashMap;
+typedef struct MemArena      MemArena;
+typedef struct ScratchBuffer ScratchBuffer;
 
 // Lexing Stage Structs
 typedef struct SourceLoc        SourceLoc;
@@ -21,6 +28,7 @@ typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
 
 // Dynamic Array Structs
+typedef struct StringDA         StringDA;
 typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTDeclDA        ASTDeclDA;
@@ -59,10 +67,38 @@ typedef struct Object           Object;
 typedef struct Scope            Scope;
 
 // Compiler-wide important structs
+typedef struct SIFile           SIFile;
 typedef struct CompilationUnit  CompilationUnit;
 typedef struct Module           Module;
 typedef struct Cmdline          Cmdline;
 typedef struct CompilerContext  CompilerContext;
+//
+// TODO: Rename this to something like StringMap,
+//       because I will also need a map for integral types
+//       and it will be much more efficient to have separate
+//       structs and functions than to have 1 general struct
+struct HashEntry
+{
+    HashEntry*  next;
+    const char* key;
+    size_t      key_len;
+    void*       value;
+};
+
+struct HashMap
+{
+    HashEntry* buckets;
+    uint32_t   bucket_cnt;
+    uint32_t   entry_cnt;
+    uint32_t   max_load;
+};
+
+struct MemArena
+{
+    uint8_t* base;
+    size_t   capacity;
+    size_t   allocated;
+};
 
 struct SourceLoc
 {
@@ -140,6 +176,13 @@ struct Type
         TypeUnresolved unresolved;
         TypeUserdef    user_def;
     };
+};
+
+struct StringDA
+{
+    char** data;
+    size_t size;
+    size_t capacity;
 };
 
 struct ObjectDA
@@ -336,6 +379,15 @@ struct Scope
     Scope*  parent;
     HashMap vars;
     HashMap types;
+};
+
+struct SIFile
+{
+    const char* full_path;
+    const char* file_name;
+    const char* file_ext;
+    const char* path_end;
+    FileType    type;
 };
 
 struct CompilationUnit

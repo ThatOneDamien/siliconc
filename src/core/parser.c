@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "utils/da.h"
-#include "utils/error.h"
 #include "utils/lib.h"
 
 typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
@@ -59,7 +58,7 @@ static inline void parser_error(Lexer* lexer, const char* restrict message, ...)
     va_list va;
     va_start(va, message);
     Token* t = peek(lexer);
-    sic_error_atv(lexer->unit->file.full_path, &t->loc, message, va);
+    sic_diagnostic_atv(lexer->unit->file.full_path, &t->loc, DIAG_ERROR, message, va);
     va_end(va);
 }
 
@@ -387,7 +386,8 @@ static bool parse_attribute(Lexer* l, ObjAttr* attribs)
 
     if(attribs == NULL)
         parser_error(l, "Object attributes not allowed in this context.");
-    else if(*attribs & temp) {} // This would be where we warn for duplicate attribute
+    else if(*attribs & temp)
+        sic_diagnostic_at(l->unit->file.full_path, &peek(l)->loc, DIAG_WARNING, "Duplicate attribute.");
     else
         *attribs |= temp;
 
@@ -855,6 +855,15 @@ static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
     return access;
 }
 
+static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
+{
+    ASTExpr* result = new_expr(l, EXPR_POSTFIX);
+    result->expr.unary.child = left;
+    result->expr.unary.kind = tok_to_unary_op(peek(l)->kind);
+    advance(l);
+    return result;
+}
+
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
@@ -918,6 +927,16 @@ static ASTExpr* parse_bool_literal(Lexer* l)
     expr->expr.constant.kind = CONSTANT_BOOL;
     expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE ? 1 : 0;
     expr->type = g_type_bool;
+    advance(l);
+    return expr;
+}
+
+static ASTExpr* parse_nullptr(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_POINTER;
+    expr->expr.constant.val.i = 0;
+    expr->type = g_type_nullptr;
     advance(l);
     return expr;
 }
@@ -995,10 +1014,11 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LSHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_ASHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
     [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_INCREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
-    [TOKEN_DECREM]          = { parse_unary_prefix, NULL, PREC_PRIMARY_POSTFIX },
+    [TOKEN_INCREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
+    [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
 
     [TOKEN_AS]              = { NULL, parse_cast, PREC_UNARY_PREFIX },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
+    [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 };

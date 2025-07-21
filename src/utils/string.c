@@ -1,4 +1,5 @@
 #include "lib.h"
+#include <stdarg.h>
 
 ScratchBuffer g_scratch = {{0}, 0};
 
@@ -8,7 +9,7 @@ void scratch_appendf(const char* restrict fmt, ...)
     va_start(va, fmt);
     int size = vsnprintf(g_scratch.data + g_scratch.len, SCRATCH_SIZE - g_scratch.len, fmt, va);
     if(size + g_scratch.len > SCRATCH_SIZE)
-        sic_error_fatal("Ran out of space in the scratch buffer. This shouldn't happen.");
+        sic_fatal_error("Ran out of space in the scratch buffer. This shouldn't happen.");
     va_end(va);
 
 }

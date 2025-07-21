@@ -1,6 +1,5 @@
 #include "lib.h"
 #include "error.h"
-#include "core/core.h"
 
 #include <errno.h>
 #include <sys/mman.h>
@@ -34,7 +33,7 @@ void arena_init(MemArena* arena, size_t capacity)
     }
 
     if(base == MAP_FAILED || base == NULL)
-        sic_error_fatal("Failed virtual memory mapping: \'%s\'", strerror(errno));
+        sic_fatal_error("Failed virtual memory mapping: \'%s\'", strerror(errno));
 
     arena->base = base;
     arena->capacity = capacity;
@@ -53,7 +52,7 @@ void* arena_alloc(MemArena* arena, size_t size, uint32_t align)
     void* res = arena->base + arena->allocated;
     arena->allocated += size;
     if(arena->capacity < size)
-        sic_error_fatal("Ran out of memory!!! An arena with capacity %zu overflowed.", arena->capacity);
+        sic_fatal_error("Ran out of memory!!! An arena with capacity %zu overflowed.", arena->capacity);
 
     return res;
 }

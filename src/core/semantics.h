@@ -16,7 +16,7 @@ static inline void sema_error(const SemaContext* c, const SourceLoc* loc,
 {
     va_list va;
     va_start(va, message);
-    sic_error_atv(c->unit->file.full_path, loc, message, va);
+    sic_diagnostic_atv(c->unit->file.full_path, loc, DIAG_ERROR, message, va);
     va_end(va);
 }
 

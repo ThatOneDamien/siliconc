@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "utils/error.h"
 
 #include <string.h>
 
@@ -26,19 +25,19 @@ void process_cmdln_args(int argc, char* argv[])
         if(strcmp(arg, "c") == 0)
         {
             if(g_args.mode != MODE_NONE)
-                sic_error_fatal("Provided multiple mode arguments.");
+                sic_fatal_error("Provided multiple mode arguments.");
             g_args.mode = MODE_COMPILE;
         }
         else if(strcmp(arg, "s") == 0)
         {
             if(g_args.mode != MODE_NONE)
-                sic_error_fatal("Provided multiple mode arguments.");
+                sic_fatal_error("Provided multiple mode arguments.");
             g_args.mode = MODE_ASSEMBLE;
         }
         else if(strcmp(arg, "o") == 0)
         {
             if(i == argc - 1)
-                sic_error_fatal("Missing filename after -o.");
+                sic_fatal_error("Missing filename after -o.");
             i++;
             g_args.output_file = argv[i];
         }
@@ -55,17 +54,17 @@ void process_cmdln_args(int argc, char* argv[])
             g_args.emit_debug_output = true;
 #endif
         else
-            sic_error_weak("Unknown argument \'-%s\', ignoring.", arg);
+            sic_diagnostic(DIAG_NOTE, "Unknown argument \'-%s\', ignoring.", arg);
     }
 
 
     if(g_args.input_files.size == 0)
-        sic_error_fatal("No input files provided.");
+        sic_fatal_error("No input files provided.");
 
     if(g_args.mode == MODE_NONE)
         g_args.mode = MODE_LINK;
     else if(g_args.mode != MODE_LINK && g_args.output_file != NULL && g_args.input_files.size > 1)
-        sic_error_fatal("Cannot provide multiple input files to '-c' or '-s' when '-o' is used.");
+        sic_fatal_error("Cannot provide multiple input files to '-c' or '-s' when '-o' is used.");
 
 
     // TODO: Make this customizable through options

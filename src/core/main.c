@@ -17,15 +17,14 @@ static void resolve_dependency_paths(char** crt, char** gcclib);
 int main(int argc, char* argv[])
 {
     if(argc < 1)
-        sic_error_fatal("Bad arguments.");
+        SIC_UNREACHABLE();
 
     global_arenas_init();
-    
     process_cmdln_args(argc, argv);
     
     for(size_t i = 0; i < g_args.input_files.size; ++i)
         if(!sifile_exists(g_args.input_files.data + i))
-            sic_error_fatal("File named '%s' not found.", g_args.input_files.data[i].full_path);
+            sic_fatal_error("File named '%s' not found.", g_args.input_files.data[i].full_path);
 
     sym_map_init();
     parser_init();
@@ -58,16 +57,21 @@ int main(int argc, char* argv[])
         case FT_UNKNOWN:
         case FT_SHARED:
         case FT_STATIC:
-            sic_error_fatal("Input file \'%s\' has invalid extension.", cur_input->full_path);
+            sic_fatal_error("Input file \'%s\' has invalid extension.", cur_input->full_path);
         }
         SIC_UNREACHABLE();
     }
 
-    if(sic_error_cnt() > 0)
+    if(g_error_cnt > 0)
     {
-        fprintf(stderr, "sic: %d error(s) generated. Compilation terminated.\n", sic_error_cnt());
+        fprintf(stderr, "sic: ");
+        if(g_warning_cnt > 0)
+            fprintf(stderr, "%d warning(s), and ", g_warning_cnt);
+        fprintf(stderr, "%d error(s) generated. Compilation terminated.\n", g_error_cnt); 
         exit(EXIT_FAILURE);
     }
+    if(g_warning_cnt > 0)
+        fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
 
     da_append(&g_compiler.modules_to_compile, &g_compiler.top_module);
     gen_ir(&g_compiler.modules_to_compile);
@@ -83,9 +87,7 @@ int main(int argc, char* argv[])
     char* gcc_path;
     resolve_dependency_paths(&crt_path, &gcc_path);
 
-    // TODO: Abstract the linker for possibly other platforms, though for now that
-    //       is not necessary.
-    StringArray cmd;
+    StringDA cmd;
     da_init(&cmd, 32);
     da_append(&cmd, "ld");
     da_append(&cmd, "-m");
@@ -176,7 +178,7 @@ static void resolve_dependency_paths(char** crt, char** gcclib)
     else if(file_exists("/usr/lib64/crti.o"))
         *crt = "/usr/lib64";
     else
-        sic_error_fatal("Unable to locate the CRT (C Runtime Libraries).");
+        sic_fatal_error("Unable to locate the CRT (C Runtime Libraries).");
 
     char* gcc_locations[] = {
         "/usr/lib/gcc/x86_64-linux-gnu/*/crtbegin.o",
@@ -199,6 +201,6 @@ static void resolve_dependency_paths(char** crt, char** gcclib)
         }
         globfree(&buf);
     }
-    sic_error_fatal("Unable to locate GCC libraries.");
+    sic_fatal_error("Unable to locate GCC libraries.");
 }
 

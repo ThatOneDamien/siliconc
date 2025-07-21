@@ -1,5 +1,4 @@
 #pragma once
-#include "core.h"
 #include "structs.h"
 #include "utils/da.h"
 #include "utils/file_utils.h"
@@ -11,6 +10,7 @@ extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
+extern Type* g_type_nullptr;
 extern Type* g_type_bool;
 extern Type* g_type_ubyte;
 extern Type* g_type_byte;
@@ -23,6 +23,8 @@ extern Type* g_type_long;
 extern Type* g_type_float;
 extern Type* g_type_double;
 
+void run_subprocess(char** cmd);
+
 // Command line arguments
 void process_cmdln_args(int argc, char* argv[]);
 
@@ -30,16 +32,6 @@ void process_cmdln_args(int argc, char* argv[]);
 const char*  tok_kind_to_str(TokenKind kind);
 BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
-void sic_error_atv(const char* filepath, const SourceLoc* loc, const char* restrict message, va_list va);
-
-PRINTF_FMT(3, 4)
-static inline void sic_error_at(const char* filepath, const SourceLoc* loc, const char* restrict message, ...)
-{
-    va_list va;
-    va_start(va, message);
-    sic_error_atv(filepath, loc, message, va);
-    va_end(va);
-}
 
 // Lexer functions
 void lexer_init_unit(Lexer* lexer, CompilationUnit* unit);

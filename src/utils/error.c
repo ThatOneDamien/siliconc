@@ -1,51 +1,57 @@
-#include "utils/error.h"
-#include "core/core.h"
 #include "core/internal.h"
 
 #include <ctype.h>
 #include <stdarg.h>
 #include <string.h>
 
-static int s_error_cnt = 0;
+int g_error_cnt = 0;
+int g_warning_cnt = 0;
 
-void sic_error_fatal(const char* restrict message, ...)
+static const char* DIAG_COLOR[] = {
+    [DIAG_NOTE]    = "34",
+    [DIAG_WARNING] = "95",
+    [DIAG_ERROR]   = "91",
+    [DIAG_FATAL]   = "31",
+};
+
+static const char* DIAG_NAME[] = {
+    [DIAG_NOTE]    = "note",
+    [DIAG_WARNING] = "warning",
+    [DIAG_ERROR]   = "error",
+    [DIAG_FATAL]   = "fatal error",
+};
+
+void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...)
 {
-    SIC_ASSERT(message != NULL);
     va_list va;
     va_start(va, message);
-    fprintf(stderr, "sic: \033[31mfatal error:\033[0m "); 
-    vfprintf(stderr, message, va);
-    putc('\n', stderr);
-    va_end(va);
-    SIC_ERROR_DBG("Fatal Error Triggered Debug Break.");
-    exit(EXIT_FAILURE);
-}
-
-void sic_error(const char* restrict message, ...)
-{
-    SIC_ASSERT(message != NULL);
-    va_list va;
-    va_start(va, message);
-    fprintf(stderr, "sic: \033[31merror:\033[0m "); 
-    vfprintf(stderr, message, va);
-    putc('\n', stderr);
-    va_end(va);
-    s_error_cnt++;
-}
-
-void sic_error_weak(const char* restrict message, ...)
-{
-    SIC_ASSERT(message != NULL);
-    va_list va;
-    va_start(va, message);
-    fprintf(stderr, "sic: \033[31merror:\033[0m "); 
-    vfprintf(stderr, message, va);
-    putc('\n', stderr);
+    sic_diagnosticv(diag, message, va);
     va_end(va);
 }
 
-void sic_error_atv(const char* filepath, const SourceLoc* loc, 
-                   const char* restrict message, va_list va)
+void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va)
+{
+    SIC_ASSERT(message != NULL);
+    fprintf(stderr, "sic: \033[%sm%s:\033[0m ", DIAG_COLOR[diag], DIAG_NAME[diag]); 
+    vfprintf(stderr, message, va);
+    putc('\n', stderr);
+    if(diag == DIAG_ERROR)
+        g_error_cnt++;
+    else if(diag == DIAG_WARNING)
+        g_warning_cnt++;
+}
+
+void sic_diagnostic_at(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
+                       const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_atv(filepath, loc, diag, message, va);
+    va_end(va);
+}
+
+void sic_diagnostic_atv(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
+                        const char* restrict message, va_list va)
 {
     SIC_ASSERT(filepath != NULL);
     SIC_ASSERT(loc != NULL);
@@ -56,15 +62,15 @@ void sic_error_atv(const char* filepath, const SourceLoc* loc,
     int before_size = (uintptr_t)loc->start - (uintptr_t)loc->line_start;
     int after_size = next_line == NULL ? strlen(loc_end) : (uintptr_t)next_line - (uintptr_t)loc_end;
 
-    fprintf(stderr, "%s:%u: \033[31merror:\033[0m ", 
-            filepath, 
-            loc->line_num);
+    fprintf(stderr, "%s:%u: \033[%sm%s:\033[0m ",
+            filepath, loc->line_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
     
     vfprintf(stderr, message, va);
 
-    fprintf(stderr, "\n%4u | %.*s\033[31m%.*s\033[0m%.*s\n     | ", 
+    fprintf(stderr, "\n%4u | %.*s\033[%sm%.*s\033[0m%.*s\n     | ", 
             loc->line_num, 
             before_size, loc->line_start,
+            DIAG_COLOR[diag],
             (int)loc->len, loc->start,
             after_size,  loc_end);
     for(const char* s = loc->line_start; s < loc->start; ++s)
@@ -74,14 +80,12 @@ void sic_error_atv(const char* filepath, const SourceLoc* loc,
         else
             putc(' ', stderr);
     }
-    fprintf(stderr, "\033[31m^");
+    fprintf(stderr, "\033[%sm^", DIAG_COLOR[diag]);
     for(uint32_t i = 1; i < loc->len; ++i)
         putc('~', stderr);
     fprintf(stderr, "\033[0m\n");
-    s_error_cnt++;
-}
-
-int sic_error_cnt(void)
-{
-    return s_error_cnt;
+    if(diag == DIAG_ERROR)
+        g_error_cnt++;
+    else if(diag == DIAG_WARNING)
+        g_warning_cnt++;
 }

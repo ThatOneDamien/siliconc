@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "utils/error.h"
 #include "utils/file_utils.h"
 
 #include <string.h>
@@ -27,6 +26,10 @@ static inline void   extract_string_literal(Lexer* lexer, Token* t);
 static inline void   extract_num_literal(Lexer* lexer, Token* t);
 static inline bool   extract_num_suffix(Lexer* lexer, bool* is_float);
 static inline int    escaped_char(const char** pos, uint64_t* real);
+
+PRINTF_FMT(3, 4)
+static void lexer_error(const Lexer* lexer, const SourceLoc* loc,
+                        const char* restrict message, ...);
 
 void lexer_init_unit(Lexer* lexer, CompilationUnit* unit)
 {
@@ -80,49 +83,49 @@ void lexer_advance(Lexer* lexer)
 
     char c = peek(lexer);
     next(lexer);
-    t->loc.len = 1;
+    t->loc.len = 0;
     switch(c)
     {
     case '~':
         t->kind = TOKEN_BIT_NOT;
-        return;
+        break;
     case ';':
         t->kind = TOKEN_SEMI;
-        return;
+        break;
     case '.':
         t->kind = (consume(lexer, '.') && consume(lexer, '.')) ? 
                     TOKEN_ELLIPSIS : TOKEN_DOT;
-        return;
+        break;
     case ',':
         t->kind = TOKEN_COMMA;
-        return;
+        break;
     case '{':
         t->kind = TOKEN_LBRACE;
-        return;
+        break;
     case '[':
         t->kind = TOKEN_LBRACKET;
-        return;
+        break;
     case '(':
         t->kind = TOKEN_LPAREN;
-        return;
+        break;
     case ')':
         t->kind = TOKEN_RPAREN;
-        return;
+        break;
     case ']':
         t->kind = TOKEN_RBRACKET;
-        return;
+        break;
     case '}':
         t->kind = TOKEN_RBRACE;
-        return;
+        break;
     case '?':
         t->kind = TOKEN_QUESTION;
-        return;
+        break;
     case ':':
         if(consume(lexer, ':'))
             t->kind = TOKEN_SCOPE_RES;
         else
             t->kind = TOKEN_COLON;
-        return;
+        break;
     case '&':
         if(consume(lexer, '&'))
             t->kind = TOKEN_LOG_AND;
@@ -130,19 +133,19 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_BIT_AND_ASSIGN;
         else
             t->kind = TOKEN_AMP;
-        return;
+        break;
     case '*':
         if(consume(lexer, '='))
             t->kind = TOKEN_MUL_ASSIGN;
         else
             t->kind = TOKEN_ASTERISK;
-        return;
+        break;
     case '!':
         if(consume(lexer, '='))
             t->kind = TOKEN_NE;
         else
             t->kind = TOKEN_LOG_NOT;
-        return;
+        break;
     case '|':
         if(consume(lexer, '|'))
             t->kind = TOKEN_LOG_OR;
@@ -150,19 +153,19 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_BIT_OR_ASSIGN;
         else
             t->kind = TOKEN_BIT_OR;
-        return;
+        break;
     case '^':
         if(consume(lexer, '='))
             t->kind = TOKEN_BIT_XOR_ASSIGN;
         else
             t->kind = TOKEN_BIT_XOR;
-        return;
+        break;
     case '=':
         if(consume(lexer, '='))
             t->kind = TOKEN_EQ;
         else
             t->kind = TOKEN_ASSIGN;
-        return;
+        break;
     case '<':
         if(consume(lexer, '<'))
             t->kind = consume(lexer, '=') ? TOKEN_SHL_ASSIGN : TOKEN_SHL;
@@ -170,7 +173,7 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_LE;
         else
             t->kind = TOKEN_LT;
-        return;
+        break;
     case '>':
         if(consume(lexer, '>'))
         {
@@ -183,13 +186,13 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_GE;
         else
             t->kind = TOKEN_GT;
-        return;
+        break;
     case '/':
         if(consume(lexer, '='))
             t->kind = TOKEN_DIV_ASSIGN;
         else
             t->kind = TOKEN_DIV;
-        return;
+        break;
     case '+':
         if(consume(lexer, '='))
             t->kind = TOKEN_ADD_ASSIGN;
@@ -197,7 +200,7 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_INCREM;
         else
             t->kind = TOKEN_ADD;
-        return;
+        break;
     case '-':
         if(consume(lexer, '='))
             t->kind = TOKEN_SUB_ASSIGN;
@@ -207,13 +210,13 @@ void lexer_advance(Lexer* lexer)
             t->kind = TOKEN_DECREM;
         else
             t->kind = TOKEN_SUB;
-        return;
+        break;
     case '%':
         if(consume(lexer, '='))
             t->kind = TOKEN_MOD_ASSIGN;
         else
             t->kind = TOKEN_MODULO;
-        return;
+        break;
     case '\'':
         extract_char_literal(lexer, t);
         return;
@@ -234,9 +237,11 @@ void lexer_advance(Lexer* lexer)
         if(c_is_alpha(c))
             goto CASE_IDENT;
 
-        SIC_ERROR_DBG_ARGS("Encountered unknown character. %d", c);
+        t->loc.len = 1;
+        lexer_error(lexer, &t->loc, "Unknown character.");
         return;
     }
+    t->loc.len = lexer->cur_pos - t->loc.start;
 }
 
 static void skip_invisible(Lexer* lexer)
@@ -350,8 +355,7 @@ static inline void extract_char_literal(Lexer* lexer, Token* t)
         if(escape_len < 0)
         {
             t->loc.len = 2;
-            sic_error_at(lexer->unit->file.full_path, &t->loc, 
-                         "Invalid escape sequence.");
+            lexer_error(lexer, &t->loc, "Invalid escape sequence.");
             return;
         }
         t->chr.width = escape_len;
@@ -366,8 +370,7 @@ static inline void extract_char_literal(Lexer* lexer, Token* t)
     if(peek(lexer) != '\'')
     {
         t->loc.start--;
-        sic_error_at(lexer->unit->file.full_path, &t->loc,
-                     "Multi-character char literal, or just missing \'.");
+        lexer_error(lexer, &t->loc, "Multi-character char literal, or just missing \'.");
         return;
     }
     t->loc.len = lexer->cur_pos - t->loc.start;
@@ -385,14 +388,12 @@ static inline void extract_string_literal(Lexer* lexer, Token* t)
             c = *(++lexer->cur_pos);
         if(c == '\n')
         {
-            sic_error_at(lexer->unit->file.full_path, &t->loc, 
-                         "Encountered newline character while lexing string literal. Did you forget a '\"'?");
+            lexer_error(lexer, &t->loc, "Encountered newline character while lexing string literal. Did you forget a '\"'?");
             return;
         }
         if(c == '\0')
         {
-            sic_error_at(lexer->unit->file.full_path, &t->loc, 
-                         "Encountered end of file while lexing string literal. Did you forget a '\"'?");
+            lexer_error(lexer, &t->loc, "Encountered end of file while lexing string literal. Did you forget a '\"'?");
             return;
         }
         next(lexer);
@@ -420,8 +421,7 @@ static inline void extract_string_literal(Lexer* lexer, Token* t)
             int escape_len = escaped_char(&orig, &value);
             if(escape_len < 0)
             {
-                sic_error_at(lexer->unit->file.full_path, &escape_loc, 
-                             "Invalid escape sequence.");
+                lexer_error(lexer, &escape_loc, "Invalid escape sequence.");
                 next(lexer);
                 t->kind = TOKEN_INVALID;
                 return;
@@ -475,7 +475,7 @@ static inline void extract_num_literal(Lexer* lexer, Token* t)
         next(lexer);
         t->kind = TOKEN_INVALID;
         t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-        sic_error_at(lexer->unit->file.full_path, &t->loc, "Invalid numeric literal.");
+        lexer_error(lexer, &t->loc, "Invalid numeric literal.");
         return;
     }
     
@@ -544,4 +544,13 @@ static inline int escaped_char(const char** pos, uint64_t* real)
     default:
         return -1;
     }
+}
+
+static void lexer_error(const Lexer* lexer, const SourceLoc* loc,
+                        const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_atv(lexer->unit->file.full_path, loc, DIAG_ERROR, message, va);
+    va_end(va);
 }

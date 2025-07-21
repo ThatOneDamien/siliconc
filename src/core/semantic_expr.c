@@ -13,6 +13,7 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
 static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_mul(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_div(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
+static bool analyze_logical(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
 static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right);
@@ -21,7 +22,9 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
 
 // Unary functions
 static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* child);
+static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr* child);
 static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child);
+static bool analyze_log_not(SemaContext* c, ASTExpr* expr, ASTExpr* child);
 static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child);
 
 static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2);
@@ -61,6 +64,8 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
             expr->kind = EXPR_INVALID;
         return;
     }
+    case EXPR_POSTFIX:
+        SIC_TODO();
     case EXPR_PRE_SEMANTIC_IDENT: {
         ASTExprIdent ident = find_obj(c, &expr->loc);
         if(ident == NULL)
@@ -154,7 +159,7 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
         return analyze_div(c, expr, left, right);
     case BINARY_LOG_OR:
     case BINARY_LOG_AND:
-        SIC_TODO();
+        return analyze_logical(c, expr, left, right);
     case BINARY_EQ:
     case BINARY_NE:
     case BINARY_LT:
@@ -255,8 +260,16 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     {
     case UNARY_ADDR_OF:
         return analyze_addr_of(c, expr, child);
+    case UNARY_BIT_NOT:
+        return analyze_bit_not(c, expr, child);
+    case UNARY_DEC:
+        SIC_TODO();
     case UNARY_DEREF:
         return analyze_deref(c, expr, child);
+    case UNARY_INC:
+        SIC_TODO();
+    case UNARY_LOG_NOT:
+        return analyze_log_not(c, expr, child);
     case UNARY_NEG:
         return analyze_negate(c, expr, child);
     case UNARY_INVALID:
@@ -444,11 +457,27 @@ static bool analyze_div(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
     return true;
 }
 
+static bool analyze_logical(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
+{
+    if(!implicit_cast(c, left, g_type_bool) || !implicit_cast(c, right, g_type_bool))
+        return false;
+    expr->type = g_type_bool;
+    return true;
+}
+
 static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
     expr->type = g_type_bool;
-    if(left->type->kind == right->type->kind && left->type->kind == TYPE_POINTER)
-        return true;
+    bool left_is_pointer = type_is_pointer(left->type);
+    if(type_is_pointer(right->type) && !left_is_pointer)
+    {
+        left_is_pointer = true;
+        ASTExpr* temp = left;
+        left = right;
+        right = temp;
+    }
+    if(left_is_pointer)
+        return implicit_cast(c, right, left->type);
 
     if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
     {
@@ -478,16 +507,15 @@ static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr*
 
 static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    if(!type_is_integer(left->type) || !type_is_integer(right->type))
     {
         sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
                    type_to_string(left->type), type_to_string(right->type));
         return false;
     }
 
-    if(!arith_type_conv(c, left, right))
-        return false;
-
+    promote_int_type(c, left);
+    promote_int_type(c, right);
     expr->type = left->type;
     return true;
 
@@ -564,6 +592,20 @@ static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* child)
     return true;
 }
 
+static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr* child)
+{
+    if(!type_is_integer(child->type))
+    {
+        sema_error(c, &expr->loc, "Invalid operand type %s.", 
+                   type_to_string(child->type));
+        return false;
+    }
+
+    promote_int_type(c, child);
+    expr->type = child->type;
+    return true;
+}
+
 static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child)
 {
     switch(child->type->kind)
@@ -580,6 +622,12 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* child)
                    type_to_string(child->type));
         return false;
     }
+}
+
+static bool analyze_log_not(SemaContext* c, ASTExpr* expr, ASTExpr* child)
+{
+    expr->type = g_type_bool;
+    return implicit_cast(c, child, g_type_bool);
 }
 
 static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child)
@@ -628,6 +676,7 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* child)
     expr->type = child->type;
     return true;
 }
+
 
 static bool arith_type_conv(SemaContext* c, ASTExpr* e1, ASTExpr* e2)
 {
