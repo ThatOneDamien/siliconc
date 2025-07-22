@@ -29,3 +29,4 @@ bool    resolve_type(SemaContext* c, Type* type, bool is_pointer);
 bool    resolve_struct_type(SemaContext* c, Object* obj, bool is_pointer);
 void    declare_obj(SemaContext* c, Object* obj);
 Object* find_obj(SemaContext* c, SourceLoc* symbol);
+bool    expr_is_lvalue(SemaContext* c, ASTExpr* expr);

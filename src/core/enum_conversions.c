@@ -48,6 +48,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_INCREM]          = "++",
     [TOKEN_DECREM]          = "--",
     [TOKEN_ELLIPSIS]        = "...", 
+    [TOKEN_SWAP]            = "<->",
     [TOKEN_LSHR_ASSIGN]     = ">>=",
     [TOKEN_ASHR_ASSIGN]     = ">>>=",
     [TOKEN_SHL_ASSIGN]      = "<<=",

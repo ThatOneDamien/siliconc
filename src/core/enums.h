@@ -60,6 +60,7 @@ typedef enum : uint8_t
     TOKEN_DECREM,           // --
     TOKEN_ELLIPSIS,         // ...
     
+    TOKEN_SWAP,             // <->
     TOKEN_LSHR_ASSIGN,      // >>=
     TOKEN_ASHR_ASSIGN,      // >>>=
     TOKEN_SHL_ASSIGN,       // <<=
@@ -224,11 +225,12 @@ typedef enum : uint8_t
 
     STMT_AMBIGUOUS,
     STMT_BLOCK,
+    STMT_EXPR_STMT,
     STMT_IF,
     STMT_SINGLE_DECL,
     STMT_MULTI_DECL,
-    STMT_EXPR_STMT,
     STMT_RETURN,
+    STMT_SWAP,
     STMT_TYPE_DECL,
     STMT_WHILE,
 } StmtKind;
@@ -253,22 +255,18 @@ typedef enum : uint8_t
     TYPE_BUILTIN_START  = TYPE_VOID,
     TYPE_NULLPTR,
     TYPE_BOOL,
+    TYPE_NUMERIC_START  = TYPE_BOOL,
 
-    TYPE_UBYTE,
-    TYPE_INTEGER_START  = TYPE_UBYTE,
-    TYPE_UNSIGNED_START = TYPE_UBYTE,
-    TYPE_NUMERIC_START  = TYPE_UBYTE,
-    TYPE_USHORT,
-    TYPE_UINT,
-    TYPE_ULONG,
-    TYPE_UNSIGNED_END   = TYPE_ULONG,
     TYPE_BYTE,
-    TYPE_SIGNED_START   = TYPE_BYTE,
+    TYPE_INTEGER_START  = TYPE_BYTE,
+    TYPE_UBYTE,
     TYPE_SHORT,
+    TYPE_USHORT,
     TYPE_INT,
+    TYPE_UINT,
     TYPE_LONG,
-    TYPE_SIGNED_END     = TYPE_LONG,
-    TYPE_INTEGER_END    = TYPE_LONG,
+    TYPE_ULONG,
+    TYPE_INTEGER_END    = TYPE_ULONG,
 
     TYPE_FLOAT,
     TYPE_FLOAT_START    = TYPE_FLOAT,

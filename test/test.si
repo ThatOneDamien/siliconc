@@ -9,8 +9,10 @@ priv extern void printf(ubyte* fmt, ...);
 pub uint main(int argc, ubyte** argv)
 {
     ubyte* bruh = "okay";
-    int a = 16;
-    a++;
-    printf("%d\n", c);
+    int c = 0;
+    uint d = 4;
+    printf("%d %d\n", c, d);
+    d <-> d;
+    printf("%d %d\n", c, d);
     return 0;
 }

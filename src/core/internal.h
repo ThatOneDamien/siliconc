@@ -1,4 +1,5 @@
 #pragma once
+#include <assert.h>
 #include "structs.h"
 #include "utils/da.h"
 #include "utils/file_utils.h"
@@ -75,19 +76,21 @@ static inline bool type_is_builtin(Type* ty)
     return ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END;
 }
 
+static inline bool type_is_integer(Type* ty)
+{
+    return ty->kind >= TYPE_INTEGER_START && ty->kind <= TYPE_INTEGER_END;
+}
+
 static inline bool type_is_signed(Type* ty)
 {
-    return ty->kind >= TYPE_SIGNED_START && ty->kind <= TYPE_SIGNED_END;
+    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
+    return type_is_integer(ty) && !(ty->kind & 1);
 }
 
 static inline bool type_is_unsigned(Type* ty)
 {
-    return ty->kind >= TYPE_UNSIGNED_START && ty->kind <= TYPE_UNSIGNED_END;
-}
-
-static inline bool type_is_integer(Type* ty)
-{
-    return ty->kind >= TYPE_INTEGER_START && ty->kind <= TYPE_INTEGER_END;
+    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
+    return type_is_integer(ty) && (ty->kind & 1);
 }
 
 static inline bool type_is_float(Type* ty)

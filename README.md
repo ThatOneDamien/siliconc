@@ -22,4 +22,5 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
   stages, or I would have to store them to be emitted when actaully passing over the token.
 - Update how the type struct works, possible adding a cache for useful variants
   of types like a pointer.
-- Add user-defined types like structs, enums, typedefs, unions, and possibly bitfields
+- Add other user-defined types, namely enums, typedefs, unions, and bitfields
+- Actually work on the import and module system

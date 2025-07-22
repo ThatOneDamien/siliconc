@@ -133,6 +133,10 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int len
             printf("( Uninitialized )\n");
         return;
     }
+    case STMT_SWAP:
+        print_expr(stmt->stmt.swap.left,  depth + 1, NULL, 0);
+        print_expr(stmt->stmt.swap.right, depth + 1, NULL, 0);
+        return;
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE:
@@ -170,7 +174,7 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name, int len
         return;
     case EXPR_CAST:
         printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type));
-        print_expr(expr->expr.cast.expr_to_cast, depth + 1, NULL, 0);
+        print_expr(expr->expr.cast.inner, depth + 1, NULL, 0);
         return;
     case EXPR_CONSTANT:
         print_constant(expr);
@@ -216,11 +220,15 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name, int len
         return;
     }
     case EXPR_TERNARY:
-        SIC_TODO();
+        printf("Ternary ] (Type: %s)\n", debug_type_to_str(expr->type));
+        print_expr(expr->expr.ternary.cond_expr, depth + 1, "cond", 4);
+        print_expr(expr->expr.ternary.then_expr, depth + 1, "then", 4);
+        print_expr(expr->expr.ternary.else_expr, depth + 1, "else", 4);
+        return;
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));
-        print_expr(expr->expr.unary.child, depth + 1, NULL, 0);
+        print_expr(expr->expr.unary.inner, depth + 1, NULL, 0);
         return;
     case EXPR_UNRESOLVED_ARR:
         printf("Unresolved Arrow ]\n");
@@ -276,6 +284,7 @@ static const char* s_stmt_type_strs[] = {
     [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_RETURN]      = "Return Statement",
+    [STMT_SWAP]        = "Swap Statement",
     [STMT_TYPE_DECL]   = "Type Declaration",
     [STMT_WHILE]       = "While Statement",
 };

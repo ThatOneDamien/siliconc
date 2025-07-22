@@ -48,16 +48,18 @@ static void     decl_global_var(CodegenContext* c, Object* var);
 static void     emit_function_body(CodegenContext* c, Object* function);
 static void     emit_stmt(CodegenContext* c, ASTStmt* stmt);
 static void     emit_if(CodegenContext* c, ASTStmt* stmt);
+static void     emit_swap(CodegenContext* c, ASTStmt* stmt);
 static void     emit_while(CodegenContext* c, ASTStmt* stmt);
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr);
 static void     emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result);
-static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result);
 static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_function_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_ident(ASTExpr* expr, GenValue* result);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, bool is_or, GenValue* result);
+static void     emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_var_alloca(CodegenContext* c, Object* obj);
 static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
@@ -308,6 +310,9 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         }
         return;
     }
+    case STMT_SWAP:
+        emit_swap(c, stmt);
+        return;
     case STMT_WHILE:
         emit_while(c, stmt);
         return;
@@ -360,6 +365,19 @@ static void emit_if(CodegenContext* c, ASTStmt* stmt)
     LLVMPositionBuilderAtEnd(c->builder, exit_block);
 }
 
+static void emit_swap(CodegenContext* c, ASTStmt* stmt)
+{
+    Type* ty = stmt->stmt.swap.left->type;
+    if(!type_is_builtin(ty) && !type_is_pointer(ty))
+        SIC_TODO_MSG("Swap other types");
+    GenValue left = emit_expr(c, stmt->stmt.swap.left);
+    GenValue right = emit_expr(c, stmt->stmt.swap.right);
+    LLVMValueRef lrval = LLVMBuildLoad2(c->builder, get_llvm_type(c, ty), left.value, "");
+    LLVMValueRef rrval = LLVMBuildLoad2(c->builder, get_llvm_type(c, ty), right.value, "");
+    LLVMBuildStore(c->builder, rrval, left.value);
+    LLVMBuildStore(c->builder, lrval, right.value);
+}
+
 static void emit_while(CodegenContext* c, ASTStmt* stmt)
 {
     ASTWhile* while_stmt = &stmt->stmt.while_;
@@ -404,9 +422,11 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_BINARY:
         emit_binary(c, expr, &result);
         break;
-    case EXPR_CAST:
-        emit_cast(c, expr, &result);
+    case EXPR_CAST: {
+        GenValue inner = emit_expr(c, expr->expr.cast.inner);
+        emit_cast(c, expr, &inner, &result);
         break;
+    }
     case EXPR_CONSTANT:
         emit_constant(c, expr, &result);
         break;
@@ -425,7 +445,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_POSTFIX:
         SIC_TODO();
     case EXPR_TERNARY:
-        SIC_TODO();
+        emit_ternary(c, expr, &result);
+        break;
     case EXPR_UNARY:
         emit_unary(c, expr, &result);
         break;
@@ -591,55 +612,54 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     SIC_UNREACHABLE();
 }
 
-static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* result)
+static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result)
 {
     ASTExprCast* cast = &expr->expr.cast;
-    GenValue inner = emit_expr(c, cast->expr_to_cast);
-    load_rvalue(c, &inner);
+    load_rvalue(c, inner);
     result->kind = GEN_VAL_RVALUE;
     LLVMTypeRef to_llvm = get_llvm_type(c, expr->type);
     switch(cast->kind)
     {
     case CAST_FLOAT_TO_SINT:
-        result->value = LLVMBuildFPToSI(c->builder, inner.value, to_llvm, "");
+        result->value = LLVMBuildFPToSI(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_FLOAT_TO_UINT:
-        result->value = LLVMBuildFPToUI(c->builder, inner.value, to_llvm, "");
+        result->value = LLVMBuildFPToUI(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_SINT_TO_FLOAT:
-        result->value = LLVMBuildSIToFP(c->builder, inner.value, to_llvm, "");
+        result->value = LLVMBuildSIToFP(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_UINT_TO_FLOAT:
-        result->value = LLVMBuildUIToFP(c->builder, inner.value, to_llvm, "");
+        result->value = LLVMBuildUIToFP(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_INT_TO_BOOL:
-        result->value = LLVMBuildIsNotNull(c->builder, inner.value, "");
+        result->value = LLVMBuildIsNotNull(c->builder, inner->value, "");
         return;
     case CAST_PTR_TO_INT:
-        result->value = LLVMBuildPtrToInt(c->builder, inner.value, LLVMInt64Type(), "");
+        result->value = LLVMBuildPtrToInt(c->builder, inner->value, LLVMInt64Type(), "");
         return;
     case CAST_INT_TO_PTR:
         SIC_TODO();
     case CAST_FLOAT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->expr_to_cast->type);
-        result->value = is_widen ? LLVMBuildFPExt(c->builder, inner.value, to_llvm, "") :
-                          LLVMBuildFPTrunc(c->builder, inner.value, to_llvm, "");
+        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
+        result->value = is_widen ? LLVMBuildFPExt(c->builder, inner->value, to_llvm, "") :
+                                   LLVMBuildFPTrunc(c->builder, inner->value, to_llvm, "");
         return;
     }
     case CAST_SINT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->expr_to_cast->type);
-        result->value = is_widen ? LLVMBuildSExt(c->builder, inner.value, to_llvm, "") :
-                          LLVMBuildTrunc(c->builder, inner.value, to_llvm, "");
+        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
+        result->value = is_widen ? LLVMBuildSExt(c->builder, inner->value, to_llvm, "") :
+                                   LLVMBuildTrunc(c->builder, inner->value, to_llvm, "");
         return;
     }
     case CAST_UINT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->expr_to_cast->type);
-        result->value = is_widen ? LLVMBuildZExt(c->builder, inner.value, to_llvm, "") :
-                          LLVMBuildTrunc(c->builder, inner.value, to_llvm, "");
+        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
+        result->value = is_widen ? LLVMBuildZExt(c->builder, inner->value, to_llvm, "") :
+                                   LLVMBuildTrunc(c->builder, inner->value, to_llvm, "");
         return;
     }
     case CAST_REINTERPRET:
-        result->value = inner.value;
+        result->value = inner->value;
         return;
     case CAST_INVALID:
         break;
@@ -760,12 +780,70 @@ static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, b
     LLVMAddIncoming(result->value, values, blocks, 2);
 }
 
+static void emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result)
+{
+    ASTExprTernary* ternary = &expr->expr.ternary;
+    GenValue cond;
+    GenValue then;
+    GenValue elss;
+    LLVMBasicBlockRef then_bb = c->cur_bb;
+    LLVMBasicBlockRef else_bb = LLVMCreateBasicBlockInContext(c->global_context, ".cond_else");
+    LLVMBasicBlockRef exit_bb = LLVMCreateBasicBlockInContext(c->global_context, ".cond_exit");
+    if(ternary->then_expr == NULL)
+    {
+        if(expr->type->kind == TYPE_BOOL)
+        {
+            then = emit_expr(c, ternary->cond_expr);
+            load_rvalue(c, &then);
+            cond = then;
+        }
+        else if(ternary->cond_expr->kind == EXPR_CAST)
+        {
+            then = emit_expr(c, ternary->cond_expr->expr.cast.inner);
+            load_rvalue(c, &then);
+            emit_cast(c, ternary->cond_expr, &then, &cond);
+        }
+        else
+            SIC_UNREACHABLE();
+        load_rvalue(c, &cond);
+        LLVMBuildCondBr(c->builder, cond.value, exit_bb, else_bb);
+    }
+    else
+    {
+        cond = emit_expr(c, ternary->cond_expr);
+        load_rvalue(c, &cond);
+        then_bb = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".cond_then");
+        LLVMBuildCondBr(c->builder, cond.value, then_bb, else_bb);
+        LLVMPositionBuilderAtEnd(c->builder, then_bb);
+        c->cur_bb = then_bb;
+        then = emit_expr(c, ternary->then_expr);
+        load_rvalue(c, &then);
+    }
+    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, else_bb);
+    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, exit_bb);
+    LLVMPositionBuilderAtEnd(c->builder, else_bb);
+    c->cur_bb = else_bb;
+    elss = emit_expr(c, ternary->else_expr);
+    load_rvalue(c, &elss);
+    LLVMBuildBr(c->builder, exit_bb);
+
+    LLVMPositionBuilderAtEnd(c->builder, exit_bb);
+    c->cur_bb = exit_bb;
+    result->value = LLVMBuildPhi(c->builder, get_llvm_type(c, result->type), "");
+    result->kind = GEN_VAL_RVALUE;
+
+    LLVMValueRef values[2] = { then.value, elss.value };
+    LLVMBasicBlockRef blocks[2] = { then_bb, else_bb };
+    LLVMAddIncoming(result->value, values, blocks, 2);
+
+}
+
 static void emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
     ASTExprUnary* unary = &expr->expr.unary;
     // TODO: Make emit_expr always emit l-value, then make a function that
     //       gets the r-value of an l-value for certain emissions.
-    GenValue inner = emit_expr(c, unary->child);
+    GenValue inner = emit_expr(c, unary->inner);
     switch(unary->kind)
     {
     case UNARY_ADDR_OF:

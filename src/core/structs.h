@@ -48,11 +48,13 @@ typedef struct ASTExprCast      ASTExprCast;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct Object*          ASTExprIdent;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
+typedef struct ASTSwap          ASTSwap;
 typedef struct ASTWhile         ASTWhile;
 typedef struct ASTStmt          ASTStmt;
 
@@ -238,7 +240,7 @@ struct ASTExprCall
 
 struct ASTExprCast
 {
-    ASTExpr* expr_to_cast;
+    ASTExpr* inner;
     CastKind kind;
 };
 
@@ -259,9 +261,16 @@ struct ASTExprMAccess
     Object*  member;
 };
 
+struct ASTExprTernary
+{
+    ASTExpr* cond_expr;
+    ASTExpr* then_expr;
+    ASTExpr* else_expr;
+};
+
 struct ASTExprUnary
 {
-    ASTExpr*    child;
+    ASTExpr*    inner;
     UnaryOpKind kind;
 };
 
@@ -286,6 +295,7 @@ struct ASTExpr
         ASTExprConstant constant;
         ASTExprIdent    ident;
         ASTExprMAccess  member_access;
+        ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
     } expr;
@@ -301,6 +311,12 @@ struct ASTIf
 struct ASTReturn
 {
     ASTExpr* ret_expr;
+};
+
+struct ASTSwap
+{
+    ASTExpr* left;
+    ASTExpr* right;
 };
 
 struct ASTWhile
@@ -319,11 +335,12 @@ struct ASTStmt
     {
         ASTAmbiguous    ambiguous;
         ASTBlock        block;
-        ASTDeclaration  single_decl;
-        ASTDeclDA       multi_decl;
         ASTExpr*        expr;
         ASTIf           if_;
+        ASTDeclDA       multi_decl;
         ASTReturn       return_;
+        ASTDeclaration  single_decl;
+        ASTSwap         swap;
         ASTWhile        while_;
     } stmt;
 };

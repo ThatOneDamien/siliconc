@@ -24,19 +24,19 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
-    if(cast->expr.cast.expr_to_cast->kind == EXPR_INVALID)
+    if(cast->expr.cast.inner->kind == EXPR_INVALID)
         return false;
     CastParams params;
     params.sema_context = c;
     params.expr = cast;
-    params.from = cast->expr.cast.expr_to_cast->type;
+    params.from = cast->expr.cast.inner->type;
     params.to   = cast->type;
     params.from_group = s_type_to_group[params.from->kind];
     params.to_group   = s_type_to_group[params.to->kind];
     if(type_equal(params.from, params.to))
     {
         // Essentially delete the cast expression if it does nothing.
-        memcpy(cast, cast->expr.cast.expr_to_cast, sizeof(ASTExpr));
+        memcpy(cast, cast->expr.cast.inner, sizeof(ASTExpr));
         return true;
     }
 
@@ -52,7 +52,7 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
         return false;
 
     if(rule.convert != NULL)
-        rule.convert(cast, cast->expr.cast.expr_to_cast);
+        rule.convert(cast, cast->expr.cast.inner);
 
     return true;
 }
@@ -81,9 +81,8 @@ bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
     ASTExpr* new_cast = expr_to_cast;
     expr_to_cast = MALLOC_STRUCT(ASTExpr);
     memcpy(expr_to_cast, new_cast, sizeof(ASTExpr));
-    new_cast->loc = expr_to_cast->loc;
     new_cast->kind = EXPR_CAST;
-    new_cast->expr.cast.expr_to_cast = expr_to_cast;
+    new_cast->expr.cast.inner = expr_to_cast;
     params.expr = new_cast;
 
     if(!rule.able(&params, false))
@@ -142,7 +141,7 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
         return true;
 
     // TODO: Add bounds checking for warning/error if constant goes out of bounds.
-    if(params->expr->expr.cast.expr_to_cast->kind == EXPR_CONSTANT)
+    if(params->expr->expr.cast.inner->kind == EXPR_CONSTANT)
         return true;
 
     sema_error(params->sema_context, &params->expr->loc, "Narrowing integer type %s to %s requires explicit cast.",
@@ -304,7 +303,7 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
     memcpy(intermediate, cast, sizeof(ASTExpr));
     intermediate->expr.cast.kind = CAST_PTR_TO_INT;
     intermediate->type = g_type_ulong;
-    cast->expr.cast.expr_to_cast = intermediate;
+    cast->expr.cast.inner = intermediate;
     cast->expr.cast.kind = CAST_INT_TO_BOOL;
 }
 
@@ -357,14 +356,14 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_VOID]     = CAST_GROUP_VOID,
     [TYPE_NULLPTR]  = CAST_GROUP_NULLPTR,
     [TYPE_BOOL]     = CAST_GROUP_BOOL,
-    [TYPE_UBYTE]    = CAST_GROUP_INT,
-    [TYPE_USHORT]   = CAST_GROUP_INT,
-    [TYPE_UINT]     = CAST_GROUP_INT,
-    [TYPE_ULONG]    = CAST_GROUP_INT,
     [TYPE_BYTE]     = CAST_GROUP_INT,
+    [TYPE_UBYTE]    = CAST_GROUP_INT,
     [TYPE_SHORT]    = CAST_GROUP_INT,
+    [TYPE_USHORT]   = CAST_GROUP_INT,
     [TYPE_INT]      = CAST_GROUP_INT,
+    [TYPE_UINT]     = CAST_GROUP_INT,
     [TYPE_LONG]     = CAST_GROUP_INT,
+    [TYPE_ULONG]    = CAST_GROUP_INT,
     [TYPE_FLOAT]    = CAST_GROUP_FLOAT,
     [TYPE_DOUBLE]   = CAST_GROUP_FLOAT,
     [TYPE_POINTER]  = CAST_GROUP_PTR,

@@ -672,13 +672,28 @@ static ASTStmt* parse_stmt(Lexer* l)
         stmt->stmt.expr = new_expr(l, EXPR_NOP);
         advance(l);
         return stmt;
-    default:
-        stmt = new_stmt(l, STMT_EXPR_STMT);
-        stmt->stmt.expr = parse_expr(l, PREC_ASSIGN);
-        if(stmt->stmt.expr->kind == EXPR_INVALID ||
-           !consume(l, TOKEN_SEMI))
+    default: {
+        ASTExpr* expr = parse_expr(l, PREC_ASSIGN);
+        if(expr->kind == EXPR_INVALID)
+            goto RECOVER;
+        if(tok_equal(l, TOKEN_SWAP))
+        {
+            stmt = new_stmt(l, STMT_SWAP);
+            advance(l);
+            stmt->stmt.swap.left = expr;
+            stmt->stmt.swap.right = parse_expr(l, PREC_ASSIGN);
+            if(stmt->stmt.swap.right->kind == EXPR_INVALID)
+                goto RECOVER;
+        }
+        else
+        {
+            stmt = new_stmt(l, STMT_EXPR_STMT);
+            stmt->stmt.expr = expr;
+        }
+        if(!consume(l, TOKEN_SEMI))
             goto RECOVER;
         return stmt;
+    }
     }
 RECOVER:
     recover_to(l, s_stmt_recover_list, 2);
@@ -823,10 +838,27 @@ static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
     ty = parse_type_tail(l, ty);
     if(ty == NULL)
         ERROR_AND_RET(BAD_EXPR, l, "Expected a type after keyword \'as\'.");
-    cast->expr.cast.expr_to_cast = expr_to_cast;
+    cast->expr.cast.inner = expr_to_cast;
     cast->type = ty;
 
     return cast;
+}
+
+static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond)
+{
+    ASTExpr* tern = new_expr(l, EXPR_TERNARY);
+    advance(l);
+    if(tok_equal(l, TOKEN_COLON))
+        advance(l);
+    else if((tern->expr.ternary.then_expr = parse_expr(l, PREC_ASSIGN))->kind == EXPR_INVALID ||
+            !consume(l, TOKEN_COLON))
+        return BAD_EXPR;
+    
+    if((tern->expr.ternary.else_expr = parse_expr(l, PREC_TERNARY))->kind == EXPR_INVALID)
+        return BAD_EXPR;
+
+    tern->expr.ternary.cond_expr = cond;
+    return tern;
 }
 
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
@@ -858,7 +890,7 @@ static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
 static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
 {
     ASTExpr* result = new_expr(l, EXPR_POSTFIX);
-    result->expr.unary.child = left;
+    result->expr.unary.inner = left;
     result->expr.unary.kind = tok_to_unary_op(peek(l)->kind);
     advance(l);
     return result;
@@ -885,8 +917,8 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_UNARY);
     TokenKind kind = peek(l)->kind;
     advance(l);
-    expr->expr.unary.child = parse_expr(l, PREC_UNARY_PREFIX);
-    if(expr->expr.unary.child->kind == EXPR_INVALID)
+    expr->expr.unary.inner = parse_expr(l, PREC_UNARY_PREFIX);
+    if(expr->expr.unary.inner->kind == EXPR_INVALID)
         return BAD_EXPR;
     expr->expr.unary.kind = tok_to_unary_op(kind);
     return expr;
@@ -992,7 +1024,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_QUESTION]        = { NULL, NULL, PREC_TERNARY },
+    [TOKEN_QUESTION]        = { NULL, parse_ternary, PREC_TERNARY },
     [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },

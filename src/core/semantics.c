@@ -4,6 +4,7 @@
 static void analyze_function(SemaContext* c, Object* function);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt);
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl);
+static void analyze_swap(SemaContext* c, ASTStmt* stmt);
 
 static inline void push_scope(SemaContext* c);
 static inline void pop_scope(SemaContext* c);
@@ -56,6 +57,63 @@ void semantic_analysis(CompilationUnit* unit)
 
     for(size_t i = 0; i < funcs->size; ++i)
         analyze_function(&context, funcs->data[i]);
+}
+
+void declare_obj(SemaContext* c, Object* obj)
+{
+    if(hashmap_getn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len) != NULL)
+        sema_error(c, &obj->symbol, "Redefinition of symbol \'%.*s\'.", obj->symbol.len, obj->symbol.start);
+    hashmap_putn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len, obj);
+    if(c->cur_func == NULL)
+    {
+        // This is a global variable, declare it in the compilation unit.
+    }
+    else
+        da_append(&c->cur_func->func.local_objs, obj);
+}
+
+Object* find_obj(SemaContext* c, SourceLoc* symbol)
+{
+    for(Scope* sc = c->cur_scope; sc != NULL; sc = sc->parent)
+    {
+        Object* o = hashmap_getn(&sc->vars, symbol->start, symbol->len);
+        if(o != NULL)
+            return o;
+        o = hashmap_getn(&sc->types, symbol->start, symbol->len);
+        if(o != NULL)
+            return o;
+    }
+    
+    return NULL;
+}
+
+bool expr_is_lvalue(SemaContext* c, ASTExpr* expr)
+{
+    switch(expr->kind)
+    {
+    case EXPR_ARRAY_ACCESS:
+    case EXPR_MEMBER_ACCESS:
+        return true;
+    case EXPR_IDENT:
+        if(expr->expr.ident->kind != OBJ_VAR)
+        {
+            sema_error(c, &expr->loc, "Unable to assign object \'%.*s\'.",
+                       expr->expr.ident->symbol.len, expr->expr.ident->symbol.start);
+            return false;
+        }
+        return true;
+    case EXPR_UNARY:
+        if(expr->expr.unary.kind != UNARY_DEREF)
+            goto ERR;
+        return true;
+    default:
+        goto ERR;
+    }
+
+ERR:
+    sema_error(c, &expr->loc, "Expression is not assignable.");
+    return false;
+
 }
 
 static void analyze_function(SemaContext* c, Object* function)
@@ -162,6 +220,9 @@ RETRY:
             analyze_declaration(c, decl);
         return;
     }
+    case STMT_SWAP:
+        analyze_swap(c, stmt);
+        return;
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE: {
@@ -188,33 +249,24 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 
 }
 
-void declare_obj(SemaContext* c, Object* obj)
+static void analyze_swap(SemaContext* c, ASTStmt* stmt)
 {
-    if(hashmap_getn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len) != NULL)
-        sema_error(c, &obj->symbol, "Redefinition of symbol \'%.*s\'.", obj->symbol.len, obj->symbol.start);
-    hashmap_putn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len, obj);
-    if(c->cur_func == NULL)
+    ASTExpr* left = stmt->stmt.swap.left;
+    ASTExpr* right = stmt->stmt.swap.right;
+    analyze_expr(c, left);
+    analyze_expr(c, right);
+    if(left->kind == EXPR_INVALID || right->kind == EXPR_INVALID ||
+       !expr_is_lvalue(c, left) || !expr_is_lvalue(c, right))
+        return;
+
+    if(!type_equal(left->type, right->type))
     {
-        // This is a global variable, declare it in the compilation unit.
+        sema_error(c, &stmt->loc, 
+                   "Operands of swap statement have mismatched types \'%s\' and \'%s\'",
+                   type_to_string(left->type), type_to_string(right->type));
     }
-    else
-        da_append(&c->cur_func->func.local_objs, obj);
 }
 
-Object* find_obj(SemaContext* c, SourceLoc* symbol)
-{
-    for(Scope* sc = c->cur_scope; sc != NULL; sc = sc->parent)
-    {
-        Object* o = hashmap_getn(&sc->vars, symbol->start, symbol->len);
-        if(o != NULL)
-            return o;
-        o = hashmap_getn(&sc->types, symbol->start, symbol->len);
-        if(o != NULL)
-            return o;
-    }
-    
-    return NULL;
-}
 
 static void push_scope(SemaContext* c)
 {

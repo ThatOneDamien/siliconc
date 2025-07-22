@@ -171,6 +171,11 @@ void lexer_advance(Lexer* lexer)
             t->kind = consume(lexer, '=') ? TOKEN_SHL_ASSIGN : TOKEN_SHL;
         else if(consume(lexer, '='))
             t->kind = TOKEN_LE;
+        else if(peek(lexer) == '-' && peek_next(lexer) == '>')
+        {
+            lexer->cur_pos += 2;
+            t->kind = TOKEN_SWAP;
+        }
         else
             t->kind = TOKEN_LT;
         break;
