@@ -11,7 +11,6 @@
 
 static HashEntry* get_entry(HashMap* map, const char* key, size_t len, HashEntry** bucket);
 static void       rehash(HashMap* map);
-static uint64_t   fnv_hash(const char* str, size_t len);
 
 void hashmap_initn(HashMap* map, uint32_t entry_cnt)
 {
@@ -152,13 +151,3 @@ static void rehash(HashMap* map)
     *map = new_map;
 }
 
-static uint64_t fnv_hash(const char* str, size_t len)
-{
-    uint64_t hash = 0xCBF29CE484222325;
-    for(size_t i = 0; i < len; ++i)
-    {
-        hash *= 0x100000001B3;
-        hash ^= (uint8_t)str[i];
-    }
-    return hash;
-}

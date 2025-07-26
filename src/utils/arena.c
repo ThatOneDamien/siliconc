@@ -24,7 +24,7 @@ void arena_init(MemArena* arena, size_t capacity)
 
     while(capacity >= min_cap)
     {
-        base = mmap(0, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        base = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
         if((base != MAP_FAILED && base != NULL) ||
             errno != ENOMEM)
             break;

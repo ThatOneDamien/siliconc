@@ -29,3 +29,15 @@ char* str_format(const char* restrict fmt, ...)
     buf[size] = '\0';
     return buf;
 }
+
+char* str_dupn(const char* str, size_t len)
+{
+    SIC_ASSERT(str != NULL);
+    SIC_ASSERT(len != 0);
+    // TODO: Replace this with dedicated string arena allocation
+    //       to reduce fragmentation.
+    char* res = MALLOC(len + 1);
+    memcpy(res, str, len);
+    res[len] = '\0';
+    return res;
+}

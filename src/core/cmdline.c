@@ -9,7 +9,6 @@ static void print_help(void);
 void process_cmdln_args(int argc, char* argv[])
 {
     memset(&g_args, 0, sizeof(Cmdline));
-    da_init(&g_args.input_files, 16);
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] != '-') // Not an argument, only an input file.

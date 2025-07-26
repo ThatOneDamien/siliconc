@@ -345,8 +345,7 @@ static inline void extract_identifier(Lexer* lexer, Token* t)
         next(lexer);
 
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-    t->kind = sym_map_getn(t->loc.start, t->loc.len);
-    if(t->kind == TOKEN_INVALID)
+    if((t->sym = sym_map_getn(t->loc.start, t->loc.len, &t->kind)) == NULL)
         t->kind = TOKEN_IDENT;
 }
 

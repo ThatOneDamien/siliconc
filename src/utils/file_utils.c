@@ -183,8 +183,6 @@ const char* ft_to_extension(FileType ft)
 SIFile create_tempfile(FileType ft)
 {
     SIC_ASSERT(ft != FT_UNKNOWN);
-    if(s_tempfiles.capacity == 0)
-        da_init(&s_tempfiles, 0);
     static const char template[21] = "/tmp/siliconc-XXXXXX";
     const char* ext = ft_to_extension(ft);
     int ext_len = strlen(ext);

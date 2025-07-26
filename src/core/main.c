@@ -96,7 +96,7 @@ int main(int argc, char* argv[])
     resolve_dependency_paths(&crt_path, &gcc_path);
 
     StringDA cmd;
-    da_init(&cmd, 32);
+    da_init(&cmd, 20 + g_compiler.linker_inputs.size); // The 20 is how many appends will be done
     da_append(&cmd, "ld");
     da_append(&cmd, "-m");
     da_append(&cmd, "elf_x86_64");

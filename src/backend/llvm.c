@@ -975,7 +975,7 @@ static void emit_assign(CodegenContext* c, GenValue* ptr, GenValue* value, GenVa
         LLVMBuildMemCpy(c->builder, 
                         ptr->value, type_alignment(ptr->type), 
                         value->value, type_alignment(value->type), 
-                        LLVMConstInt(LLVMInt32Type(), type_size(value->type), false));
+                        LLVMConstInt(LLVMInt64Type(), type_size(value->type), false));
     }
     else
         LLVMBuildStore(c->builder, value->value, ptr->value);

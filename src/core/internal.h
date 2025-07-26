@@ -58,9 +58,17 @@ ASTExpr* parse_ambiguous_expr(Lexer* l);
 void semantic_analysis(CompilationUnit* unit);
 
 // Symbol map functions
-void      sym_map_init(void);
-TokenKind sym_map_get(const char* str);
-TokenKind sym_map_getn(const char* str, size_t len);
+void   sym_map_init(void);
+Symbol sym_map_addn(const char* str, uint32_t len, TokenKind* kind);
+Symbol sym_map_getn(const char* str, uint32_t len, TokenKind* kind);
+static inline Symbol sym_map_add(const char* str, TokenKind* kind)
+{
+    return sym_map_addn(str, strlen(str), kind);
+}
+static inline Symbol sym_map_get(const char* str, TokenKind* kind)
+{ 
+    return sym_map_getn(str, strlen(str), kind);
+}
 
 // Type functions
 Type*       type_from_token(TokenKind type_token);

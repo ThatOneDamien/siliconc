@@ -22,13 +22,15 @@
 #define da_reserve(da, desired_cap)                                         \
     do                                                                      \
     {                                                                       \
-        if((da)->capacity < (desired_cap))                                  \
+        if((da)->data == NULL)                                              \
+            da_init(da, desired_cap);                                       \
+        else if((da)->capacity < (desired_cap))                             \
         {                                                                   \
             (da)->capacity = (desired_cap) << 1;                            \
             void* __new_da = MALLOC((da)->capacity *                        \
                                     sizeof(*((da)->data)));                 \
             memcpy(__new_da, (da)->data,                                    \
-                   (da)->size * sizeof(*((da)->data)));                     \
+                (da)->size * sizeof(*((da)->data)));                        \
             (da)->data = __new_da;                                          \
                                                                             \
         }                                                                   \

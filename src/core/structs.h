@@ -7,6 +7,7 @@
 #define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
 
 // Compiler-Wide Data Structures
+typedef const char*          Symbol;
 typedef struct HashEntry     HashEntry;
 typedef struct HashMap       HashMap;
 typedef struct MemArena      MemArena;
@@ -128,6 +129,8 @@ struct Token
             uint64_t val;
             size_t   width;
         } chr;
+
+        Symbol sym;
     };
 };
 

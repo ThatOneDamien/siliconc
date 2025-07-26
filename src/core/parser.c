@@ -182,9 +182,6 @@ void parse_unit(CompilationUnit* unit)
     SIC_ASSERT(unit != NULL);
     Lexer l;
     lexer_init_unit(&l, unit);
-    da_init(&unit->funcs, 0);
-    da_init(&unit->types, 0);
-    da_init(&unit->vars, 0);
     // if(try_consume(&l, TOKEN_MODULE))
     // {
     // }
@@ -266,7 +263,6 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
     ObjFunc* comps = &func->func;
     comps->signature = CALLOC_STRUCT(FuncSignature);
     comps->signature->ret_type = ret_type;
-    da_init(&comps->signature->params, 8);
 
     advance_many(l, 2);
     if(!parse_func_params(l, &comps->signature->params, &comps->signature->is_var_arg))
@@ -329,7 +325,6 @@ static ObjAccess parse_access(Lexer* l)
 static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
 {
     Object* obj = new_obj(l, kind, access, ATTR_NONE);
-    da_init(&obj->struct_.members, 8);
     CONSUME_OR_RET(NULL, l, TOKEN_IDENT); // TODO: Change this to allow anonymous structs
 
     CONSUME_OR_RET(NULL, l, TOKEN_LBRACE);
@@ -780,7 +775,6 @@ static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjA
 
     decl_stmt->kind = STMT_MULTI_DECL;
     ASTDeclDA* decl_list = &decl_stmt->stmt.multi_decl;
-    da_init(decl_list, 8);
     decl_list->data[0].obj       = var;
     decl_list->data[0].init_expr = expr;
     decl_list->size = 1;
@@ -860,19 +854,17 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
 {
     ASTExpr* call = new_expr(l, EXPR_FUNC_CALL);
-    advance(l);
     call->expr.call.func_expr = func_expr;
-    if(try_consume(l, TOKEN_RPAREN)) // void return
-        return call;
-    
     ASTExprDA* args = &call->expr.call.args;
-    da_init(args, 8);
+    advance(l);
+
     da_append(args, parse_expr(l, PREC_ASSIGN));
     if(args->data[0]->kind == EXPR_INVALID)
         return BAD_EXPR;
 
     while(!try_consume(l, TOKEN_RPAREN))
     {
+
         CONSUME_OR_RET(BAD_EXPR, l, TOKEN_COMMA);
 
         da_append(args, parse_expr(l, PREC_ASSIGN));

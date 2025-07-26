@@ -156,9 +156,11 @@ static inline void sic_fatal_error(const char* restrict message, ...)
 extern ScratchBuffer g_scratch;
 
 PRINTF_FMT(1, 2)
-char* str_format(const char* restrict fmt, ...);
-PRINTF_FMT(1, 2)
 void scratch_appendf(const char* restrict fmt, ...);
+PRINTF_FMT(1, 2)
+char* str_format(const char* restrict fmt, ...);
+char* str_dupn(const char* str, size_t len);
+static inline char* str_dup(const char* str) { return str_dupn(str, strlen(str)); }
 
 static inline void scratch_appendc(char c) 
 {
@@ -225,6 +227,16 @@ static inline void* crealloc(void* ptr, size_t size)
 #define CALLOC_STRUCT(type) global_arena_calloc(1, sizeof(type), _Alignof(type))
 #endif
 
+#define FNV_SEED   0xCBF29CE484222325
+#define FNV_FACTOR 0x100000001B3
+
+static inline uint64_t fnv_hash(const char* str, size_t len)
+{
+    uint64_t hash = FNV_SEED;
+    for(size_t i = 0; i < len; ++i)
+        hash = ((uint8_t)str[i] ^ hash) * FNV_FACTOR;
+    return hash;
+}
 
 static inline uint32_t next_pow_of_2(uint32_t value)
 {
