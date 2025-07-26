@@ -38,9 +38,6 @@ typedef struct ModuleDA         ModuleDA;
 typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
-typedef struct Type*            ASTAmbiguous;
-typedef struct ASTBlock         ASTBlock;
-typedef struct ASTDeclaration   ASTDeclaration;
 typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
@@ -52,6 +49,10 @@ typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExpr          ASTExpr;
+typedef struct Type*            ASTAmbiguous;
+typedef struct ASTBlock         ASTBlock;
+typedef struct ASTDeclaration   ASTDeclaration;
+typedef struct ASTFor           ASTFor;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
 typedef struct ASTSwap          ASTSwap;
@@ -208,16 +209,6 @@ struct ASTDeclDA
     size_t          size;
 };
 
-struct ASTBlock
-{
-    ASTStmt* body;
-};
-
-struct ASTDeclaration
-{
-    Object*  obj;
-    ASTExpr* init_expr;
-};
 
 struct ASTExprAAccess
 {
@@ -301,6 +292,25 @@ struct ASTExpr
     } expr;
 };
 
+struct ASTBlock
+{
+    ASTStmt* body;
+};
+
+struct ASTDeclaration
+{
+    Object*  obj;
+    ASTExpr* init_expr;
+};
+
+struct ASTFor
+{
+    ASTStmt* init_stmt;
+    ASTExpr* cond_expr;
+    ASTExpr* loop_expr;
+    ASTStmt* body;
+};
+
 struct ASTIf
 {
     ASTExpr* cond;
@@ -336,6 +346,7 @@ struct ASTStmt
         ASTAmbiguous    ambiguous;
         ASTBlock        block;
         ASTExpr*        expr;
+        ASTFor          for_;
         ASTIf           if_;
         ASTDeclDA       multi_decl;
         ASTReturn       return_;
@@ -363,9 +374,16 @@ struct ObjFunc
 struct ObjStruct
 {
     ObjectDA      members;
+    union
+    {
+        struct
+        {
+            uint32_t size;
+            uint32_t align;
+        };
+        Type* largest_type;
+    };
     ResolveStatus status;
-    uint32_t      size;
-    uint32_t      align;
 };
 
 struct ObjVar

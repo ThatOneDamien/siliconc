@@ -14,6 +14,10 @@ CompilerContext g_compiler;
 static void compile(const SIFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
+#ifdef SI_DEBUG
+static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", global_arena_allocated()); }
+#endif
+
 int main(int argc, char* argv[])
 {
     if(argc < 1)
@@ -29,6 +33,10 @@ int main(int argc, char* argv[])
     sym_map_init();
     parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
+#ifdef SI_DEBUG
+    if(g_args.emit_debug_output)
+        atexit(print_debug_stats);
+#endif
 
     if(g_args.ir_kind == IR_LLVM)
         llvm_initialize();
@@ -146,29 +154,36 @@ void run_subprocess(char** cmd)
         exit(status);
 }
 
+#ifdef SI_DEBUG
+#define DBG_OUTPUT(x) if(g_args.emit_debug_output) x
+#else
+#define DBG_OUTPUT(x)
+#endif
+
 static void compile(const SIFile* input)
 {
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
 
     unit->file = *input;
 
+    DBG_OUTPUT({
+        CompilationUnit debug_unit = *unit;
+        Lexer debug_lexer;
+        lexer_init_unit(&debug_lexer, &debug_unit);
+        print_all_tokens(&debug_lexer);
+    });
     parse_unit(unit);
-#ifdef SI_DEBUG
-    if(g_args.emit_debug_output)
-    {
+    DBG_OUTPUT({
         print_unit(unit);
         printf("\n\n\n");
-    }
-#endif
+    })
 
     semantic_analysis(unit);
-#ifdef SI_DEBUG
-    if(g_args.emit_debug_output)
-    {
+
+    DBG_OUTPUT({
         print_unit(unit);
         printf("\n\n\n");
-    }
-#endif
+    })
 }
 
 static void resolve_dependency_paths(char** crt, char** gcclib)

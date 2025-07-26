@@ -107,11 +107,12 @@ static inline bool hashmap_delete(HashMap* map, const char* key)
 }
 
 // arena.c - Arena functions
-void  global_arenas_init(void);
-void  arena_init(MemArena* arena, size_t capacity);
-void* arena_alloc(MemArena* arena, size_t size, uint32_t align);
-void* global_arena_malloc(size_t size, uint32_t align);
-void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
+void   arena_init(MemArena* arena, size_t capacity);
+void*  arena_alloc(MemArena* arena, size_t size, uint32_t align);
+void   global_arenas_init(void);
+void*  global_arena_malloc(size_t size, uint32_t align);
+void*  global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
+size_t global_arena_allocated();
 
 // error.c - Error functions
 extern int g_error_cnt;
@@ -260,6 +261,11 @@ static inline bool c_is_alpha(char c)
 static inline bool c_is_num(char c)
 {
     return c >= '0' && c <= '9';
+}
+
+static inline bool c_is_undnum(char c)
+{
+    return c_is_num(c) || c == '_';
 }
 
 static inline bool c_is_alphanum(char c)

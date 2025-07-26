@@ -123,7 +123,7 @@ SIFile convert_file_to(const SIFile* file, FileType desired)
 
     const char* ext = ft_to_extension(desired);
     size_t ext_len = strlen(ext);
-    char* new_name = malloc(filename_len + ext_len + 1);
+    char* new_name = cmalloc(filename_len + ext_len + 1);
     memcpy(new_name, file->full_path, filename_len);
     strncpy(new_name + filename_len, ext, ext_len);
     new_name[filename_len + ext_len] = '\0';
@@ -188,7 +188,7 @@ SIFile create_tempfile(FileType ft)
     static const char template[21] = "/tmp/siliconc-XXXXXX";
     const char* ext = ft_to_extension(ft);
     int ext_len = strlen(ext);
-    char* tmppath = malloc(sizeof(template) + ext_len);
+    char* tmppath = cmalloc(sizeof(template) + ext_len);
     memcpy(tmppath, template, sizeof(template) - 1);
     memcpy(tmppath + sizeof(template) - 1, ext, ext_len + 1);
 

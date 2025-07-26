@@ -2,6 +2,8 @@
 #include "utils/da.h"
 #include "utils/lib.h"
 
+#include <float.h>
+
 typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
 typedef ASTExpr* (*ExprInfixFunc)(Lexer*, ASTExpr*);
 typedef struct ExprParseRule ExprParseRule;
@@ -17,7 +19,7 @@ static bool      parse_top_level(Lexer* l);
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
 static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
-static Object*   parse_struct_decl(Lexer* l, ObjAccess access);
+static Object*   parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access);
 
 // Grammar parsing
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
@@ -27,6 +29,8 @@ static Type*    parse_type_tail(Lexer* l, Type* base_type);
 static bool     parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
 static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_stmt(Lexer* l);
+static ASTStmt* parse_expr_stmt(Lexer* l);
+static ASTStmt* parse_decl_or_revert(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjAttr attribs);
 static ASTExpr* parse_expr(Lexer* l, OpPrecedence precedence);
 
@@ -73,10 +77,7 @@ static inline bool expect(Lexer* l, TokenKind kind)
 
 static inline void advance(Lexer* l)
 {
-    do
-    {
-        lexer_advance(l);
-    } while(tok_equal(l, TOKEN_INVALID));
+    lexer_advance(l);
 }
 
 static inline void advance_many(Lexer* l, uint32_t steps)
@@ -136,7 +137,6 @@ static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t
     while(true)
     {
         TokenKind kind = peek(l)->kind;
-        SIC_ASSERT(kind != TOKEN_INVALID);
         if(kind == TOKEN_EOF)
             return;
         for(size_t i = 0; i < count; ++i)
@@ -163,6 +163,7 @@ static inline void recover_top_level(Lexer* l)
 
 static ASTStmt s_badstmt = {0};
 static ASTExpr s_badexpr = {0};
+static ASTStmt s_nopstmt = { .kind = STMT_NOP };
 static ExprParseRule expr_rules[__TOKEN_COUNT];
 
 #define ERROR_AND_RET(ret_val, l, ...)   do { parser_error(l, __VA_ARGS__); return ret_val; } while(0)
@@ -170,6 +171,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT];
 #define EXPECT_OR_RET(ret_val, l, kind)  do { if(!expect(l, kind)) return ret_val; } while(0)
 #define BAD_STMT (&s_badstmt)
 #define BAD_EXPR (&s_badexpr)
+#define NOP_STMT (&s_nopstmt)
 
 void parser_init(void)
 {
@@ -211,6 +213,7 @@ ASTExpr* parse_ambiguous_expr(Lexer* l)
 static bool parse_top_level(Lexer* l)
 {
     ObjAccess access = parse_access(l);
+    ObjKind kind = OBJ_UNION;
     switch(peek(l)->kind)
     {
     case TOKEN_BITFIELD:
@@ -218,14 +221,16 @@ static bool parse_top_level(Lexer* l)
     case TOKEN_MODULE:
         SIC_TODO();
     case TOKEN_STRUCT:
+        kind = OBJ_STRUCT;
+        FALLTHROUGH;
+    case TOKEN_UNION:
         advance(l);
-        Object* struct_ = parse_struct_decl(l, access);
+        Object* struct_ = parse_struct_decl(l, kind, access);
         if(struct_ == NULL)
             return false;
         da_append(&l->unit->types, struct_);
         return true;
     case TOKEN_TYPEDEF:
-    case TOKEN_UNION:
         SIC_TODO();
     default: {
         Type* type;
@@ -321,14 +326,11 @@ static ObjAccess parse_access(Lexer* l)
     return access;
 }
 
-static Object* parse_struct_decl(Lexer* l, ObjAccess access)
+static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
 {
-    Object* obj = new_obj(l, OBJ_STRUCT, access, ATTR_NONE);
+    Object* obj = new_obj(l, kind, access, ATTR_NONE);
     da_init(&obj->struct_.members, 8);
-    if(tok_equal(l, TOKEN_IDENT))
-        advance(l);
-    else // If there is no identifier, we assume it is an anonymous struct
-        obj->symbol.start = NULL;
+    CONSUME_OR_RET(NULL, l, TOKEN_IDENT); // TODO: Change this to allow anonymous structs
 
     CONSUME_OR_RET(NULL, l, TOKEN_LBRACE);
     if(tok_equal(l, TOKEN_RBRACE))
@@ -344,28 +346,31 @@ static Object* parse_struct_decl(Lexer* l, ObjAccess access)
         if(ty == NULL)
             ERROR_AND_RET(NULL, l, "Expected type specifier.");
 
-        // For now we don't allow anonymous members. This will change
-        EXPECT_OR_RET(obj, l, TOKEN_IDENT);
-
-        SourceLoc* this_sym = &peek(l)->loc;
-        for(uint32_t i = 0; i < member_idx; ++i)
+        do
         {
-            SourceLoc* other_sym = &members->data[i]->symbol;
-            if(other_sym->len == this_sym->len &&
-               memcmp(other_sym->start, this_sym->start, this_sym->len) == 0)
-            {
-                parser_error(l, "Duplicate member \'%.*s\'",
-                             this_sym->len, this_sym->start);
-                goto SKIP_DUPLICATE;
-            }
-        }
-        Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
-        member->var.type = ty;
-        member->var.member_idx = member_idx++;
-        da_append(members, member);
+            // For now we don't allow anonymous members. This will change
+            EXPECT_OR_RET(obj, l, TOKEN_IDENT);
 
+            SourceLoc* this_sym = &peek(l)->loc;
+            for(uint32_t i = 0; i < member_idx; ++i)
+            {
+                SourceLoc* other_sym = &members->data[i]->symbol;
+                if(other_sym->len == this_sym->len &&
+                   memcmp(other_sym->start, this_sym->start, this_sym->len) == 0)
+                {
+                    parser_error(l, "Duplicate member \'%.*s\'",
+                                this_sym->len, this_sym->start);
+                    goto SKIP_DUPLICATE;
+                }
+            }
+            Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
+            member->var.type = ty;
+            member->var.member_idx = member_idx++;
+            da_append(members, member);
 SKIP_DUPLICATE:
-        advance(l);
+            advance(l);
+        } while(try_consume(l, TOKEN_COMMA));
+
         CONSUME_OR_RET(obj, l, TOKEN_SEMI);
     }
 
@@ -568,34 +573,9 @@ static ASTStmt* parse_stmt_block(Lexer* l)
     {
         if(tok_equal(l, TOKEN_EOF))
             ERROR_AND_RET(BAD_STMT, l, "No closing }.");
-        Lexer copy = *l;
-        Type* type;
-        ObjAttr attribs = ATTR_NONE;
-        if(!parse_type_base(l, &type, &attribs))
-        {
-            // Ambiguous type base, could be expression or
-            // declaration.
-            cur_stmt->next = new_stmt(l, STMT_AMBIGUOUS);
-            cur_stmt->next->stmt.ambiguous = type;
+        cur_stmt->next = parse_stmt(l);
+        if(cur_stmt->kind != STMT_INVALID)
             cur_stmt = cur_stmt->next;
-            recover_to(l, s_stmt_recover_list, 2);
-            try_consume(l, TOKEN_SEMI);
-            continue;
-        }
-        type = parse_type_tail(l, type);
-
-        if(type != NULL && tok_equal(l, TOKEN_IDENT))
-        {
-            cur_stmt->next = parse_declaration(l, NULL, type, attribs);
-            if(cur_stmt->next->kind == STMT_INVALID)
-                continue;
-        }
-        else
-        {
-            *l = copy;
-            cur_stmt->next = parse_stmt(l);
-        }
-        cur_stmt = cur_stmt->next;
     }
 
     block->stmt.block.body = head.next;
@@ -611,6 +591,41 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_LBRACE:
         stmt = parse_stmt_block(l);
         return stmt;
+    case TOKEN_FOR: {
+        stmt = new_stmt(l, STMT_FOR);
+        ASTFor* for_stmt = &stmt->stmt.for_;
+        advance(l);
+        if(!consume(l, TOKEN_LPAREN))
+            goto RECOVER;
+
+        if(try_consume(l, TOKEN_SEMI))
+            for_stmt->init_stmt = NULL;
+        else
+        {
+            if((for_stmt->init_stmt = parse_decl_or_revert(l)) == NULL)
+                for_stmt->init_stmt = parse_expr_stmt(l);
+            
+            if(for_stmt->init_stmt->kind == STMT_INVALID)
+                goto RECOVER;
+        }
+
+        if(try_consume(l, TOKEN_SEMI))
+            for_stmt->cond_expr = NULL;
+        else if((for_stmt->cond_expr = parse_expr(l, PREC_ASSIGN))->kind == EXPR_INVALID ||
+                !consume(l, TOKEN_SEMI))
+            goto RECOVER;
+        
+        if(try_consume(l, TOKEN_RPAREN))
+            for_stmt->loop_expr = NULL;
+        else if((for_stmt->loop_expr = parse_expr(l, PREC_ASSIGN))->kind == EXPR_INVALID ||
+                !consume(l, TOKEN_RPAREN))
+            goto RECOVER;
+
+        for_stmt->body = parse_stmt(l);
+        if(for_stmt->body->kind == STMT_INVALID)
+            goto RECOVER;
+        return stmt;
+    }
     case TOKEN_IF: {
         stmt = new_stmt(l, STMT_IF);
         ASTIf* if_stmt = &stmt->stmt.if_;
@@ -668,11 +683,12 @@ static ASTStmt* parse_stmt(Lexer* l)
         return stmt;
     }
     case TOKEN_SEMI:
-        stmt = new_stmt(l, STMT_EXPR_STMT);
-        stmt->stmt.expr = new_expr(l, EXPR_NOP);
         advance(l);
-        return stmt;
+        return NOP_STMT;
     default: {
+        stmt = parse_decl_or_revert(l);
+        if(stmt != NULL)
+            return stmt->kind == STMT_INVALID ? BAD_STMT : stmt;
         ASTExpr* expr = parse_expr(l, PREC_ASSIGN);
         if(expr->kind == EXPR_INVALID)
             goto RECOVER;
@@ -682,22 +698,61 @@ static ASTStmt* parse_stmt(Lexer* l)
             advance(l);
             stmt->stmt.swap.left = expr;
             stmt->stmt.swap.right = parse_expr(l, PREC_ASSIGN);
-            if(stmt->stmt.swap.right->kind == EXPR_INVALID)
+            if(stmt->stmt.swap.right->kind == EXPR_INVALID ||
+               !consume(l, TOKEN_SEMI))
                 goto RECOVER;
+            return stmt;
         }
-        else
-        {
-            stmt = new_stmt(l, STMT_EXPR_STMT);
-            stmt->stmt.expr = expr;
-        }
+
         if(!consume(l, TOKEN_SEMI))
             goto RECOVER;
+
+        stmt = new_stmt(l, STMT_EXPR_STMT);
+        stmt->stmt.expr = expr;
         return stmt;
     }
     }
 RECOVER:
     recover_to(l, s_stmt_recover_list, 2);
     return BAD_STMT;
+}
+
+static ASTStmt* parse_expr_stmt(Lexer* l)
+{
+    ASTExpr* expr = parse_expr(l, PREC_ASSIGN);
+    if(expr->kind == EXPR_INVALID || !consume(l, TOKEN_SEMI))
+        return BAD_STMT;
+    ASTStmt* stmt = new_stmt(l, STMT_EXPR_STMT);
+    stmt->stmt.expr = expr;
+    return stmt;
+}
+
+static ASTStmt* parse_decl_or_revert(Lexer* l)
+{
+    Lexer copy = *l;
+    Type* type;
+    ObjAttr attribs = ATTR_NONE;
+    ASTStmt* stmt;
+    if(!parse_type_base(l, &type, &attribs))
+    {
+        // Ambiguous type base, could be expression or
+        // declaration.
+        stmt = new_stmt(l, STMT_AMBIGUOUS);
+        stmt->stmt.ambiguous = type;
+        recover_to(l, s_stmt_recover_list, 2);
+        try_consume(l, TOKEN_SEMI);
+        return stmt;
+    }
+    type = parse_type_tail(l, type);
+
+    if(type == NULL || !tok_equal(l, TOKEN_IDENT))
+    {
+        *l = copy;
+        return NULL;
+    }
+
+    stmt = parse_declaration(l, NULL, type, attribs);
+    return stmt->kind == STMT_INVALID ? BAD_STMT : stmt;
 }
 
 static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjAttr attribs)
@@ -928,6 +983,7 @@ static ASTExpr* parse_int_literal(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_INTEGER;
+    advance(l);
 
     // TODO: Deal with the prefix for hex, octal, binary
 
@@ -938,17 +994,84 @@ static ASTExpr* parse_int_literal(Lexer* l)
         val *= 10;
         val += expr->loc.start[i] - '0';
         if(prev > val)
-        {
-            parser_error(l, "Integer value exceeds maximum possible 64 bit value.");
-            advance(l);
-            return BAD_EXPR;
-        }
+            ERROR_AND_RET(BAD_EXPR, l, "Integer value exceeds maximum possible 64 bit value.");
     }
 
     expr->expr.constant.val.i = val;
     expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
+    return expr;
+}
+
+static ASTExpr* parse_char_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    expr->expr.constant.val.i = peek(l)->chr.val;
+    expr->type = g_type_ubyte;
+    advance(l);
+    return expr;
+}
+
+static ASTExpr* parse_float_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_FLOAT;
+    advance(l);
+    double val = 0.0f;
+    uint32_t index = 0;
+    while(true)
+    {
+        if(index >= expr->loc.len)
+            goto END;
+        char c = expr->loc.start[index];
+        if(!c_is_num(c))
+            break;
+        double prev = val;
+        val *= 10.0;
+        val += (double)(c - '0');
+        if(prev > val)
+            ERROR_AND_RET(BAD_EXPR, l, "Float value exceeds maximum double value.");
+        index++;
+    }
+    
+    if(expr->loc.start[index] == '.')
+    {
+        index++;
+        double factor = 1;
+        while(true)
+        {
+            if(index >= expr->loc.len)
+                goto END;
+            char c = expr->loc.start[index];
+            if(!c_is_num(c))
+                break;
+            factor *= 0.1;
+            val += (double)(c - '0') * factor;
+            index++;
+        }
+    }
+
+END:
+    expr->type = val > FLT_MAX ? g_type_double : g_type_float;
+    expr->expr.constant.val.f = val;
+    return expr;
+}
+
+static ASTExpr* parse_string_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_STRING;
+
+    // TODO: Add capability to concat multiple string literals if they are
+    //       side-by-side
+    expr->expr.constant.val.s = peek(l)->str.val;
+    expr->type = CALLOC_STRUCT(Type);
+    expr->type->kind = TYPE_SS_ARRAY;
+    expr->type->status = STATUS_RESOLVED;
+    expr->type->array.elem_type = g_type_ubyte; // TODO: Add char type, make this the underlying type
+    expr->type->array.ss_size = peek(l)->str.len + 1;
     advance(l);
     return expr;
 }
@@ -973,39 +1096,11 @@ static ASTExpr* parse_nullptr(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_char_literal(Lexer* l)
-{
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
-    expr->expr.constant.val.i = peek(l)->chr.val;
-    expr->type = g_type_ubyte;
-    advance(l);
-    return expr;
-}
-
-static ASTExpr* parse_string_literal(Lexer* l)
-{
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_STRING;
-
-    // TODO: Add capability to concat multiple string literals if they are
-    //       side-by-side
-    expr->expr.constant.val.s = peek(l)->str.val;
-    expr->type = CALLOC_STRUCT(Type);
-    expr->type->kind = TYPE_SS_ARRAY;
-    expr->type->status = STATUS_RESOLVED;
-    expr->type->array.elem_type = g_type_ubyte; // TODO: Add char type, make this the underlying type
-    expr->type->array.ss_size = peek(l)->str.len + 1;
-    advance(l);
-    return expr;
-}
-
-
 static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
     [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
     [TOKEN_CHAR_LITERAL]    = { parse_char_literal, NULL, PREC_NONE },
-    [TOKEN_FLOAT_LITERAL]   = { NULL, NULL, PREC_NONE },
+    [TOKEN_FLOAT_LITERAL]   = { parse_float_literal, NULL, PREC_NONE },
     [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
     [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
     [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },

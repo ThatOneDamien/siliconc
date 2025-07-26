@@ -2,6 +2,10 @@
 
 static const char* s_tok_strs[] = {
     [TOKEN_IDENT]           = "identifier",
+    [TOKEN_INT_LITERAL]     = "Int Literal",
+    [TOKEN_CHAR_LITERAL]    = "Char Literal",
+    [TOKEN_FLOAT_LITERAL]   = "Float Literal",
+    [TOKEN_STRING_LITERAL]  = "String Literal",
     [TOKEN_AMP]             = "&",
     [TOKEN_ASTERISK]        = "*",
     [TOKEN_LOG_NOT]         = "!",
@@ -52,6 +56,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_LSHR_ASSIGN]     = ">>=",
     [TOKEN_ASHR_ASSIGN]     = ">>>=",
     [TOKEN_SHL_ASSIGN]      = "<<=",
+
     [TOKEN_AS]              = "as",
     [TOKEN_BITFIELD]        = "bitfield",
     [TOKEN_CONST]           = "const",
@@ -59,6 +64,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_ENUM]            = "enum",
     [TOKEN_EXTERN]          = "extern",
     [TOKEN_FALSE]           = "false",
+    [TOKEN_FOR]             = "for",
     [TOKEN_IF]              = "if",
     [TOKEN_MODULE]          = "mod",
     [TOKEN_NULLPTR]         = "nullptr",

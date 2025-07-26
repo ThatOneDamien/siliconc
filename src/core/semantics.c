@@ -104,16 +104,14 @@ bool expr_is_lvalue(SemaContext* c, ASTExpr* expr)
         return true;
     case EXPR_UNARY:
         if(expr->expr.unary.kind != UNARY_DEREF)
-            goto ERR;
+            break;
         return true;
     default:
-        goto ERR;
+        break;
     }
 
-ERR:
     sema_error(c, &expr->loc, "Expression is not assignable.");
     return false;
-
 }
 
 static void analyze_function(SemaContext* c, Object* function)
@@ -178,6 +176,20 @@ RETRY:
     case STMT_EXPR_STMT:
         analyze_expr(c, stmt->stmt.expr);
         return;
+    case STMT_FOR: {
+        ASTFor* for_stmt = &stmt->stmt.for_;
+        if(for_stmt->init_stmt != NULL)
+            analyze_stmt(c, for_stmt->init_stmt);
+        if(for_stmt->cond_expr != NULL)
+        {
+            analyze_expr(c, for_stmt->cond_expr);
+            implicit_cast(c, for_stmt->cond_expr, g_type_bool);
+        }
+        if(for_stmt->loop_expr != NULL)
+            analyze_expr(c, for_stmt->loop_expr);
+        analyze_stmt(c, for_stmt->body);
+        return;
+    }
     case STMT_IF: {
         ASTIf* if_stmt = &stmt->stmt.if_;
         analyze_expr(c, if_stmt->cond);
@@ -194,6 +206,8 @@ RETRY:
                 analyze_declaration(c, decl_list->data + i);
         return;
     }
+    case STMT_NOP:
+        return;
     case STMT_RETURN: {
         Type* ret_type = c->cur_func->func.signature->ret_type;
         if(stmt->stmt.return_.ret_expr != NULL)

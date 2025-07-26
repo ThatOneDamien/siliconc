@@ -1,18 +1,12 @@
-// This is a comment, it should not appear in the lexer's output
-/* 
- * This is a multiline comment.
- * This should also not appear in the lexer's output.
- */
-
 priv extern void printf(ubyte* fmt, ...);
 
 pub uint main(int argc, ubyte** argv)
 {
-    ubyte* bruh = "okay";
-    int c = 0;
-    uint d = 4;
-    printf("%d %d\n", c, d);
-    d <-> d;
-    printf("%d %d\n", c, d);
-    return 0;
+    float[2] b;
+    b[0] = 0.0f;
+    b[1] = 1.0f;
+    float[2] c = b;
+    for(int i = 0; i < 2; ++i)
+        printf("%f\n", c[i]);
+    return 1;
 }

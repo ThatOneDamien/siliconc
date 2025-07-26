@@ -22,17 +22,22 @@ static inline const char* debug_type_to_str(Type* type)
     return type_to_string(type);
 }
 
-void print_all_tokens(Lexer lexer)
+static const char* debug_tok_to_string(TokenKind kind)
 {
-    while(lexer.la_buf.buf[lexer.la_buf.head].kind != TOKEN_EOF)
+    return kind == TOKEN_INVALID ? "Invalid" : tok_kind_to_str(kind);
+}
+
+void print_all_tokens(Lexer* lexer)
+{
+    while(lexer->la_buf.buf[lexer->la_buf.head].kind != TOKEN_EOF)
     {
-        Token* tok = lexer.la_buf.buf + lexer.la_buf.head;
+        Token* tok = lexer->la_buf.buf + lexer->la_buf.head;
         printf("%-15s: Len: %-4u   %.*s\n", 
-               tok_kind_to_str(tok->kind),
+               debug_tok_to_string(tok->kind),
                tok->loc.len,
                (int)tok->loc.len, 
                tok->loc.start);
-        lexer_advance(&lexer);
+        lexer_advance(lexer);
     }
 }
 
@@ -108,6 +113,12 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int len
     case STMT_EXPR_STMT:
         print_expr(stmt->stmt.expr, depth + 1, NULL, 0);
         return;
+    case STMT_FOR:
+        print_stmt(stmt->stmt.for_.init_stmt, depth + 1, "init", 4);
+        print_expr(stmt->stmt.for_.cond_expr, depth + 1, "cond", 4);
+        print_expr(stmt->stmt.for_.loop_expr, depth + 1, "loop", 4);
+        print_stmt(stmt->stmt.for_.body, depth + 1, "body", 4);
+        return;
     case STMT_IF:
         print_expr(stmt->stmt.if_.cond, depth + 1, "cond", 4);
         print_stmt(stmt->stmt.if_.then_stmt, depth + 1, "then", 4);
@@ -122,6 +133,8 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int len
         }
         return;
     }
+    case STMT_NOP:
+        return;
     case STMT_RETURN:
         print_expr(stmt->stmt.return_.ret_expr, depth + 1, NULL, 0);
         return;
@@ -130,7 +143,10 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name, int len
         if(decl->init_expr != NULL)
             print_expr(decl->init_expr, depth + 1, decl->obj->symbol.start, decl->obj->symbol.len);
         else
-            printf("( Uninitialized )\n");
+        {
+            PRINT_DEPTH(depth + 1);
+            printf("%.*s: ( Uninitialized )\n", decl->obj->symbol.len, decl->obj->symbol.start);
+        }
         return;
     }
     case STMT_SWAP:
@@ -279,14 +295,16 @@ static const char* s_stmt_type_strs[] = {
     [STMT_INVALID]     = "Invalid",
     [STMT_AMBIGUOUS]   = "Ambiguous Statement",
     [STMT_BLOCK]       = "Block",
-    [STMT_IF]          = "If Statement",
-    [STMT_SINGLE_DECL] = "Single Declaration",
-    [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_EXPR_STMT]   = "Expression Statement",
+    [STMT_FOR]         = "For Loop",
+    [STMT_IF]          = "If Statement",
+    [STMT_MULTI_DECL]  = "Multi Declaration",
+    [STMT_NOP]         = "Nop",
     [STMT_RETURN]      = "Return Statement",
+    [STMT_SINGLE_DECL] = "Single Declaration",
     [STMT_SWAP]        = "Swap Statement",
     [STMT_TYPE_DECL]   = "Type Declaration",
-    [STMT_WHILE]       = "While Statement",
+    [STMT_WHILE]       = "While Loop",
 };
 
 static const char* s_binary_op_strs[] = {
@@ -327,7 +345,11 @@ static const char* s_binary_op_strs[] = {
 static const char* s_unary_op_strs[] = {
     [UNARY_INVALID] = "Invalid",
     [UNARY_ADDR_OF] = "Address Of",
+    [UNARY_BIT_NOT] = "Bitwise Not",
+    [UNARY_DEC]     = "Decrement",
     [UNARY_DEREF]   = "Deref",
+    [UNARY_INC]     = "Increment",
+    [UNARY_LOG_NOT] = "Logical Not",
     [UNARY_NEG]     = "Negate",
 };
 

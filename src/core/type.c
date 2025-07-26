@@ -108,8 +108,10 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_POINTER:
         return type_equal(t1->pointer_base, t2->pointer_base);
     case TYPE_DS_ARRAY:
-    case TYPE_SS_ARRAY:
         return false;
+    case TYPE_SS_ARRAY:
+        return t1->array.ss_size == t2->array.ss_size &&
+               type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_ENUM:
     case TYPE_STRUCT:
     case TYPE_TYPEDEF:
@@ -128,13 +130,39 @@ bool type_equal(Type* t1, Type* t2)
 uint32_t type_size(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
-    if(type_is_builtin(ty))
+    switch(ty->kind)
+    {
+    case TYPE_BOOL:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
         return ty->builtin.size;
-    if(type_is_pointer(ty))
+    case TYPE_POINTER:
         return 8;
-    if(ty->kind == TYPE_SS_ARRAY)
+    case TYPE_SS_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.ss_size;
-
+    case TYPE_ENUM:
+    case TYPE_TYPEDEF:
+        SIC_TODO();
+    case TYPE_STRUCT:
+        return ty->user_def->struct_.size;
+    case TYPE_UNION:
+        return type_size(ty->user_def->struct_.largest_type);
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_NULLPTR:
+    case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_DS_ARRAY:
+    case __TYPE_COUNT:
+        break;
+    }
     SIC_UNREACHABLE();
 }
 
@@ -165,15 +193,15 @@ uint32_t type_alignment(Type* ty)
     case TYPE_TYPEDEF:
         SIC_TODO();
     case TYPE_STRUCT:
+        return ty->user_def->struct_.align;
     case TYPE_UNION:
-        return ty->user_def->struct_.size;
-    case TYPE_NULLPTR:
-        SIC_TODO();
+        return type_alignment(ty->user_def->struct_.largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
+    case TYPE_NULLPTR:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:
-        SIC_UNREACHABLE();
+        break;
     }
 
     SIC_UNREACHABLE();

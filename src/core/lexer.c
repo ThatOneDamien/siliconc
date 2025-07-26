@@ -447,6 +447,7 @@ static inline void extract_string_literal(Lexer* lexer, Token* t)
 
 static inline void extract_num_literal(Lexer* lexer, Token* t)
 {
+    const char* err_str = "Invalid underscore placement.";
     // Scan prefix
     if(peek(lexer) == '0')
     {
@@ -459,42 +460,65 @@ static inline void extract_num_literal(Lexer* lexer, Token* t)
         case 'b':
             SIC_TODO_MSG("Binary literal.");
         }
+        if(peek(lexer) == '_')
+        {
+            next(lexer);
+            goto ERR;
+        }
     }
 
-
-    while(c_is_num(peek(lexer)))
+    while(c_is_undnum(peek(lexer)))
         next(lexer);
     
     bool is_float = false;
 
     if(peek(lexer) == '.')
     {
+        if(lexer->cur_pos[-1] == '_' || peek_next(lexer) == '_')
+            goto ERR;
         is_float = true;
         next(lexer);
-        while(c_is_num(peek(lexer)))
+        while(c_is_undnum(peek(lexer)))
             next(lexer);
     }
+
+    if(lexer->cur_pos[-1] == '_')
+        goto ERR;
 
     if(!extract_num_suffix(lexer, &is_float))
     {
         next(lexer);
-        t->kind = TOKEN_INVALID;
-        t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-        lexer_error(lexer, &t->loc, "Invalid numeric literal.");
-        return;
+        err_str = "Invalid numeric literal suffix.";
+        goto ERR;
     }
     
     t->kind = is_float ? TOKEN_FLOAT_LITERAL : TOKEN_INT_LITERAL;
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
+    return;
+ERR:
+    t->kind = TOKEN_INVALID;
+    t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
+    lexer_error(lexer, &t->loc, "%s", err_str);
 }
 
 static inline bool extract_num_suffix(Lexer* lexer, bool* is_float)
 {
-    (void)is_float;
-    // No suffix
-    if(!c_is_alpha(peek(lexer)))
+    switch(peek(lexer))
+    {
+    case 'u':
+    case 'U':
+    case 'i':
+    case 'I':
+        SIC_TODO_MSG("Integer literal suffixes.");
+    case 'f':
+    case 'F':
+        *is_float = true;
+        // TODO: Add sizes like f32 and f64
+        next(lexer);
         return true;
-    SIC_TODO_MSG("Unimplemented numeric suffix.");
+    default:
+        return true;
+    }
 }
 
 static inline int escaped_char(const char** pos, uint64_t* real)

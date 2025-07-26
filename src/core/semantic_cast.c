@@ -7,6 +7,7 @@ struct CastParams
 {
     SemaContext* sema_context;
     ASTExpr*     expr;
+    ASTExpr*     inner;
     Type*        from;
     Type*        to;
     CastGroup    from_group;
@@ -28,9 +29,10 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
         return false;
     CastParams params;
     params.sema_context = c;
-    params.expr = cast;
-    params.from = cast->expr.cast.inner->type;
-    params.to   = cast->type;
+    params.expr  = cast;
+    params.inner = cast->expr.cast.inner;
+    params.from  = cast->expr.cast.inner->type;
+    params.to    = cast->type;
     params.from_group = s_type_to_group[params.from->kind];
     params.to_group   = s_type_to_group[params.to->kind];
     if(type_equal(params.from, params.to))
@@ -84,6 +86,7 @@ bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
     new_cast->kind = EXPR_CAST;
     new_cast->expr.cast.inner = expr_to_cast;
     params.expr = new_cast;
+    params.inner = expr_to_cast;
 
     if(!rule.able(&params, false))
         return false;
@@ -141,17 +144,52 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
         return true;
 
     // TODO: Add bounds checking for warning/error if constant goes out of bounds.
-    if(params->expr->expr.cast.inner->kind == EXPR_CONSTANT)
+    if(params->inner->kind == EXPR_CONSTANT)
         return true;
 
-    sema_error(params->sema_context, &params->expr->loc, "Narrowing integer type %s to %s requires explicit cast.",
+    sema_error(params->sema_context, &params->expr->loc, 
+               "Narrowing integer type %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
     return false;
 }
 
 static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
 {
-    return explicit || type_equal(type_pointer_base(params->from), type_pointer_base(params->from));
+    Type* from_ptr = params->from->pointer_base;
+    Type* to_ptr   = params->to->pointer_base;
+    if(explicit || from_ptr->kind == TYPE_VOID || to_ptr->kind == TYPE_VOID)
+       return true;
+
+    bool from_is_arr = type_is_array(from_ptr);
+    if(type_is_array(to_ptr))
+    {
+        if(from_is_arr)
+            goto ERR;
+        from_is_arr = true;
+        Type* temp = from_ptr;
+        from_ptr = to_ptr;
+        to_ptr = temp;
+    }
+
+    if(from_is_arr && type_equal(from_ptr->array.elem_type, to_ptr))
+        return true;
+
+ERR:
+    sema_error(params->sema_context, &params->expr->loc, 
+               "Unable to implicitly cast between pointers of different type.");
+    return false;
+}
+
+static bool cast_rule_string_lit(CastParams* params, bool explicit)
+{
+    (void)explicit;
+    if(params->inner->kind == EXPR_CONSTANT && 
+       params->inner->expr.constant.kind == CONSTANT_STRING)
+        return true;
+
+    sema_error(params->sema_context, &params->expr->loc,
+               "Arrays do not implicitly decay to pointers, use the address-of operator '&'.");
+    return false;
 }
 
 
@@ -338,6 +376,7 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define PTRBOO { cast_rule_always       , cast_ptr_to_bool }
 #define PTRINT { cast_rule_explicit_only, cast_ptr_to_int }
 #define PTRPTR { cast_rule_ptr_to_ptr   , cast_ptr_to_ptr }
+#define STRLIT { cast_rule_string_lit   , cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     //                       VOID    NULLPTR BOOL    INT     FLOAT   PTR     ARRAY   STRUCT
@@ -347,7 +386,7 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     [CAST_GROUP_INT]     = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW },
     [CAST_GROUP_FLOAT]   = { TOVOID, NOTDEF, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_PTR]     = { TOVOID, NOTDEF, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW },
-    [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, PTRPTR, NOALLW, NOALLW },
+    [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, STRLIT, NOALLW, NOALLW },
     [CAST_GROUP_STRUCT]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
 };
 

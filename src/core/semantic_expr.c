@@ -25,6 +25,7 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
 static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
+static bool analyze_incdec(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool analyze_log_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 
@@ -65,8 +66,15 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
             expr->kind = EXPR_INVALID;
         return;
     }
-    case EXPR_POSTFIX:
-        SIC_TODO();
+    case EXPR_POSTFIX: {
+        ASTExpr* inner = expr->expr.unary.inner;
+        analyze_expr(c, inner);
+        if(inner->kind == EXPR_INVALID)
+            expr->kind = EXPR_INVALID;
+        else
+            analyze_incdec(c, expr, inner);
+        return;
+    }
     case EXPR_PRE_SEMANTIC_IDENT: {
         ASTExprIdent ident = find_obj(c, &expr->loc);
         if(ident == NULL)
@@ -139,8 +147,8 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
     if(arr->type->kind == TYPE_SS_ARRAY && index->kind == EXPR_CONSTANT && 
        index->expr.constant.val.i >= arr->type->array.ss_size)
     {
-        // TODO: Make this a warning?
-        sema_error(c, &expr->loc, "Array index will overflow the size of the array.");
+        sic_diagnostic_at(c->unit->file.full_path, &expr->loc, DIAG_WARNING,
+                          "Array index will overflow the size of the array.");
         return false;
     }
 
@@ -295,11 +303,10 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     case UNARY_BIT_NOT:
         return analyze_bit_not(c, expr, inner);
     case UNARY_DEC:
-        SIC_TODO();
+    case UNARY_INC:
+        return analyze_incdec(c, expr, inner);
     case UNARY_DEREF:
         return analyze_deref(c, expr, inner);
-    case UNARY_INC:
-        SIC_TODO();
     case UNARY_LOG_NOT:
         return analyze_log_not(c, expr, inner);
     case UNARY_NEG:
@@ -396,9 +403,10 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
     if(right_is_pointer)
     {
         left_is_pointer = true;
-        ASTExpr* temp = left;
+        expr->expr.binary.lhs = right;
+        expr->expr.binary.rhs = left;
         left = right;
-        right = temp;
+        right = expr->expr.binary.lhs;
     }
 
     if(left_is_pointer)
@@ -541,7 +549,7 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
 
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    if(!expr_is_lvalue(c, expr))
+    if(!expr_is_lvalue(c, left))
         return false;
     expr->type = left->type;
     return implicit_cast(c, right, left->type);
@@ -620,6 +628,17 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
     }
 }
 
+static bool analyze_incdec(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
+{
+    if(!expr_is_lvalue(c, inner))
+        return false;
+
+    expr->type = inner->type;
+    if(!type_is_integer(expr->type))
+        SIC_TODO_MSG("Remove temporary");
+    return true;
+}
+
 static bool analyze_log_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
     expr->type = g_type_bool;
@@ -634,6 +653,8 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
                    type_to_string(inner->type));
         return false;
     }
+
+    expr->type = inner->type;
 
     if(inner->kind == EXPR_CONSTANT)
     {
@@ -669,7 +690,6 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
         }
     }
 
-    expr->type = inner->type;
     return true;
 }
 

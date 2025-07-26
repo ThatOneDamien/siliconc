@@ -68,3 +68,8 @@ void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align)
     memset(res, 0, nmemb * size);
     return res;
 }
+
+size_t global_arena_allocated()
+{
+    return s_global_arena.allocated;
+}

@@ -20,9 +20,9 @@ bool resolve_type(SemaContext* c, Type* type, bool is_pointer)
         return resolve_array(c, type);
     case TYPE_ENUM:
     case TYPE_TYPEDEF:
-    case TYPE_UNION:
         SIC_TODO();
     case TYPE_STRUCT:
+    case TYPE_UNION:
         return resolve_user(c, type, is_pointer);
     default:
         SIC_UNREACHABLE();
@@ -72,8 +72,29 @@ bool resolve_struct_type(SemaContext* c, Object* obj, bool is_pointer)
         return success;
     }
     case OBJ_TYPEDEF:
-    case OBJ_UNION:
         SIC_TODO();
+    case OBJ_UNION: {
+        struct_->status = STATUS_RESOLVING;
+        uint32_t largest_size = 0;
+        bool success = true;
+        for(size_t i = 0; i < struct_->members.size; ++i)
+        {
+            Type* next_ty = struct_->members.data[i]->var.type;
+            if(!resolve_type(c, next_ty, false))
+            {
+                success = false;
+                continue;
+            }
+            uint32_t next_size = type_size(next_ty);
+            if(largest_size < next_size)
+            {
+                largest_size = next_size;
+                struct_->largest_type = next_ty;
+            }
+        }
+        struct_->status = STATUS_RESOLVED;
+        return success;
+    }
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_INVALID:
@@ -126,13 +147,15 @@ static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
     case OBJ_BITFIELD:
     case OBJ_ENUM:
     case OBJ_TYPEDEF:
-    case OBJ_UNION:
-        SIC_TODO();
     case OBJ_STRUCT:
         user_ty->kind = TYPE_STRUCT;
+USER_DEF:
         user_ty->user_def = type_obj;
         user_ty->status = STATUS_RESOLVED;
         return resolve_struct_type(c, type_obj, is_pointer);
+    case OBJ_UNION:
+        user_ty->kind = TYPE_UNION;
+        goto USER_DEF;
     case OBJ_FUNC:
     case OBJ_VAR:
     case OBJ_ENUM_VALUE:
