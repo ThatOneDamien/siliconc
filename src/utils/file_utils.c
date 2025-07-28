@@ -68,7 +68,7 @@ char* sifile_read(const SIFile* file)
         goto ERR;
 
     long size = lseek(fd, 0, SEEK_END);
-    if(size <= 0)
+    if(size < 0)
         goto ERR;
 
     if(lseek(fd, 0, SEEK_SET) < 0)

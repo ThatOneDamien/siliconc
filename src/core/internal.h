@@ -55,7 +55,8 @@ void     parse_ambiguous_decl(Lexer* l, ASTStmt* ambiguous);
 ASTExpr* parse_ambiguous_expr(Lexer* l); 
 
 // Semantic analysis functions
-void semantic_analysis(CompilationUnit* unit);
+void semantic_declaration(CompilationUnit* unit);
+void semantic_analysis(ModulePTRDA* modules);
 
 // Symbol map functions
 void   sym_map_init(void);

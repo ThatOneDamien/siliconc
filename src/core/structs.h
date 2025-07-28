@@ -7,11 +7,11 @@
 #define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
 
 // Compiler-Wide Data Structures
-typedef const char*          Symbol;
-typedef struct HashEntry     HashEntry;
-typedef struct HashMap       HashMap;
-typedef struct MemArena      MemArena;
-typedef struct ScratchBuffer ScratchBuffer;
+typedef const  char*            Symbol;
+typedef struct HashEntry        HashEntry;
+typedef struct HashMap          HashMap;
+typedef struct MemArena         MemArena;
+typedef struct ScratchBuffer    ScratchBuffer;
 
 // Lexing Stage Structs
 typedef struct SourceLoc        SourceLoc;
@@ -24,7 +24,7 @@ typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
 typedef struct FuncSignature*   TypeFuncPtr;
 typedef struct Type*            TypePointer;
-typedef struct SourceLoc        TypeUnresolved;
+typedef struct TypeUnresolved   TypeUnresolved;
 typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
 
@@ -35,7 +35,6 @@ typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTDeclDA        ASTDeclDA;
 typedef struct CompUnitDA       CompUnitDA;
 typedef struct SIFileDA         SIFileDA;
-typedef struct ModuleDA         ModuleDA;
 typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
@@ -46,6 +45,7 @@ typedef struct ASTExprCast      ASTExprCast;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct Object*          ASTExprIdent;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef Symbol                  ASTExprPSIdent; // Pre-semantic Identifier
 typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
@@ -76,17 +76,12 @@ typedef struct CompilationUnit  CompilationUnit;
 typedef struct Module           Module;
 typedef struct Cmdline          Cmdline;
 typedef struct CompilerContext  CompilerContext;
-//
-// TODO: Rename this to something like StringMap,
-//       because I will also need a map for integral types
-//       and it will be much more efficient to have separate
-//       structs and functions than to have 1 general struct
+
 struct HashEntry
 {
-    HashEntry*  next;
-    const char* key;
-    size_t      key_len;
-    void*       value;
+    Symbol     key;
+    uint64_t   hash;
+    void*      value;
 };
 
 struct HashMap
@@ -164,6 +159,12 @@ struct TypeArray
 struct TypeBuiltin
 {
     uint32_t size;
+};
+
+struct TypeUnresolved
+{
+    SourceLoc loc;
+    Symbol    sym;
 };
 
 struct Type
@@ -270,8 +271,9 @@ struct ASTExprUnary
 
 struct ASTExprUAccess
 {
-    ASTExpr* parent_expr;
-    ASTExpr* member_expr;
+    ASTExpr*  parent_expr;
+    Symbol    member_sym;
+    SourceLoc member_loc;
 };
 
 struct ASTExpr
@@ -289,6 +291,7 @@ struct ASTExpr
         ASTExprConstant constant;
         ASTExprIdent    ident;
         ASTExprMAccess  member_access;
+        ASTExprPSIdent  pre_sema_ident;
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
@@ -371,7 +374,6 @@ struct ObjFunc
 {
     FuncSignature* signature;
     ASTStmt*       body;
-    ObjectDA       local_objs;
 };
 
 struct ObjStruct
@@ -397,7 +399,8 @@ struct ObjVar
 
 struct Object
 {
-    SourceLoc symbol;
+    Symbol    symbol;
+    SourceLoc loc;
     ObjKind   kind;
     ObjAccess access;
     ObjAttr   attribs;
@@ -431,6 +434,8 @@ struct SIFile
 struct CompilationUnit
 {
     SIFile   file;
+    Module*  module;
+    HashMap  priv_symbols;
     ObjectDA funcs;
     ObjectDA types;
     ObjectDA vars;
@@ -450,13 +455,6 @@ struct SIFileDA
     size_t  size;
 };
 
-struct ModuleDA
-{
-    Module* data;
-    size_t  capacity;
-    size_t  size;
-};
-
 struct ModulePTRDA
 {
     Module** data;
@@ -464,13 +462,14 @@ struct ModulePTRDA
     size_t   size;
 };
 
-// For now this definition is really basic, later on I will add a proper
-// hierarchy of modules.
 struct Module
 {
-    const char* name;
+    Symbol      name;
     CompUnitDA  units;
+    ModulePTRDA submodules;
     HashMap     symbols;
+    HashMap     public_symbols;
+    bool        used;
 };
 
 struct Cmdline

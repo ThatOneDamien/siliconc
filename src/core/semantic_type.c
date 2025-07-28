@@ -42,7 +42,7 @@ bool resolve_struct_type(SemaContext* c, Object* obj, bool is_pointer)
         if(is_pointer)
             return true;
         // TODO: This error message can be improved greatly
-        sema_error(c, &obj->symbol, "Recursive structure definition.");
+        sema_error(c, &obj->loc, "Recursive structure definition.");
         return false;
     }
 
@@ -136,10 +136,10 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
 
 static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
 {
-    Object* type_obj = find_obj(c, &user_ty->unresolved);
+    Object* type_obj = find_obj(c, user_ty->unresolved.sym);
     if(type_obj == NULL)
     {
-        sema_error(c, &user_ty->unresolved, "Unknown typename.");
+        sema_error(c, &user_ty->unresolved.loc, "Unknown typename.");
         return false;
     }
     switch(type_obj->kind)
@@ -159,7 +159,7 @@ USER_DEF:
     case OBJ_FUNC:
     case OBJ_VAR:
     case OBJ_ENUM_VALUE:
-        sema_error(c, &user_ty->unresolved, "Symbol does not refer to a type.");
+        sema_error(c, &user_ty->unresolved.loc, "Symbol does not refer to a type.");
         return false;
     case OBJ_INVALID:
         break;

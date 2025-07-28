@@ -16,6 +16,7 @@ struct ExprParseRule
 
 // Global check and add functions
 static bool      parse_top_level(Lexer* l);
+// static bool      parse_path_prefix(Lexer* l);
 static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
 static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
@@ -108,11 +109,13 @@ static inline bool consume(Lexer* l, TokenKind kind)
 
 static inline Object* new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs)
 {
-    Object* obj = CALLOC_STRUCT(Object);
-    obj->kind = kind;
-    obj->access = access;
+    SIC_ASSERT(peek(l)->kind == TOKEN_IDENT);
+    Object* obj  = CALLOC_STRUCT(Object);
+    obj->symbol  = peek(l)->sym;
+    obj->loc     = peek(l)->loc;
+    obj->kind    = kind;
+    obj->access  = access;
     obj->attribs = attribs;
-    obj->symbol = peek(l)->loc;
     return obj;
 }
 
@@ -148,8 +151,6 @@ static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t
 
 static inline void recover_top_level(Lexer* l)
 {
-    if(peek(l)->kind == TOKEN_EOF)
-        return;
     advance(l);
     Token* t = peek(l);
     while(t->kind != TOKEN_EOF && 
@@ -181,16 +182,32 @@ void parse_unit(CompilationUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
     Lexer l;
+    Module* module;
     lexer_init_unit(&l, unit);
-    // if(try_consume(&l, TOKEN_MODULE))
-    // {
-    // }
-    da_append(&g_compiler.top_module.units, unit);
+    if(try_consume(&l, TOKEN_MODULE))
+    {
+        SIC_TODO_MSG("Module declaration");
+    }
+    else
+    {
+        module = &g_compiler.top_module;
+        unit->module = module;
+    }
 
     while(!tok_equal(&l, TOKEN_EOF))
     {
         if(!parse_top_level(&l))
             recover_top_level(&l);
+    }
+
+    if(unit->vars.size + unit->types.size + unit->funcs.size > 0)
+    {
+        da_append(&module->units, unit);
+        if(!module->used)
+        {
+            da_append(&g_compiler.modules_to_compile, module);
+            module->used = true;
+        }
     }
 }
 
@@ -215,8 +232,11 @@ static bool parse_top_level(Lexer* l)
     {
     case TOKEN_BITFIELD:
     case TOKEN_ENUM:
-    case TOKEN_MODULE:
         SIC_TODO();
+    case TOKEN_MODULE:
+        parser_error(l, "Module declaration must come at the start of the file, "
+                        "before any imports and any declarations.");
+        return false;
     case TOKEN_STRUCT:
         kind = OBJ_STRUCT;
         FALLTHROUGH;
@@ -253,6 +273,10 @@ static bool parse_top_level(Lexer* l)
     }
 
 }
+
+// static bool parse_path_prefix(Lexer* l)
+// {
+// }
 
 static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs)
 {
@@ -346,15 +370,14 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
             // For now we don't allow anonymous members. This will change
             EXPECT_OR_RET(obj, l, TOKEN_IDENT);
 
-            SourceLoc* this_sym = &peek(l)->loc;
+            Symbol this_sym = peek(l)->sym;
             for(uint32_t i = 0; i < member_idx; ++i)
             {
-                SourceLoc* other_sym = &members->data[i]->symbol;
-                if(other_sym->len == this_sym->len &&
-                   memcmp(other_sym->start, this_sym->start, this_sym->len) == 0)
+                Symbol other = members->data[i]->symbol;
+                if(other == this_sym)
                 {
                     parser_error(l, "Duplicate member \'%.*s\'",
-                                this_sym->len, this_sym->start);
+                                 peek(l)->loc.len, peek(l)->loc.start);
                     goto SKIP_DUPLICATE;
                 }
             }
@@ -449,7 +472,8 @@ static bool parse_type_base(Lexer* l, Type** type, ObjAttr* attribs)
         ty = CALLOC_STRUCT(Type);
         ty->kind = TYPE_STRUCT;
         ty->status = STATUS_UNRESOLVED;
-        ty->unresolved = peek(l)->loc;
+        ty->unresolved.sym = peek(l)->sym;
+        ty->unresolved.loc = peek(l)->loc;
         ty->qualifiers = qual;
         *type = ty;
         advance(l);
@@ -541,11 +565,8 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
         EXPECT_OR_RET(false, l, TOKEN_IDENT);
 
         da_resize(params, params->size + 1);
-        params->data[params->size - 1] = CALLOC_STRUCT(Object);
-        params->data[params->size - 1]->kind = OBJ_VAR;
+        params->data[params->size - 1] = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, ATTR_NONE);
         params->data[params->size - 1]->var.type = type;
-        params->data[params->size - 1]->symbol = peek(l)->loc;
-
         advance(l);
     }
     
@@ -755,11 +776,8 @@ static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjA
     ASTStmt* decl_stmt = overwrite == NULL ? CALLOC_STRUCT(ASTStmt) : overwrite;
     decl_stmt->kind = STMT_SINGLE_DECL;
     decl_stmt->loc = peek(l)->loc;
-    Object* var = CALLOC_STRUCT(Object);
-    var->kind = OBJ_VAR;
-    var->attribs = attribs;
+    Object* var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
     var->var.type = type;
-    var->symbol = peek(l)->loc;
     decl_stmt->stmt.single_decl.obj = var;
     ASTExpr* expr = NULL;
     advance(l);
@@ -782,11 +800,8 @@ static ASTStmt* parse_declaration(Lexer* l, ASTStmt* overwrite, Type* type, ObjA
     while(try_consume(l, TOKEN_COMMA))
     {
         da_resize(decl_list, decl_list->size + 1);
-        var = CALLOC_STRUCT(Object);
-        var->kind = OBJ_VAR;
-        var->attribs = attribs;
+        var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
         var->var.type = type;
-        var->symbol = peek(l)->loc;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
         {
@@ -858,14 +873,10 @@ static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
     ASTExprDA* args = &call->expr.call.args;
     advance(l);
 
-    da_append(args, parse_expr(l, PREC_ASSIGN));
-    if(args->data[0]->kind == EXPR_INVALID)
-        return BAD_EXPR;
-
     while(!try_consume(l, TOKEN_RPAREN))
     {
-
-        CONSUME_OR_RET(BAD_EXPR, l, TOKEN_COMMA);
+        if(args->size > 0)
+            CONSUME_OR_RET(BAD_EXPR, l, TOKEN_COMMA);
 
         da_append(args, parse_expr(l, PREC_ASSIGN));
         if(args->data[args->size - 1]->kind == EXPR_INVALID)
@@ -929,7 +940,8 @@ static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
     advance(l);
     access->expr.unresolved_access.parent_expr = struct_expr;
     EXPECT_OR_RET(BAD_EXPR, l, TOKEN_IDENT);
-    access->expr.unresolved_access.member_expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
+    access->expr.unresolved_access.member_sym = peek(l)->sym;
+    access->expr.unresolved_access.member_loc = peek(l)->loc;
     advance(l);
     return access;
 }
@@ -946,6 +958,7 @@ static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
+    expr->expr.pre_sema_ident = peek(l)->sym;
     advance(l);
     return expr;
 }

@@ -40,7 +40,8 @@ struct GenValue
 };
 
 static void     gen_module(CodegenContext* c, Module* module);
-static void     gen_unit(CodegenContext* c, CompilationUnit* unit);
+static void     gen_unit_decls(CodegenContext* c, CompilationUnit* unit);
+static void     gen_unit_bodies(CodegenContext* c, CompilationUnit* unit);
 static void     emit_llvm_ir(CodegenContext* c);
 static void     emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
 static void     decl_function(CodegenContext* c, Object* function);
@@ -133,7 +134,10 @@ static void gen_module(CodegenContext* c, Module* module)
     LLVMSetTarget(c->module_ref, target_triple);
 
     for(size_t i = 0; i < module->units.size; ++i)
-        gen_unit(c, module->units.data[i]);
+        gen_unit_decls(c, module->units.data[i]);
+
+    for(size_t i = 0; i < module->units.size; ++i)
+        gen_unit_bodies(c, module->units.data[i]);
 
     if(g_args.emit_ir)
     {
@@ -170,16 +174,24 @@ static void gen_module(CodegenContext* c, Module* module)
 
 }
 
-static void gen_unit(CodegenContext* c, CompilationUnit* unit)
+static void gen_unit_decls(CodegenContext* c, CompilationUnit* unit)
 {
+    c->unit = unit;
     for(size_t i = 0; i < unit->funcs.size; ++i)
         decl_function(c, unit->funcs.data[i]);
 
     for(size_t i = 0; i < unit->vars.size; ++i)
         decl_global_var(c, unit->vars.data[i]);
+}
 
+static void gen_unit_bodies(CodegenContext* c, CompilationUnit* unit)
+{
+    c->unit = unit;
     for(size_t i = 0; i < unit->funcs.size; ++i)
+    {
+        c->cur_bb = NULL;
         emit_function_body(c, unit->funcs.data[i]);
+    }
 }
 
 static void decl_function(CodegenContext* c, Object* function)
@@ -188,21 +200,21 @@ static void decl_function(CodegenContext* c, Object* function)
     LLVMTypeRef* param_types = NULL;
     FuncSignature* sig = function->func.signature;
     if(sig->params.size != 0)
-        param_types = MALLOC(sizeof(LLVMTypeRef) * sig->params.size);
+        param_types = MALLOC_STRUCTS(LLVMTypeRef, sig->params.size);
 
     for(size_t i = 0; i < sig->params.size; ++i)
         param_types[i] = get_llvm_type(c, sig->params.data[i]->var.type);
     sig->llvm_func_type = LLVMFunctionType(get_llvm_type(c, sig->ret_type), param_types, sig->params.size, sig->is_var_arg);
 
     scratch_clear();
-    scratch_appendn(function->symbol.start, function->symbol.len);
+    scratch_appendn(function->loc.start, function->loc.len);
     function->llvm_ref = LLVMAddFunction(c->module_ref, scratch_string(), sig->llvm_func_type);
 }
 
 static void decl_global_var(CodegenContext* c, Object* var)
 {
     scratch_clear();
-    scratch_appendn(var->symbol.start, var->symbol.len);
+    scratch_appendn(var->loc.start, var->loc.len);
     var->llvm_ref = LLVMAddGlobal(c->module_ref, get_llvm_type(c, var->var.type), scratch_string());
     // TODO: Fix this!!!
     LLVMSetInitializer(var->llvm_ref, LLVMConstInt(get_llvm_type(c, var->var.type), 0, false));
@@ -222,7 +234,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     {
         Object* param = sig->params.data[i];
         scratch_clear();
-        scratch_appendn(param->symbol.start, param->symbol.len);
+        scratch_appendn(param->loc.start, param->loc.len);
         param->llvm_ref = emit_alloca(c, scratch_string(), get_llvm_type(c, param->var.type), type_alignment(param->var.type));
     }
 
@@ -230,7 +242,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     {
         Object* param = sig->params.data[i];
         scratch_clear();
-        scratch_appendn(param->symbol.start, param->symbol.len);
+        scratch_appendn(param->loc.start, param->loc.len);
         LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
     }
 
@@ -775,7 +787,7 @@ static void emit_function_call(CodegenContext* c, ASTExpr* expr, GenValue* resul
 
     LLVMValueRef* args = NULL;
     if(call->args.size > 0)
-        args = MALLOC(sizeof(LLVMValueRef) * call->args.size);
+        args = MALLOC_STRUCTS(LLVMValueRef, call->args.size);
     for(size_t i = 0; i < call->args.size; ++i)
     {
         GenValue temp = emit_expr(c, call->args.data[i]);
@@ -986,7 +998,7 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
     SIC_ASSERT(obj->kind == OBJ_VAR);
     get_llvm_type(c, obj->var.type);
     scratch_clear();
-    scratch_appendn(obj->symbol.start, obj->symbol.len);
+    scratch_appendn(obj->loc.start, obj->loc.len);
     if(obj->var.type->kind == TYPE_DS_ARRAY)
     {
         GenValue size_val = emit_expr(c, obj->var.type->array.size_expr);
@@ -1071,12 +1083,12 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         Object* user = type->user_def;
         if(user->llvm_ref)
             return type->llvm_ref = user->llvm_ref;
-        LLVMTypeRef* element_types = MALLOC(sizeof(LLVMTypeRef) * user->struct_.members.size);
+        LLVMTypeRef* element_types = MALLOC_STRUCTS(LLVMTypeRef, user->struct_.members.size);
         for(size_t i = 0; i < user->struct_.members.size; ++i)
             element_types[i] = get_llvm_type(c, user->struct_.members.data[i]->var.type);
         scratch_clear();
         scratch_append("struct.");
-        scratch_appendn(user->symbol.start, user->symbol.len);
+        scratch_appendn(user->loc.start, user->loc.len);
         user->llvm_ref = LLVMStructCreateNamed(c->global_context, scratch_string());
         LLVMStructSetBody(user->llvm_ref, element_types, user->struct_.members.size, false);
         return type->llvm_ref = user->llvm_ref;
@@ -1090,7 +1102,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         LLVMTypeRef largest_ref = get_llvm_type(c, user->struct_.largest_type);
         scratch_clear();
         scratch_append("union.");
-        scratch_appendn(user->symbol.start, user->symbol.len);
+        scratch_appendn(user->loc.start, user->loc.len);
         user->llvm_ref = LLVMStructCreateNamed(c->global_context, scratch_string());
         LLVMStructSetBody(user->llvm_ref, &largest_ref, 1, false);
         return type->llvm_ref = user->llvm_ref;

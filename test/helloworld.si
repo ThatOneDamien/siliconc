@@ -1,7 +1,0 @@
-priv extern void puts(u8* str);
-
-pub u32 main()
-{
-    puts("Hello, World!");
-    return 0;
-}

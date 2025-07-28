@@ -9,14 +9,19 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler;
+CompilerContext g_compiler = {.top_module = {.name = "default"}};
 
 static void compile(const SIFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
+#define DBG_OUTPUT(x) if(g_args.emit_debug_output) x
+
 static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", global_arena_allocated()); }
-#endif
+
+#else // !SI_DEBUG
+#define DBG_OUTPUT(x)
+#endif // SI_DEBUG
 
 int main(int argc, char* argv[])
 {
@@ -33,15 +38,10 @@ int main(int argc, char* argv[])
     sym_map_init();
     parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
-#ifdef SI_DEBUG
-    if(g_args.emit_debug_output)
-        atexit(print_debug_stats);
-#endif
+    DBG_OUTPUT(atexit(print_debug_stats));
 
     if(g_args.ir_kind == IR_LLVM)
         llvm_initialize();
-
-    da_init(&g_compiler.linker_inputs, g_args.input_files.size);
 
     for(size_t i = 0; i < g_args.input_files.size; ++i)
     {
@@ -70,6 +70,8 @@ int main(int argc, char* argv[])
         SIC_UNREACHABLE();
     }
 
+    semantic_analysis(&g_compiler.modules_to_compile);
+
     if(g_error_cnt > 0)
     {
         fprintf(stderr, "sic: ");
@@ -81,7 +83,9 @@ int main(int argc, char* argv[])
     if(g_warning_cnt > 0)
         fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
 
-    da_append(&g_compiler.modules_to_compile, &g_compiler.top_module);
+    if(g_compiler.modules_to_compile.size == 0)
+        exit(EXIT_SUCCESS);
+
     gen_ir(&g_compiler.modules_to_compile);
 
     if(g_args.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
@@ -154,12 +158,6 @@ void run_subprocess(char** cmd)
         exit(status);
 }
 
-#ifdef SI_DEBUG
-#define DBG_OUTPUT(x) if(g_args.emit_debug_output) x
-#else
-#define DBG_OUTPUT(x)
-#endif
-
 static void compile(const SIFile* input)
 {
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
@@ -178,12 +176,7 @@ static void compile(const SIFile* input)
         printf("\n\n\n");
     })
 
-    semantic_analysis(unit);
-
-    DBG_OUTPUT({
-        print_unit(unit);
-        printf("\n\n\n");
-    })
+    semantic_declaration(unit);
 }
 
 static void resolve_dependency_paths(char** crt, char** gcclib)

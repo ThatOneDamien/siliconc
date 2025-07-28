@@ -1,90 +1,73 @@
 #include "semantics.h"
 #include "utils/da.h"
 
+static void analyze_unit(SemaContext* c, CompilationUnit* unit);
 static void analyze_function(SemaContext* c, Object* function);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt);
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl);
 static void analyze_swap(SemaContext* c, ASTStmt* stmt);
 
-static inline void push_scope(SemaContext* c);
+static void declare_global_obj(SemaContext* c, Object* global);
+
+static inline void push_scope(SemaContext* c, Scope* scope);
 static inline void pop_scope(SemaContext* c);
 
-
-void semantic_analysis(CompilationUnit* unit)
+void semantic_declaration(CompilationUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
-    SemaContext context;
+    SemaContext context = {0};
     context.unit = unit;
-    context.unit_scope.parent = NULL;
-    context.cur_scope = &context.unit_scope;
+    context.priv_syms = &unit->priv_symbols;
+    context.prot_syms = &unit->module->symbols;
+    for(size_t i = 0; i < unit->types.size; ++i)
+        declare_global_obj(&context, unit->types.data[i]);
 
-    ObjectDA* funcs = &context.unit->funcs;
-    ObjectDA* types = &context.unit->types;
-    ObjectDA* vars  = &context.unit->vars;
-    hashmap_initn(&context.unit_scope.vars, funcs->size + vars->size);
-    hashmap_initn(&context.unit_scope.types, types->size);
-    for(size_t i = 0; i < types->size; ++i)
-    {
-        Object* type = types->data[i];
-        if(find_obj(&context, &type->symbol) != NULL)
-            sema_error(&context, &type->symbol, "Symbol redefined.");
-        hashmap_putn(&context.unit_scope.types, type->symbol.start, type->symbol.len, type);
-    }
+    for(size_t i = 0; i < unit->funcs.size; ++i)
+        declare_global_obj(&context, unit->funcs.data[i]);
 
-
-    for(size_t i = 0; i < funcs->size; ++i)
-    {
-        // For now, I only allow one declaration/definition of a function
-        // In the future I will support multiple declarations as long as the
-        // signatures match, or possibly even add function overloading, though
-        // I'm not sure I want that.
-        Object* func = funcs->data[i];
-        if(find_obj(&context, &func->symbol) != NULL)
-            sema_error(&context, &func->symbol, "Symbol redefined.");
-        hashmap_putn(&context.unit_scope.vars, func->symbol.start, func->symbol.len, func);
-    }
-
-    for(size_t i = 0; i < vars->size; ++i)
-    {
-        Object* var = vars->data[i];
-        if(find_obj(&context, &var->symbol) != NULL)
-            sema_error(&context, &var->symbol, "Symbol redefined.");
-        hashmap_putn(&context.unit_scope.vars, var->symbol.start, var->symbol.len, var);
-    }
-
-    for(size_t i = 0; i < types->size; ++i)
-        resolve_struct_type(&context, types->data[i], false);
-
-    for(size_t i = 0; i < funcs->size; ++i)
-        analyze_function(&context, funcs->data[i]);
+    for(size_t i = 0; i < unit->vars.size; ++i)
+        declare_global_obj(&context, unit->vars.data[i]);
 }
 
-void declare_obj(SemaContext* c, Object* obj)
+void semantic_analysis(ModulePTRDA* modules)
 {
-    if(hashmap_getn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len) != NULL)
-        sema_error(c, &obj->symbol, "Redefinition of symbol \'%.*s\'.", obj->symbol.len, obj->symbol.start);
-    hashmap_putn(&c->cur_scope->vars, obj->symbol.start, obj->symbol.len, obj);
-    if(c->cur_func == NULL)
+    SIC_ASSERT(modules != NULL);
+    SemaContext context = {0};
+    for(size_t i = 0; i < modules->size; ++i)
     {
-        // This is a global variable, declare it in the compilation unit.
+        Module* mod = modules->data[i];
+        for(size_t j = 0; j < mod->units.size; ++j)
+            analyze_unit(&context, mod->units.data[j]);
     }
-    else
-        da_append(&c->cur_func->func.local_objs, obj);
 }
 
-Object* find_obj(SemaContext* c, SourceLoc* symbol)
+void declare_obj(SemaContext* c, HashMap* map, Object* obj)
 {
+    // TODO: Change the way that SourceLoc works, so that it tracks file location
+    //       then we can have better error handling for redefinition which would show
+    //       where the previous definition is.
+    if(hashmap_get(map, obj->symbol) != NULL)
+        sema_error(c, &obj->loc, "Redefinition of symbol \'%s\'.", obj->symbol);
+    hashmap_put(map, obj->symbol, obj);
+}
+
+Object* find_obj(SemaContext* c, Symbol symbol)
+{
+    Object* o;
     for(Scope* sc = c->cur_scope; sc != NULL; sc = sc->parent)
     {
-        Object* o = hashmap_getn(&sc->vars, symbol->start, symbol->len);
+        o = hashmap_get(&sc->vars, symbol);
         if(o != NULL)
             return o;
-        o = hashmap_getn(&sc->types, symbol->start, symbol->len);
+        o = hashmap_get(&sc->types, symbol);
         if(o != NULL)
             return o;
     }
     
-    return NULL;
+    o = hashmap_get(c->priv_syms, symbol);
+    if(o != NULL)
+        return o;
+    return hashmap_get(c->prot_syms, symbol);
 }
 
 bool expr_is_lvalue(SemaContext* c, ASTExpr* expr)
@@ -97,8 +80,8 @@ bool expr_is_lvalue(SemaContext* c, ASTExpr* expr)
     case EXPR_IDENT:
         if(expr->expr.ident->kind != OBJ_VAR)
         {
-            sema_error(c, &expr->loc, "Unable to assign object \'%.*s\'.",
-                       expr->expr.ident->symbol.len, expr->expr.ident->symbol.start);
+            sema_error(c, &expr->loc, "Unable to assign object \'%s\'.",
+                       expr->expr.ident->symbol);
             return false;
         }
         return true;
@@ -114,16 +97,27 @@ bool expr_is_lvalue(SemaContext* c, ASTExpr* expr)
     return false;
 }
 
+static void analyze_unit(SemaContext* c, CompilationUnit* unit)
+{
+    c->unit = unit;
+    c->priv_syms = &unit->priv_symbols;
+    c->prot_syms = &unit->module->symbols;
+    for(size_t i = 0; i < unit->funcs.size; ++i)
+        analyze_function(c, unit->funcs.data[i]);
+}
+
 static void analyze_function(SemaContext* c, Object* function)
 {
-    push_scope(c);
+    hashmap_clear(&c->func_scope.vars);
+    hashmap_clear(&c->func_scope.types);
+    c->cur_scope = &c->func_scope;
     c->cur_func = function;
     ObjectDA* params = &function->func.signature->params;
     for(size_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
         resolve_type(c, param->var.type, false);
-        hashmap_putn(&c->cur_scope->vars, param->symbol.start, param->symbol.len, param);
+        declare_var(c, param);
     }
 
     ASTStmt* stmt = function->func.body;
@@ -132,7 +126,9 @@ static void analyze_function(SemaContext* c, Object* function)
         analyze_stmt(c, stmt);
         stmt = stmt->next;
     }
-    pop_scope(c);
+
+    c->cur_func = NULL;
+    c->cur_scope = NULL;
 }
 
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
@@ -142,16 +138,16 @@ RETRY:
     {
     case STMT_AMBIGUOUS: {
         Type* possible_type = stmt->stmt.ambiguous;
-        Object* obj = find_obj(c, &possible_type->unresolved);
+        Object* obj = find_obj(c, possible_type->unresolved.sym);
         if(obj == NULL)
         {
-            sema_error(c, &possible_type->unresolved, 
-                       "Reference to undefined symbol \'%.*s\'",
-                       possible_type->unresolved.len, possible_type->unresolved.start);
+            sema_error(c, &possible_type->unresolved.loc, 
+                       "Reference to undefined symbol \'%s\'",
+                       possible_type->unresolved.sym);
             return;
         }
         Lexer l;
-        lexer_set_pos_in_unit(&l, c->unit, &possible_type->unresolved);
+        lexer_set_pos_in_unit(&l, c->unit, &possible_type->unresolved.loc);
         if(obj->kind == OBJ_FUNC || obj->kind == OBJ_VAR)
         {
             stmt->kind = STMT_EXPR_STMT;
@@ -163,7 +159,8 @@ RETRY:
         goto RETRY;
     }
     case STMT_BLOCK: {
-        push_scope(c);
+        Scope new_scope = {0};
+        push_scope(c, &new_scope);
         ASTStmt* sub_stmt = stmt->stmt.block.body;
         while(sub_stmt != NULL)
         {
@@ -254,7 +251,7 @@ RETRY:
 
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
-    declare_obj(c, decl->obj);
+    declare_var(c, decl->obj);
     if(decl->init_expr != NULL)
     {
         analyze_expr(c, decl->init_expr);
@@ -281,14 +278,34 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
     }
 }
 
-
-static void push_scope(SemaContext* c)
+static void declare_global_obj(SemaContext* c, Object* global)
 {
-    Scope* new_scope = CALLOC_STRUCT(Scope);
-    new_scope->parent = c->cur_scope;
-    hashmap_init(&new_scope->vars);
-    hashmap_init(&new_scope->types);
-    c->cur_scope = new_scope;
+    HashMap* pub  = &c->unit->module->public_symbols;
+    Object* other = hashmap_get(c->priv_syms, global->symbol);
+    if(other == NULL)
+        other = hashmap_get(c->prot_syms, global->symbol);
+
+    if(other != NULL)
+        sema_error(c, &global->loc, "Redefinition of symbol \'%s\'.", global->symbol);
+
+    switch(global->access)
+    {
+    case ACCESS_PRIVATE:
+        hashmap_put(c->priv_syms, global->symbol, global);
+        return;
+    case ACCESS_PUBLIC:
+        hashmap_put(pub, global->symbol, global);
+        FALLTHROUGH;
+    case ACCESS_PROTECTED:
+        hashmap_put(c->prot_syms, global->symbol, global);
+        return;
+    }
+}
+
+static void push_scope(SemaContext* c, Scope* scope)
+{
+    scope->parent = c->cur_scope;
+    c->cur_scope = scope;
 }
 
 static void pop_scope(SemaContext* c)

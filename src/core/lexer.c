@@ -345,8 +345,8 @@ static inline void extract_identifier(Lexer* lexer, Token* t)
         next(lexer);
 
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
-    if((t->sym = sym_map_getn(t->loc.start, t->loc.len, &t->kind)) == NULL)
-        t->kind = TOKEN_IDENT;
+    t->kind = TOKEN_IDENT;
+    t->sym = sym_map_addn(t->loc.start, t->loc.len, &t->kind);
 }
 
 static inline void extract_char_literal(Lexer* lexer, Token* t)
@@ -407,7 +407,7 @@ static inline void extract_string_literal(Lexer* lexer, Token* t)
     t->loc.len = (uintptr_t)lexer->cur_pos - (uintptr_t)t->loc.start;
     t->kind = TOKEN_STRING_LITERAL;
 
-    char*  real_string = MALLOC((size_t)(lexer->cur_pos - orig + 1));
+    char*  real_string = MALLOC((size_t)(lexer->cur_pos - orig + 1), 1);
     size_t len = 0;
 
     while(orig < lexer->cur_pos)

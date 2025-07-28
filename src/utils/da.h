@@ -9,14 +9,13 @@
 #define DA_MIN_CAPACITY 8
 #define DA_ASSERT(cond) SIC_ASSERT(cond)
 
-#define da_init(da, initial_cap)                                \
-    do                                                          \
-    {                                                           \
-        (da)->capacity = (initial_cap) > DA_MIN_CAPACITY?       \
-                         (initial_cap) : DA_MIN_CAPACITY;       \
-        (da)->size = 0;                                         \
-        (da)->data = MALLOC((da)->capacity *                    \
-                            sizeof(*((da)->data)));             \
+#define da_init(da, initial_cap)                                        \
+    do                                                                  \
+    {                                                                   \
+        (da)->capacity = (initial_cap) > DA_MIN_CAPACITY?               \
+                         (initial_cap) : DA_MIN_CAPACITY;               \
+        (da)->size = 0;                                                 \
+        (da)->data = MALLOC((da)->capacity * sizeof(*((da)->data)), 8); \
     } while(0)
 
 #define da_reserve(da, desired_cap)                                         \
@@ -27,11 +26,10 @@
         else if((da)->capacity < (desired_cap))                             \
         {                                                                   \
             (da)->capacity = (desired_cap) << 1;                            \
-            void* __new_da = MALLOC((da)->capacity *                        \
-                                    sizeof(*((da)->data)));                 \
-            memcpy(__new_da, (da)->data,                                    \
+            void* n = MALLOC((da)->capacity * sizeof(*((da)->data)), 8);    \
+            memcpy(n, (da)->data,                                           \
                 (da)->size * sizeof(*((da)->data)));                        \
-            (da)->data = __new_da;                                          \
+            (da)->data = n;                                                 \
                                                                             \
         }                                                                   \
     } while(0)

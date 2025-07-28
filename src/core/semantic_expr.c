@@ -76,7 +76,7 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         return;
     }
     case EXPR_PRE_SEMANTIC_IDENT: {
-        ASTExprIdent ident = find_obj(c, &expr->loc);
+        ASTExprIdent ident = find_obj(c, expr->expr.pre_sema_ident);
         if(ident == NULL)
         {
             sema_error(c, &expr->loc, "Reference to undefined symbol \'%.*s\'.", expr->loc.len, expr->loc.start);
@@ -127,6 +127,7 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
     case EXPR_MEMBER_ACCESS:
         break;
     }
+    printf("HERE %s %d\n", c->unit->file.full_path, expr->kind);
     SIC_UNREACHABLE();
 }
 
@@ -317,16 +318,14 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static Object* resolve_member(SemaContext* c, Type* type, SourceLoc* symbol)
+static Object* resolve_member(SemaContext* c, Type* type, ASTExprUAccess* access)
 {
     ObjectDA* members = &type->user_def->struct_.members;
     for(size_t i = 0; i < members->size; ++i)
-        if(members->data[i]->symbol.len == symbol->len &&
-           memcmp(members->data[i]->symbol.start, symbol->start, symbol->len) == 0)
+        if(members->data[i]->symbol == access->member_sym)
             return members->data[i];
-    sema_error(c, symbol, "Struct %.*s has no member %.*s.",
-               type->user_def->symbol.len, type->user_def->symbol.start,
-               symbol->len, symbol->start);
+    sema_error(c, &access->member_loc, "Type \'%s\' has no member \'%s\'.",
+               type_to_string(type), access->member_sym);
     return NULL;
 }
 
@@ -349,7 +348,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
     deref->expr.unary.inner = parent;
-    Object* member = resolve_member(c, deref->type, &uaccess->member_expr->loc);
+    Object* member = resolve_member(c, deref->type, uaccess);
     if(member == NULL)
         return false;
 
@@ -379,12 +378,12 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
     }
     else if(!type_is_user_def(parent->type))
     {
-        sema_error(c, &uaccess->member_expr->loc, "Attempted to access member of incompatable type \'%s\'.",
+        sema_error(c, &uaccess->member_loc, "Attempted to access member of incompatable type \'%s\'.",
                    type_to_string(parent->type));
         return false;
     }
 
-    Object* member = resolve_member(c, parent->type, &uaccess->member_expr->loc);
+    Object* member = resolve_member(c, parent->type, uaccess);
     
     if(member == NULL)
         return false;
