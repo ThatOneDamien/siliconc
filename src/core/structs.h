@@ -374,6 +374,8 @@ struct ObjFunc
 {
     FuncSignature* signature;
     ASTStmt*       body;
+    uint32_t       swap_stmt_align;
+    uint32_t       swap_stmt_size;
 };
 
 struct ObjStruct

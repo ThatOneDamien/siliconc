@@ -1,17 +1,22 @@
-pub uint main()
-{
-    other_func("Hi from other file!!!");
-    return thing();
-}
-
 priv extern void printf(ubyte* fmt, ...);
 
-void other_func(ubyte* msg)
+struct Large
 {
-    printf("%s\n", msg);
+    uint[24] a;
 }
 
-uint thing()
+void swap(Large* l1, Large* l2)
 {
-    return 1;
+    *l1 <-> *l2;
+}
+
+pub uint main()
+{
+    Large l1, l2;
+    l1.a[0] = 10;
+    l2.a[0] = 15;
+    printf("%d %d\n", l1.a[0], l2.a[0]);
+    swap(&l1, &l2);
+    printf("%d %d\n", l1.a[0], l2.a[0]);
+    return 0;
 }

@@ -253,7 +253,7 @@ const char* type_to_string(Type* type)
     case TYPE_STRUCT:
     case TYPE_TYPEDEF:
     case TYPE_UNION:
-        return str_format("%.*s", type->user_def->loc.len, type->user_def->loc.start);
+        return str_format("%s", type->user_def->symbol);
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:

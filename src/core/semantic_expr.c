@@ -127,7 +127,6 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
     case EXPR_MEMBER_ACCESS:
         break;
     }
-    printf("HERE %s %d\n", c->unit->file.full_path, expr->kind);
     SIC_UNREACHABLE();
 }
 
@@ -575,6 +574,7 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
     new_expr->kind = EXPR_BINARY;
     new_expr->loc = expr->loc;
     new_expr->expr.binary.kind = conversion[expr->expr.binary.kind - BINARY_OP_ASSIGN_START];
+    // TODO: Make this deep copy most likely, I feel like there is a better way to do this.
     new_expr->expr.binary.lhs = MALLOC_STRUCT(ASTExpr);
     memcpy(new_expr->expr.binary.lhs, left, sizeof(ASTExpr));
     new_expr->expr.binary.rhs = right;

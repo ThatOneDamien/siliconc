@@ -51,8 +51,15 @@ static inline bool token_is_keyword(TokenKind kind)
 // Parser functions
 void     parser_init(void);
 void     parse_unit(CompilationUnit* unit);
-void     parse_ambiguous_decl(Lexer* l, ASTStmt* ambiguous);
-ASTExpr* parse_ambiguous_expr(Lexer* l); 
+static inline bool expr_is_bad(ASTExpr* expr)
+{
+    return expr->kind == EXPR_INVALID;
+}
+
+static inline bool stmt_is_bad(ASTStmt* stmt)
+{
+    return stmt->kind == STMT_INVALID;
+}
 
 // Semantic analysis functions
 void semantic_declaration(CompilationUnit* unit);
@@ -127,6 +134,11 @@ static inline bool type_is_user_def(Type* ty)
     return ty->kind >= TYPE_USER_DEF_START && ty->kind <= TYPE_USER_DEF_END;
 }
 
+static inline bool type_is_trivially_copyable(Type* ty)
+{
+    return ty->kind != TYPE_DS_ARRAY && type_size(ty) <= 16;
+}
+
 static inline Type* type_pointer_base(Type* ptr_ty)
 {
     if(type_is_array(ptr_ty))
@@ -135,3 +147,4 @@ static inline Type* type_pointer_base(Type* ptr_ty)
         SIC_UNREACHABLE();
     return ptr_ty->pointer_base;
 }
+

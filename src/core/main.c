@@ -38,7 +38,9 @@ int main(int argc, char* argv[])
     sym_map_init();
     parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
-    DBG_OUTPUT(atexit(print_debug_stats));
+#ifdef SI_DEBUG
+    atexit(print_debug_stats);
+#endif
 
     if(g_args.ir_kind == IR_LLVM)
         llvm_initialize();

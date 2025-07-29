@@ -133,31 +133,8 @@ static void analyze_function(SemaContext* c, Object* function)
 
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt)
 {
-RETRY:
     switch(stmt->kind)
     {
-    case STMT_AMBIGUOUS: {
-        Type* possible_type = stmt->stmt.ambiguous;
-        Object* obj = find_obj(c, possible_type->unresolved.sym);
-        if(obj == NULL)
-        {
-            sema_error(c, &possible_type->unresolved.loc, 
-                       "Reference to undefined symbol \'%s\'",
-                       possible_type->unresolved.sym);
-            return;
-        }
-        Lexer l;
-        lexer_set_pos_in_unit(&l, c->unit, &possible_type->unresolved.loc);
-        if(obj->kind == OBJ_FUNC || obj->kind == OBJ_VAR)
-        {
-            stmt->kind = STMT_EXPR_STMT;
-            stmt->stmt.expr = parse_ambiguous_expr(&l);
-            analyze_expr(c, stmt->stmt.expr);
-            return;
-        }
-        parse_ambiguous_decl(&l, stmt);
-        goto RETRY;
-    }
     case STMT_BLOCK: {
         Scope new_scope = {0};
         push_scope(c, &new_scope);
@@ -170,6 +147,10 @@ RETRY:
         pop_scope(c);
         return;
     }
+    case STMT_BREAK:
+    case STMT_CASE:
+    case STMT_CONTINUE:
+        SIC_TODO();
     case STMT_EXPR_STMT:
         analyze_expr(c, stmt->stmt.expr);
         return;
@@ -187,6 +168,8 @@ RETRY:
         analyze_stmt(c, for_stmt->body);
         return;
     }
+    case STMT_GOTO:
+        SIC_TODO();
     case STMT_IF: {
         ASTIf* if_stmt = &stmt->stmt.if_;
         analyze_expr(c, if_stmt->cond);
@@ -196,6 +179,8 @@ RETRY:
             analyze_stmt(c, if_stmt->else_stmt);
         return;
     }
+    case STMT_LABEL:
+        SIC_TODO();
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
         if(resolve_type(c, decl_list->data[0].obj->var.type, false))
@@ -234,6 +219,7 @@ RETRY:
     case STMT_SWAP:
         analyze_swap(c, stmt);
         return;
+    case STMT_SWITCH:
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE: {
@@ -275,6 +261,13 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
         sema_error(c, &stmt->loc, 
                    "Operands of swap statement have mismatched types \'%s\' and \'%s\'",
                    type_to_string(left->type), type_to_string(right->type));
+    }
+
+    if(!type_is_trivially_copyable(left->type))
+    {
+        ObjFunc* func = &c->cur_func->func;
+        func->swap_stmt_size = MAX(func->swap_stmt_size, type_size(left->type));
+        func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }
 }
 

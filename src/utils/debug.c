@@ -15,8 +15,10 @@ static void print_constant(const ASTExpr* expr);
 
 static inline const char* debug_type_to_str(Type* type)
 {
-    if(type == NULL)
+    if(type == NULL || type->kind == TYPE_INVALID)
         return "Unknown";
+    if(type->status == STATUS_UNRESOLVED)
+        return "Unresolved";
     if(type->kind == TYPE_PRE_SEMA_ARRAY)
         return str_format("Pre-Sema-Array %s[]", type_to_string(type->array.elem_type));
     return type_to_string(type);
@@ -87,8 +89,6 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
     printf("( %s )\n", s_stmt_type_strs[stmt->kind]);
     switch(stmt->kind)
     {
-    case STMT_AMBIGUOUS:
-        return;
     case STMT_BLOCK: {
         ASTStmt* cur = stmt->stmt.block.body;
         while(cur != NULL)
@@ -98,6 +98,10 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
         }
         return;
     }
+    case STMT_BREAK:
+    case STMT_CASE:
+    case STMT_CONTINUE:
+        SIC_TODO();
     case STMT_EXPR_STMT:
         print_expr(stmt->stmt.expr, depth + 1, NULL);
         return;
@@ -107,11 +111,15 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
         print_expr(stmt->stmt.for_.loop_expr, depth + 1, "loop");
         print_stmt(stmt->stmt.for_.body, depth + 1, "body");
         return;
+    case STMT_GOTO:
+        SIC_TODO();
     case STMT_IF:
         print_expr(stmt->stmt.if_.cond, depth + 1, "cond");
         print_stmt(stmt->stmt.if_.then_stmt, depth + 1, "then");
         print_stmt(stmt->stmt.if_.else_stmt, depth + 1, "else");
         return;
+    case STMT_LABEL:
+        SIC_TODO();
     case STMT_MULTI_DECL: {
         const ASTDeclDA* decls = &stmt->stmt.multi_decl;
         for(size_t i = 0; i < decls->size; ++i)
@@ -141,6 +149,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
         print_expr(stmt->stmt.swap.left,  depth + 1, NULL);
         print_expr(stmt->stmt.swap.right, depth + 1, NULL);
         return;
+    case STMT_SWITCH:
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE:
@@ -280,17 +289,22 @@ static void print_constant(const ASTExpr* expr)
 }
 
 static const char* s_stmt_type_strs[] = {
-    [STMT_INVALID]     = "Invalid",
-    [STMT_AMBIGUOUS]   = "Ambiguous Statement",
+    [STMT_INVALID]     = "Invalid Statement",
     [STMT_BLOCK]       = "Block",
+    [STMT_BREAK]       = "Break Statement",
+    [STMT_CASE]        = "Case Statement",
+    [STMT_CONTINUE]    = "Continue Statement",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_FOR]         = "For Loop",
+    [STMT_GOTO]        = "Goto Statement",
     [STMT_IF]          = "If Statement",
+    [STMT_LABEL]       = "Label",
     [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_NOP]         = "Nop",
     [STMT_RETURN]      = "Return Statement",
     [STMT_SINGLE_DECL] = "Single Declaration",
     [STMT_SWAP]        = "Swap Statement",
+    [STMT_SWITCH]      = "Switch Statement",
     [STMT_TYPE_DECL]   = "Type Declaration",
     [STMT_WHILE]       = "While Loop",
 };
