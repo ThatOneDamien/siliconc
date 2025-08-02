@@ -1,22 +1,17 @@
-priv extern void printf(ubyte* fmt, ...);
-
-struct Large
+struct String
 {
-    uint[24] a;
-}
-
-void swap(Large* l1, Large* l2)
-{
-    *l1 <-> *l2;
+    int length;
+    ubyte* str;
 }
 
 pub uint main()
 {
-    Large l1, l2;
-    l1.a[0] = 10;
-    l2.a[0] = 15;
-    printf("%d %d\n", l1.a[0], l2.a[0]);
-    swap(&l1, &l2);
-    printf("%d %d\n", l1.a[0], l2.a[0]);
+    String str;
+    str.length = 4;
+    str.str = "Okay";
+    byte i = 10;
+    for(int i = 0; i < str.length; ++i)
+        printf("%c", str.str[i]);
+    printf("%u\n", i);
     return 0;
 }

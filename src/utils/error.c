@@ -1,4 +1,5 @@
 #include "core/internal.h"
+#include "file_utils.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -41,47 +42,55 @@ void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list 
         g_warning_cnt++;
 }
 
-void sic_diagnostic_at(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
-                       const char* restrict message, ...)
+void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict message, ...)
 {
     va_list va;
     va_start(va, message);
-    sic_diagnostic_atv(filepath, loc, diag, message, va);
+    sic_diagnostic_atv(loc, diag, message, va);
     va_end(va);
 }
 
-void sic_diagnostic_atv(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
-                        const char* restrict message, va_list va)
+void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va)
 {
-    SIC_ASSERT(filepath != NULL);
-    SIC_ASSERT(loc != NULL);
-    SIC_ASSERT(loc->start != NULL);
     SIC_ASSERT(message != NULL);
-    char* next_line = strchr(loc->start, '\n');
-    const char* loc_end = loc->start + loc->len;
-    int before_size = (uintptr_t)loc->start - (uintptr_t)loc->line_start;
-    int after_size = next_line == NULL ? strlen(loc_end) : (uintptr_t)next_line - (uintptr_t)loc_end;
+    InputFile* file = file_from_id(loc.file);
+    const char* line_start = file->src;
+    const char* loc_start;
+    const char* after_loc;
+    uint32_t cnt = 1;
+    uint32_t after_len = 0;
 
-    fprintf(stderr, "%s:%u: \033[%sm%s:\033[0m ",
-            filepath, loc->line_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
+    while(cnt < loc.line_num)
+    {
+        if(*line_start == '\n')
+            ++cnt;
+        line_start++;
+    }
+
+    loc_start = line_start + loc.col_num - 1;
+    after_loc = loc_start + loc.len;
+
+    while(after_loc[after_len] != '\0' &&
+          after_loc[after_len] != '\n')
+        after_len++;
+
+
+    fprintf(stderr, "%s:%u:%hhu \033[%sm%s:\033[0m ",
+            file->path, loc.line_num, loc.col_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
     
     vfprintf(stderr, message, va);
 
     fprintf(stderr, "\n%4u | %.*s\033[%sm%.*s\033[0m%.*s\n     | ", 
-            loc->line_num, 
-            before_size, loc->line_start,
+            loc.line_num, 
+            loc.col_num - 1, line_start,
             DIAG_COLOR[diag],
-            (int)loc->len, loc->start,
-            after_size,  loc_end);
-    for(const char* s = loc->line_start; s < loc->start; ++s)
-    {
-        if(isspace(*s))
-            putc(*s, stderr);
-        else
-            putc(' ', stderr);
-    }
+            loc.len, loc_start,
+            after_len, after_loc);
+    for(int i = 0; i < loc.col_num - 1; ++i)
+        putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
+
     fprintf(stderr, "\033[%sm^", DIAG_COLOR[diag]);
-    for(uint32_t i = 1; i < loc->len; ++i)
+    for(uint32_t i = 1; i < loc.len; ++i)
         putc('~', stderr);
     fprintf(stderr, "\033[0m\n");
     if(diag == DIAG_ERROR)

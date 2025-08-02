@@ -76,10 +76,11 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         return;
     }
     case EXPR_PRE_SEMANTIC_IDENT: {
-        ASTExprIdent ident = find_obj(c, expr->expr.pre_sema_ident);
+        Symbol sym = expr->expr.pre_sema_ident;
+        ASTExprIdent ident = find_obj(c, sym);
         if(ident == NULL)
         {
-            sema_error(c, &expr->loc, "Reference to undefined symbol \'%.*s\'.", expr->loc.len, expr->loc.start);
+            sic_error_at(expr->loc, "Reference to undefined symbol \'%s\'.", sym);
             expr->kind = EXPR_INVALID;
             return;
         }
@@ -132,6 +133,7 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
+    (void)c;
     ASTExpr* arr = expr->expr.array_access.array_expr;
     ASTExpr* index = expr->expr.array_access.index_expr;
     if(arr->kind == EXPR_INVALID || index->kind == EXPR_INVALID)
@@ -139,7 +141,7 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
-        sema_error(c, &expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
+        sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
                    type_to_string(arr->type));
         return false;
     }
@@ -147,7 +149,7 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
     if(arr->type->kind == TYPE_SS_ARRAY && index->kind == EXPR_CONSTANT && 
        index->expr.constant.val.i >= arr->type->array.ss_size)
     {
-        sic_diagnostic_at(c->unit->file.full_path, &expr->loc, DIAG_WARNING,
+        sic_diagnostic_at(expr->loc, DIAG_WARNING,
                           "Array index will overflow the size of the array.");
         return false;
     }
@@ -220,7 +222,7 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     if(call->func_expr->kind != EXPR_IDENT || call->func_expr->expr.ident->kind != OBJ_FUNC)
     {
         SIC_TODO_MSG("Handle complex function calling");
-        sema_error(c, &expr->loc, "Identifier in call expression is not a function.");
+        sic_error_at(expr->loc, "Identifier in call expression is not a function.");
         return false;
     }
 
@@ -228,14 +230,14 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     FuncSignature* sig = func->func.signature;
     if(call->args.size < sig->params.size)
     {
-        sema_error(c, &expr->loc, 
+        sic_error_at(expr->loc, 
                    "Too few arguments passed to function. Expected %s%lu, have %lu.",
                    sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
         return false;
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
-        sema_error(c, &expr->loc, 
+        sic_error_at(expr->loc, 
                    "Too many arguments passed to function. Expected %lu, have %lu.",
                    sig->params.size, call->args.size);
         return false;
@@ -317,19 +319,20 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static Object* resolve_member(SemaContext* c, Type* type, ASTExprUAccess* access)
+static Object* resolve_member(Type* type, ASTExprUAccess* access)
 {
     ObjectDA* members = &type->user_def->struct_.members;
     for(size_t i = 0; i < members->size; ++i)
         if(members->data[i]->symbol == access->member_sym)
             return members->data[i];
-    sema_error(c, &access->member_loc, "Type \'%s\' has no member \'%s\'.",
+    sic_error_at(access->member_loc, "Type \'%s\' has no member \'%s\'.",
                type_to_string(type), access->member_sym);
     return NULL;
 }
 
 static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 {
+    (void)c;
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
     if(parent->kind == EXPR_INVALID)
@@ -337,7 +340,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 
     if(parent->type->kind != TYPE_POINTER || !type_is_user_def(parent->type->pointer_base))
     {
-        sema_error(c, &expr->loc, "Arrow operator can only be used on pointers to structure-like types.");
+        sic_error_at(expr->loc, "Arrow operator can only be used on pointers to structure-like types.");
         return false;
     }
 
@@ -347,7 +350,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
     deref->expr.unary.inner = parent;
-    Object* member = resolve_member(c, deref->type, uaccess);
+    Object* member = resolve_member(deref->type, uaccess);
     if(member == NULL)
         return false;
 
@@ -360,6 +363,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
 {
+    (void)c;
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
     if(parent->kind == EXPR_INVALID)
@@ -377,12 +381,12 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
     }
     else if(!type_is_user_def(parent->type))
     {
-        sema_error(c, &uaccess->member_loc, "Attempted to access member of incompatable type \'%s\'.",
+        sic_error_at(uaccess->member_loc, "Attempted to access member of incompatable type \'%s\'.",
                    type_to_string(parent->type));
         return false;
     }
 
-    Object* member = resolve_member(c, parent->type, uaccess);
+    Object* member = resolve_member(parent->type, uaccess);
     
     if(member == NULL)
         return false;
@@ -411,7 +415,7 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
     {
         if(!type_is_integer(right->type))
         {
-            sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+            sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                        type_to_string(left->type), type_to_string(right->type));
             return false;
         }
@@ -423,7 +427,7 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
            right->expr.constant.val.i >= left->type->array.ss_size)
         {
             // TODO: Make this a warning?
-            sema_error(c, &expr->loc, "Array index will overflow the size of the array.");
+            sic_error_at(expr->loc, "Array index will overflow the size of the array.");
             return false;
         }
         expr->type = left->type;
@@ -448,7 +452,7 @@ static bool analyze_sub(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* r
     {
         if(!type_is_integer(right->type))
         {
-            sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+            sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                        type_to_string(left->type), type_to_string(right->type));
             return false;
         }
@@ -505,7 +509,7 @@ static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr* left, AST
 
     if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
     {
-        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+        sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                    type_to_string(left->type), type_to_string(right->type));
         return false;
     }
@@ -517,7 +521,7 @@ static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr*
 {
     if(!type_is_integer(left->type) || !type_is_integer(right->type))
     {
-        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+        sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                    type_to_string(left->type), type_to_string(right->type));
         return false;
     }
@@ -533,7 +537,7 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
 {
     if(!type_is_integer(left->type) || !type_is_integer(right->type))
     {
-        sema_error(c, &expr->loc, "Invalid operand types %s and %s.",
+        sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                    type_to_string(left->type), type_to_string(right->type));
         return false;
     }
@@ -547,7 +551,7 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
 
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr* right)
 {
-    if(!expr_is_lvalue(c, left))
+    if(!expr_is_lvalue(left))
         return false;
     expr->type = left->type;
     return implicit_cast(c, right, left->type);
@@ -586,9 +590,10 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
 
 static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
+    (void)c;
     if(inner->kind != EXPR_IDENT)
     {
-        sema_error(c, &expr->loc, "Cannot take address of rvalue.");
+        sic_error_at(expr->loc, "Cannot take address of rvalue.");
         return false;
     }
     expr->type = type_pointer_to(inner->type);
@@ -599,7 +604,7 @@ static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
     if(!type_is_integer(inner->type))
     {
-        sema_error(c, &expr->loc, "Invalid operand type %s.", 
+        sic_error_at(expr->loc, "Invalid operand type %s.", 
                    type_to_string(inner->type));
         return false;
     }
@@ -611,6 +616,7 @@ static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
+    (void)c;
     switch(inner->type->kind)
     {
     case TYPE_POINTER:
@@ -621,7 +627,7 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
         expr->type = inner->type->array.elem_type;
         return true;
     default:
-        sema_error(c, &expr->loc, "Cannot dereference non-pointer type %s.",
+        sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
                    type_to_string(inner->type));
         return false;
     }
@@ -629,7 +635,8 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_incdec(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
-    if(!expr_is_lvalue(c, inner))
+    (void)c;
+    if(!expr_is_lvalue(inner))
         return false;
 
     expr->type = inner->type;
@@ -646,9 +653,10 @@ static bool analyze_log_not(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
+    (void)c;
     if(!type_is_numeric(inner->type))
     {
-        sema_error(c, &expr->loc, "Cannot negate non-numeric type %s.",
+        sic_error_at(expr->loc, "Cannot negate non-numeric type %s.",
                    type_to_string(inner->type));
         return false;
     }
@@ -697,7 +705,7 @@ static bool arith_type_conv(SemaContext* c, ASTExpr* parent, ASTExpr* e1, ASTExp
 {
     if(!type_is_numeric(e1->type) || !type_is_numeric(e2->type))
     {
-        sema_error(c, &parent->loc, "Invalid operand types %s and %s.",
+        sic_error_at(parent->loc, "Invalid operand types %s and %s.",
                    type_to_string(e1->type), type_to_string(e2->type));
         return false;
     }

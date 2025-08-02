@@ -95,18 +95,17 @@ extern int g_warning_cnt;
 
 PRINTF_FMT(2, 3)
 void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...);
-PRINTF_FMT(4, 5)
-void sic_diagnostic_at(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
-                       const char* restrict message, ...);
+PRINTF_FMT(3, 4)
+void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict message, ...);
 void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va);
-void sic_diagnostic_atv(const char* filepath, const SourceLoc* loc, DiagnosticType diag,
-                        const char* restrict message, va_list va);
-PRINTF_FMT(1, 2)
-static inline void sic_error(const char* restrict message, ...)
+void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va);
+
+PRINTF_FMT(2, 3)
+static inline void sic_error_at(SourceLoc loc, const char* restrict message, ...)
 {
     va_list va;
     va_start(va, message);
-    sic_diagnosticv(DIAG_ERROR, message, va);
+    sic_diagnostic_atv(loc, DIAG_ERROR, message, va);
     va_end(va);
 }
 

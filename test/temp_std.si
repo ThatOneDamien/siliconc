@@ -1,0 +1,4 @@
+pub extern void printf(ubyte* fmt, ...);
+pub extern void puts(ubyte* msg);
+pub extern void memcpy(void* dst, void* src, ulong size);
+pub extern void memset(void* dst, int n, ulong size);

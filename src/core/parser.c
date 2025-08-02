@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "utils/da.h"
+#include "utils/file_utils.h"
 #include "utils/lib.h"
 
 #include <float.h>
@@ -33,8 +34,8 @@ static inline bool parse_decl_type(Lexer* l, Type** type, ObjAttr* attribs)
 }
 
 // Statements
-static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_stmt(Lexer* l);
+static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_for(Lexer* l);
 static ASTStmt* parse_if(Lexer* l);
 static ASTStmt* parse_return(Lexer* l);
@@ -48,133 +49,41 @@ static inline ASTExpr* parse_expr(Lexer* l)
 {
     return parse_expr_with_prec(l, PREC_ASSIGN, NULL);
 }
+static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
+static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
+static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
+static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond);
+static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
+static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
+static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
+static ASTExpr* parse_identifier_expr(Lexer* l);
+static ASTExpr* parse_paren_expr(Lexer* l);
+static ASTExpr* parse_unary_prefix(Lexer* l);
+static ASTExpr* parse_int_literal(Lexer* l);
+static ASTExpr* parse_char_literal(Lexer* l);
+static ASTExpr* parse_float_literal(Lexer* l);
+static ASTExpr* parse_string_literal(Lexer* l);
+static ASTExpr* parse_bool_literal(Lexer* l);
+static ASTExpr* parse_nullptr(Lexer* l);
 
 // Inline helpers
+static inline Token*   peek_prev(Lexer* l)     { return lexer_prev(l); }
+static inline Token*   peek(Lexer* l)          { return lexer_peek(l); }
+static inline Token*   peek_next(Lexer* l)     { return lexer_next(l); }
+static inline Token*   UNUSED peek_nextnext(Lexer* l) { return lexer_nextnext(l); }
 
-static inline Token* peek(Lexer* lexer)
-{
-    return lexer->la_buf.buf + lexer->la_buf.head;
-}
-
-static inline Token* peek_forw(Lexer* lexer, uint32_t count)
-{
-    SIC_ASSERT(count < LOOK_AHEAD_SIZE);
-    return lexer->la_buf.buf + ((lexer->la_buf.head + count) % LOOK_AHEAD_SIZE);
-}
-
-static inline bool tok_equal(Lexer* lexer, TokenKind kind)
-{
-    return peek(lexer)->kind == kind;
-}
-
-static inline bool tok_equal_forw(Lexer* lexer, uint32_t count, TokenKind kind)
-{
-    return peek_forw(lexer, count)->kind == kind;
-}
-
-static inline void parser_error(Lexer* lexer, const char* restrict message, ...)
-{
-    va_list va;
-    va_start(va, message);
-    Token* t = peek(lexer);
-    sic_diagnostic_atv(lexer->unit->file.full_path, &t->loc, DIAG_ERROR, message, va);
-    va_end(va);
-}
-
-static inline bool expect(Lexer* l, TokenKind kind)
-{
-    if(tok_equal(l, kind))
-        return true;
-
-    parser_error(l, "Expected \'%s\'", tok_kind_to_str(kind));
-    return false;
-}
-
-static inline void advance(Lexer* l)
-{
-    lexer_advance(l);
-}
-
-static inline void advance_many(Lexer* l, uint32_t steps)
-{
-    SIC_ASSERT(steps > 1);
-    for(uint32_t i = 0; i < steps; ++i)
-        advance(l);
-}
-
-static inline bool try_consume(Lexer* l, TokenKind kind)
-{
-    if(tok_equal(l, kind))
-    {
-        advance(l);
-        return true;
-    }
-    return false;
-}
-
-static inline bool consume(Lexer* l, TokenKind kind)
-{
-    if(try_consume(l, kind))
-        return true;
-
-    parser_error(l, "Expected \'%s\'.", tok_kind_to_str(kind));
-    return false;
-}
-
-static inline Object* new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs)
-{
-    SIC_ASSERT(peek(l)->kind == TOKEN_IDENT);
-    Object* obj  = CALLOC_STRUCT(Object);
-    obj->symbol  = peek(l)->sym;
-    obj->loc     = peek(l)->loc;
-    obj->kind    = kind;
-    obj->access  = access;
-    obj->attribs = attribs;
-    return obj;
-}
-
-static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind)
-{
-    ASTStmt* stmt = CALLOC_STRUCT(ASTStmt);
-    stmt->kind = kind;
-    stmt->loc = peek(l)->loc;
-    return stmt;
-}
-
-static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
-{
-    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
-    expr->kind = kind;
-    expr->loc = peek(l)->loc;
-    return expr;
-}
-
-static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
-{
-    while(true)
-    {
-        TokenKind kind = peek(l)->kind;
-        if(kind == TOKEN_EOF)
-            return;
-        for(size_t i = 0; i < count; ++i)
-            if(kind == stopping_kinds[i])
-                return;
-        advance(l);
-    }
-}
-
-static inline void recover_top_level(Lexer* l)
-{
-    advance(l);
-    Token* t = peek(l);
-    while(t->kind != TOKEN_EOF && 
-          (t->loc.start != t->loc.line_start || 
-           (t->kind != TOKEN_IDENT && !token_is_keyword(t->kind))))
-    {
-        advance(l);
-        t = peek(l);
-    }
-}
+static inline bool     tok_equal(Lexer* lexer, TokenKind kind);
+static inline void     parser_error(Lexer* lexer, const char* restrict message, ...);
+static inline bool     expect(Lexer* l, TokenKind kind);
+static inline void     advance(Lexer* l);
+static inline void     advance_many(Lexer* l, uint32_t steps);
+static inline bool     try_consume(Lexer* l, TokenKind kind);
+static inline bool     consume(Lexer* l, TokenKind kind);
+static inline void     recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count);
+static inline void     recover_top_level(Lexer* l);
+static inline Object*  new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs);
+static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
+static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 
 static ASTStmt s_badstmt = {0};
 static ASTExpr s_badexpr = {0};
@@ -257,7 +166,7 @@ static bool parse_top_level(Lexer* l)
             return false;
 
         EXPECT_OR_RET(TOKEN_IDENT, false);
-        if(tok_equal_forw(l, 1, TOKEN_LPAREN))
+        if(peek_next(l)->kind == TOKEN_LPAREN)
             return function_declaration(l, access, type, attribs);
         
         return global_var_declaration(l, access, type, attribs);
@@ -273,7 +182,7 @@ static bool parse_top_level(Lexer* l)
 static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs)
 {
     SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
-    SIC_ASSERT(tok_equal_forw(l, 1, TOKEN_LPAREN));
+    SIC_ASSERT(peek_next(l)->kind == TOKEN_LPAREN);
 
     Object* func = new_obj(l, OBJ_FUNC, access, attribs);
     ObjFunc* comps = &func->func;
@@ -402,8 +311,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
                 Symbol other = members->data[i]->symbol;
                 if(other == this_sym)
                 {
-                    parser_error(l, "Duplicate member \'%.*s\'",
-                                 peek(l)->loc.len, peek(l)->loc.start);
+                    parser_error(l, "Duplicate member \'%s\'", peek(l)->sym);
                     goto SKIP_DUPLICATE;
                 }
             }
@@ -436,7 +344,7 @@ static bool parse_attribute(Lexer* l, ObjAttr* attribs)
     if(attribs == NULL)
         parser_error(l, "Object attributes not allowed in this context.");
     else if(*attribs & temp)
-        sic_diagnostic_at(l->unit->file.full_path, &peek(l)->loc, DIAG_WARNING, "Duplicate attribute.");
+        sic_diagnostic_at(peek(l)->loc, DIAG_WARNING, "Duplicate attribute.");
     else
         *attribs |= temp;
 
@@ -627,27 +535,6 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
 
 static const TokenKind s_stmt_recover_list[] = { TOKEN_SEMI, TOKEN_RBRACE };
 
-static ASTStmt* parse_stmt_block(Lexer* l)
-{
-    ASTStmt* block = new_stmt(l, STMT_BLOCK);
-    ASTStmt head;
-    head.next = NULL;
-    ASTStmt* cur_stmt = &head;
-
-    while(!try_consume(l, TOKEN_RBRACE))
-    {
-        if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(BAD_STMT, "No closing }.");
-        cur_stmt->next = parse_stmt(l);
-        if(!stmt_is_bad(cur_stmt->next))
-            cur_stmt = cur_stmt->next;
-    }
-
-    block->stmt.block.body = head.next;
-    return block;
-}
-
-
 static ASTStmt* parse_stmt(Lexer* l)
 {
     ASTStmt* stmt;
@@ -681,6 +568,26 @@ static ASTStmt* parse_stmt(Lexer* l)
     if(stmt_is_bad(stmt))
         recover_to(l, s_stmt_recover_list, 2);
     return stmt;
+}
+
+static ASTStmt* parse_stmt_block(Lexer* l)
+{
+    ASTStmt* block = new_stmt(l, STMT_BLOCK);
+    ASTStmt head;
+    head.next = NULL;
+    ASTStmt* cur_stmt = &head;
+
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        if(tok_equal(l, TOKEN_EOF))
+            ERROR_AND_RET(BAD_STMT, "No closing }.");
+        cur_stmt->next = parse_stmt(l);
+        if(!stmt_is_bad(cur_stmt->next))
+            cur_stmt = cur_stmt->next;
+    }
+
+    block->stmt.block.body = head.next;
+    return block;
 }
 
 static ASTStmt* parse_for(Lexer* l)
@@ -888,11 +795,11 @@ static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr*
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 {
     ASTExpr* binary = new_expr(l, EXPR_BINARY);
-    Token tok = *peek(l);
+    TokenKind kind = peek(l)->kind;
     advance(l);
 
     ASTExpr* rhs;
-    OpPrecedence rhs_pref = expr_rules[tok.kind].precedence;
+    OpPrecedence rhs_pref = expr_rules[kind].precedence;
     if(rhs_pref != PREC_ASSIGN)
         rhs_pref++;
 
@@ -902,7 +809,7 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
 
     binary->expr.binary.lhs = lhs;
     binary->expr.binary.rhs = rhs;
-    binary->expr.binary.kind = tok_to_binary_op(tok.kind);
+    binary->expr.binary.kind = tok_to_binary_op(kind);
     return binary;
 }
 
@@ -1031,12 +938,15 @@ static ASTExpr* parse_int_literal(Lexer* l)
 
     // TODO: Deal with the prefix for hex, octal, binary
 
+    const char* src = peek_prev(l)->start;
     uint64_t val = 0;
     for(uint32_t i = 0; i < expr->loc.len; ++i)
     {
+        if(src[i] == '_')
+            continue;
         uint64_t prev = val;
         val *= 10;
-        val += expr->loc.start[i] - '0';
+        val += src[i] - '0';
         if(prev > val)
             ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
     }
@@ -1063,13 +973,14 @@ static ASTExpr* parse_float_literal(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_FLOAT;
     advance(l);
+    const char* src = peek_prev(l)->start;
     double val = 0.0f;
     uint32_t index = 0;
     while(true)
     {
         if(index >= expr->loc.len)
             goto END;
-        char c = expr->loc.start[index];
+        char c = src[index];
         if(!c_is_num(c))
             break;
         double prev = val;
@@ -1080,7 +991,7 @@ static ASTExpr* parse_float_literal(Lexer* l)
         index++;
     }
     
-    if(expr->loc.start[index] == '.')
+    if(src[index] == '.')
     {
         index++;
         double factor = 1;
@@ -1088,7 +999,7 @@ static ASTExpr* parse_float_literal(Lexer* l)
         {
             if(index >= expr->loc.len)
                 goto END;
-            char c = expr->loc.start[index];
+            char c = src[index];
             if(!c_is_num(c))
                 break;
             factor *= 0.1;
@@ -1193,3 +1104,111 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 };
+
+static inline bool tok_equal(Lexer* l, TokenKind kind)
+{
+    return peek(l)->kind == kind;
+}
+
+static inline void parser_error(Lexer* l, const char* restrict message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_atv(peek(l)->loc, DIAG_ERROR, message, va);
+    va_end(va);
+}
+
+static inline bool expect(Lexer* l, TokenKind kind)
+{
+    if(tok_equal(l, kind))
+        return true;
+
+    parser_error(l, "Expected \'%s\'", tok_kind_to_str(kind));
+    return false;
+}
+
+static inline void advance(Lexer* l)
+{
+    lexer_advance(l);
+}
+
+static inline void advance_many(Lexer* l, uint32_t steps)
+{
+    SIC_ASSERT(steps > 1);
+    for(uint32_t i = 0; i < steps; ++i)
+        advance(l);
+}
+
+static inline bool try_consume(Lexer* l, TokenKind kind)
+{
+    if(tok_equal(l, kind))
+    {
+        advance(l);
+        return true;
+    }
+    return false;
+}
+
+static inline bool consume(Lexer* l, TokenKind kind)
+{
+    if(try_consume(l, kind))
+        return true;
+
+    parser_error(l, "Expected \'%s\'.", tok_kind_to_str(kind));
+    return false;
+}
+
+static inline Object* new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs)
+{
+    SIC_ASSERT(peek(l)->kind == TOKEN_IDENT);
+    Object* obj  = CALLOC_STRUCT(Object);
+    obj->symbol  = peek(l)->sym;
+    obj->loc     = peek(l)->loc;
+    obj->kind    = kind;
+    obj->access  = access;
+    obj->attribs = attribs;
+    return obj;
+}
+
+static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind)
+{
+    ASTStmt* stmt = CALLOC_STRUCT(ASTStmt);
+    stmt->kind = kind;
+    stmt->loc = peek(l)->loc;
+    return stmt;
+}
+
+static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
+{
+    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    expr->kind = kind;
+    expr->loc = peek(l)->loc;
+    return expr;
+}
+
+static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
+{
+    while(true)
+    {
+        TokenKind kind = peek(l)->kind;
+        if(kind == TOKEN_EOF)
+            return;
+        for(size_t i = 0; i < count; ++i)
+            if(kind == stopping_kinds[i])
+                return;
+        advance(l);
+    }
+}
+
+static inline void recover_top_level(Lexer* l)
+{
+    advance(l);
+    Token* t = peek(l);
+    while(t->kind != TOKEN_EOF && 
+          (t->loc.col_num > 1 || 
+           (t->kind != TOKEN_IDENT && !token_is_keyword(t->kind))))
+    {
+        advance(l);
+        t = peek(l);
+    }
+}

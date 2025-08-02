@@ -13,56 +13,54 @@
 
 #define FILE_FOUND 0
 
+typedef struct
+{
+    char   ext[3];
+    size_t len;
+} FTStorage;
+
+static FTStorage s_ft_to_ext[] = {
+    [FT_UNKNOWN] = { "\0", 0 },
+    [FT_SI]      = { "si", 2 },
+    [FT_LLVM_IR] = { "ll", 2 },
+    [FT_ASM]     = { "s" , 1 }, 
+    [FT_OBJ]     = { "o" , 1 }, 
+    [FT_STATIC]  = { "a" , 1 }, 
+    [FT_SHARED]  = { "so", 2 }, 
+};
+
 static StringDA s_tempfiles = {0};
 
 static FileType get_filetype(const char* extension);
+static inline const char* ft_to_extension(FileType ft, size_t* len);
+static void get_name_and_ext(const char* path, const char** name, 
+                                 const char** ext, const char** end);
 
-SIFile sifile_new(const char* full_path)
-{
-    SIC_ASSERT(full_path != NULL);
-    SIFile file;
-    file.full_path = full_path;
-    file.file_name = full_path;
-    file.file_ext  = NULL;
-    if(*full_path == '\0')
-        sic_fatal_error("Tried to use file with empty path.");
-    
-    for(file.path_end = full_path; *file.path_end != '\0'; ++file.path_end)
-    {
-        if(*file.path_end == '/')
-        {
-            if(file.path_end[1] == '\0')
-                sic_fatal_error("File path ends with /. (Indicates directory)");
-            file.file_name = file.path_end + 1;
-        }
-        else if(*file.path_end == '.')
-            file.file_ext = file.path_end;
-    }
-    if(file.file_ext == NULL || (uintptr_t)file.file_ext <= (uintptr_t)file.file_name)
-    {
-        file.type = FT_UNKNOWN;
-        file.file_ext = file.path_end;
-    }
-    else
-        file.type = get_filetype(file.file_ext + 1);
-
-    return file;
-}
-
-bool file_exists(const char* path)
+void input_file_new(const char* path)
 {
     SIC_ASSERT(path != NULL);
-    struct stat st;
-    return stat(path, &st) == FILE_FOUND;
+    da_reserve(&g_args.input_files, g_args.input_files.size + 1);
+    InputFile* file = g_args.input_files.data + g_args.input_files.size;
+    file->path = path;
+    file->src  = NULL;
+    if(*path == '\0')
+        sic_fatal_error("Tried to use file with empty path.");
+    
+    const char* file_name;
+    const char* file_ext;
+    get_name_and_ext(path, &file_name, &file_ext, NULL);
+    file->type = file_ext <= file_name ? FT_UNKNOWN : get_filetype(file_ext + 1);
+    file->id = g_args.input_files.size;
+    g_args.input_files.size++;
 }
 
-char* sifile_read(const SIFile* file)
+void input_file_read(InputFile* file)
 {
     SIC_ASSERT(file != NULL);
-    SIC_ASSERT(file->full_path != NULL);
+    SIC_ASSERT(file->path != NULL);
 
     char* res = NULL;
-    int fd = open(file->full_path, O_RDONLY);
+    int fd = open(file->path, O_RDONLY);
 
     if(fd == -1)
         goto ERR;
@@ -95,118 +93,105 @@ char* sifile_read(const SIFile* file)
         res[orig_size + 1] = '\0';
     }
 
-    return res;
+    file->src = res;
+    return;
 ERR:
     if(fd != -1)
         close(fd);
-    sic_fatal_error("Failed to open file \'%s\'", file->full_path);
-    return NULL;
-}
-
-FILE* sifile_open_write(const SIFile* file)
-{
-    SIC_ASSERT(file != NULL);
-    SIC_ASSERT(file->full_path != NULL);
-    FILE* fp = fopen(file->full_path, "w");
-    if(!fp)
-        sic_fatal_error("Unable to open/create output file \'%s\'.", file->full_path);
-    return fp;
-}
-
-SIFile convert_file_to(const SIFile* file, FileType desired)
-{
-    SIC_ASSERT(file != NULL);
-    SIC_ASSERT(file->full_path != NULL);
-    SIC_ASSERT(desired != FT_UNKNOWN);
-
-    size_t filename_len = (uintptr_t)file->file_ext - (uintptr_t)file->full_path;
-
-    const char* ext = ft_to_extension(desired);
-    size_t ext_len = strlen(ext);
-    char* new_name = cmalloc(filename_len + ext_len + 1);
-    memcpy(new_name, file->full_path, filename_len);
-    strncpy(new_name + filename_len, ext, ext_len);
-    new_name[filename_len + ext_len] = '\0';
-
-    SIFile new_file;
-    new_file.full_path = new_name;
-    new_file.file_name = new_name + ((uintptr_t)file->file_name - (uintptr_t)file->full_path);
-    new_file.file_ext  = new_name + filename_len;
-    new_file.type = desired;
-    return new_file;
+    sic_fatal_error("Failed to open file \'%s\'", file->path);
 }
 
 const char* convert_ext_to(const char* path, FileType desired)
 {
     SIC_ASSERT(path != NULL);
-    SIC_ASSERT(desired != FT_UNKNOWN);
+    size_t ext_len;
+    const char* new_ext = ft_to_extension(desired, &ext_len);
+    const char* file_name;
+    const char* file_ext;
+    const char* file_end;
+    get_name_and_ext(path, &file_name, &file_ext, &file_end);
+    if(file_ext <= file_name)
+        file_ext = file_end;
 
-    SIFile temp = sifile_new(path);
-    temp = convert_file_to(&temp, desired);
-    return temp.full_path;
+    size_t path_len = (uintptr_t)file_ext - (uintptr_t)path;
+    char* new_name = cmalloc(path_len + ext_len + 2);
+
+    memcpy(new_name, path, path_len);
+    new_name[path_len] = '.';
+    strncpy(new_name + path_len + 1, new_ext, ext_len);
+    new_name[path_len + ext_len + 1] = '\0';
+    return new_name;
 }
 
-static FileType get_filetype(const char* extension)
+bool file_exists(const char* path)
 {
-    SIC_ASSERT(extension != NULL);
-    if(strcmp(extension, "ll") == 0)
-        return FT_LLVM_IR;
-    if(strcmp(extension, "s") == 0 ||
-       strcmp(extension, "asm") == 0)
-        return FT_ASM;
-    if(strcmp(extension, "o") == 0)
-        return FT_OBJ;
-    if(strcmp(extension, "a") == 0)
-        return FT_STATIC;
-    if(strcmp(extension, "so") == 0)
-        return FT_SHARED;
-    if(strcmp(extension, "si") == 0)
-        return FT_SI;
-
-    return FT_UNKNOWN;
+    SIC_ASSERT(path != NULL);
+    struct stat st;
+    return stat(path, &st) == FILE_FOUND;
 }
 
-const char* ft_to_extension(FileType ft)
-{
-    static const char* ft_to_ext[] = {
-        NULL, 
-        [FT_SI]      = ".si",
-        [FT_LLVM_IR] = ".ll",
-        [FT_ASM]     = ".s", 
-        [FT_OBJ]     = ".o", 
-        [FT_STATIC]  = ".a", 
-        [FT_SHARED]  = ".so", 
-    };
-    return ft_to_ext[ft];
-}
-
-SIFile create_tempfile(FileType ft)
+const char* create_tempfile(FileType ft)
 {
     SIC_ASSERT(ft != FT_UNKNOWN);
     static const char template[21] = "/tmp/siliconc-XXXXXX";
-    const char* ext = ft_to_extension(ft);
-    int ext_len = strlen(ext);
+    size_t ext_len;
+    const char* ext = ft_to_extension(ft, &ext_len);
     char* tmppath = cmalloc(sizeof(template) + ext_len);
     memcpy(tmppath, template, sizeof(template) - 1);
     memcpy(tmppath + sizeof(template) - 1, ext, ext_len + 1);
 
-    int fd = mkstemps(tmppath, ext_len);
+    int fd = mkstemps(tmppath, (int)ext_len);
     if(fd == -1)
         sic_fatal_error("Failed to create temporary file.");
 
     close(fd);
     da_append(&s_tempfiles, tmppath);
-
-    SIFile res;
-    res.full_path = tmppath;
-    res.file_name = tmppath + 5;
-    res.file_ext = tmppath + sizeof(template);
-    res.type = ft;
-    return res;
+    return tmppath;
 }
 
 void close_tempfiles(void)
 {
     for(size_t i = 0; i < s_tempfiles.size; ++i)
         unlink(s_tempfiles.data[i]);
+}
+
+static FileType get_filetype(const char* extension)
+{
+    SIC_ASSERT(extension != NULL);
+    for(size_t i = 1; i < sizeof(s_ft_to_ext) / sizeof(s_ft_to_ext[0]); ++i)
+        if(memcmp(extension, s_ft_to_ext[i].ext, s_ft_to_ext[i].len) == 0)
+            return (FileType)i;
+    return FT_UNKNOWN;
+}
+
+static inline const char* ft_to_extension(FileType ft, size_t* len)
+{
+    SIC_ASSERT(ft > FT_UNKNOWN && ft <= FT_SHARED);
+    *len = s_ft_to_ext[ft].len;
+    return s_ft_to_ext[ft].ext;
+}
+
+static void get_name_and_ext(const char* path, const char** name, 
+                             const char** ext, const char** end)
+{
+    const char* file_name = path;
+    const char* file_ext = NULL;
+    const char* file_end;
+    for(file_end = path; *file_end != '\0'; ++file_end)
+    {
+        char c = file_end[0];
+        if(c == '/')
+        {
+            if(file_end[1] == '\0')
+                sic_fatal_error("File path ends with /. (Indicates directory)");
+            file_name = file_end + 1;
+        }
+        else if(c == '.')
+            file_ext = file_end;
+    }
+
+    *name = file_name;
+    *ext = file_ext;
+    if(end != NULL)
+        *end = file_end;
 }

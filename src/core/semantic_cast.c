@@ -45,8 +45,8 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     CastRule rule = s_rule_table[params.from_group][params.to_group];
     if(rule.able == NULL)
     {
-        sema_error(c, &cast->loc, "Casting from %s to %s is not allowed.",
-                   type_to_string(params.from), type_to_string(params.to));
+        sic_error_at(cast->loc, "Casting from %s to %s is not allowed.",
+                     type_to_string(params.from), type_to_string(params.to));
         return false;
     }
 
@@ -75,8 +75,8 @@ bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
     CastRule rule = s_rule_table[params.from_group][params.to_group];
     if(rule.able == NULL)
     {
-        sema_error(c, &expr_to_cast->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
-                   type_to_string(params.from), type_to_string(params.to));
+        sic_error_at(expr_to_cast->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
+                     type_to_string(params.from), type_to_string(params.to));
         return false;
     }
 
@@ -128,8 +128,8 @@ static bool cast_rule_explicit_only(CastParams* params, bool explicit)
 {
     if(explicit)
         return true;
-    sema_error(params->sema_context, &params->expr->loc, "%s cannot be implicitly converted to %s.",
-               type_to_string(params->from), type_to_string(params->to));
+    sic_error_at(params->expr->loc, "%s cannot be implicitly converted to %s.",
+                 type_to_string(params->from), type_to_string(params->to));
     return false;
 }
 
@@ -147,8 +147,8 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
     if(params->inner->kind == EXPR_CONSTANT)
         return true;
 
-    sema_error(params->sema_context, &params->expr->loc, 
-               "Narrowing integer type %s to %s requires explicit cast.",
+    sic_error_at(params->expr->loc, 
+                 "Narrowing integer type %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
     return false;
 }
@@ -175,8 +175,8 @@ static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
         return true;
 
 ERR:
-    sema_error(params->sema_context, &params->expr->loc, 
-               "Unable to implicitly cast between pointers of different type.");
+    sic_error_at(params->expr->loc, 
+                 "Unable to implicitly cast between pointers of different type.");
     return false;
 }
 
@@ -187,8 +187,8 @@ static bool cast_rule_string_lit(CastParams* params, bool explicit)
        params->inner->expr.constant.kind == CONSTANT_STRING)
         return true;
 
-    sema_error(params->sema_context, &params->expr->loc,
-               "Arrays do not implicitly decay to pointers, use the address-of operator '&'.");
+    sic_error_at(params->expr->loc,
+                 "Arrays do not implicitly decay to pointers, use the address-of operator '&'.");
     return false;
 }
 

@@ -2,12 +2,18 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <assert.h>
 #include "enums.h"
 
-#define LOOK_AHEAD_SIZE 4 // Should be a power of two for fast modulo.
+#define LOOK_AHEAD_SIZE 4
+#define LOOK_AHEAD_MASK (LOOK_AHEAD_SIZE - 1)
+static_assert((LOOK_AHEAD_SIZE & 1) == 0, "Look ahead size must be power of 2");
+
+// Aliases
+typedef const char* Symbol;
+typedef uint8_t     FileId;
 
 // Compiler-Wide Data Structures
-typedef const  char*            Symbol;
 typedef struct HashEntry        HashEntry;
 typedef struct HashMap          HashMap;
 typedef struct MemArena         MemArena;
@@ -33,8 +39,9 @@ typedef struct StringDA         StringDA;
 typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTDeclDA        ASTDeclDA;
+typedef struct ScopeDA          ScopeDA;
 typedef struct CompUnitDA       CompUnitDA;
-typedef struct SIFileDA         SIFileDA;
+typedef struct InputFileDA      InputFileDA;
 typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
@@ -50,7 +57,6 @@ typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExpr          ASTExpr;
-typedef struct Type*            ASTAmbiguous;
 typedef struct ASTBlock         ASTBlock;
 typedef struct ASTDeclaration   ASTDeclaration;
 typedef struct ASTFor           ASTFor;
@@ -71,7 +77,7 @@ typedef struct Object           Object;
 typedef struct Scope            Scope;
 
 // Compiler-wide important structs
-typedef struct SIFile           SIFile;
+typedef struct InputFile        InputFile;
 typedef struct CompilationUnit  CompilationUnit;
 typedef struct Module           Module;
 typedef struct Cmdline          Cmdline;
@@ -101,16 +107,16 @@ struct MemArena
 
 struct SourceLoc
 {
-    const char* start;
-    const char* line_start;
-    uint32_t    len;
-    uint32_t    line_num;
+    FileId   file     : 8;
+    uint32_t col_num  : 12;
+    uint32_t len      : 12;
+    uint32_t line_num : 32;
 };
 
 struct Token
 {
-    TokenKind kind;
-    SourceLoc loc;
+    SourceLoc   loc;
+    TokenKind   kind;
     union
     {
         struct
@@ -126,6 +132,7 @@ struct Token
         } chr;
 
         Symbol sym;
+        const char* start;
     };
 };
 
@@ -133,13 +140,13 @@ struct Token
 struct LookAhead
 {
     Token    buf[LOOK_AHEAD_SIZE];
-    uint32_t head;
+    uint32_t head; // Next location to be overwritten
+    uint32_t cur;  // Where peek(l) will show.
 };
 
 struct Lexer
 {
     CompilationUnit* unit;
-    const char*      src_start;
     const char*      line_start;
     const char*      cur_pos;
     uint32_t         cur_line;
@@ -187,7 +194,7 @@ struct Type
 
 struct StringDA
 {
-    char** data;
+    const char** data;
     size_t size;
     size_t capacity;
 };
@@ -213,6 +220,33 @@ struct ASTDeclDA
     size_t          size;
 };
 
+struct ScopeDA
+{
+    Scope* data;
+    size_t capacity;
+    size_t size;
+};
+
+struct CompUnitDA
+{
+    CompilationUnit** data;
+    size_t            capacity;
+    size_t            size;
+};
+
+struct InputFileDA
+{
+    InputFile* data;
+    size_t  capacity;
+    size_t  size;
+};
+
+struct ModulePTRDA
+{
+    Module** data;
+    size_t   capacity;
+    size_t   size;
+};
 
 struct ASTExprAAccess
 {
@@ -349,7 +383,6 @@ struct ASTStmt
 
     union
     {
-        ASTAmbiguous    ambiguous;
         ASTBlock        block;
         ASTExpr*        expr;
         ASTFor          for_;
@@ -419,23 +452,20 @@ struct Object
 
 struct Scope
 {
-    Scope*  parent;
-    HashMap vars;
-    HashMap types;
+    HashMap objs;
 };
 
-struct SIFile
+struct InputFile
 {
-    const char* full_path;
-    const char* file_name;
-    const char* file_ext;
-    const char* path_end;
+    const char* path;
+    const char* src;
+    FileId      id;
     FileType    type;
 };
 
 struct CompilationUnit
 {
-    SIFile   file;
+    FileId   file;
     Module*  module;
     HashMap  priv_symbols;
     ObjectDA funcs;
@@ -443,26 +473,6 @@ struct CompilationUnit
     ObjectDA vars;
 };
 
-struct CompUnitDA
-{
-    CompilationUnit** data;
-    size_t            capacity;
-    size_t            size;
-};
-
-struct SIFileDA
-{
-    SIFile* data;
-    size_t  capacity;
-    size_t  size;
-};
-
-struct ModulePTRDA
-{
-    Module** data;
-    size_t   capacity;
-    size_t   size;
-};
 
 struct Module
 {
@@ -476,24 +486,24 @@ struct Module
 
 struct Cmdline
 {
-    SIFileDA        input_files;
-    char*           output_file;
+    InputFileDA   input_files;
+    char*         output_file;
 
-    CompileMode     mode;
-    CompileTarget   target;
-    IRTarget        ir_kind;
+    CompileMode   mode;
+    CompileTarget target;
+    IRTarget      ir_kind;
 
-    bool            emit_ir;
-    bool            emit_asm;
-    bool            hash_hash_hash;
+    bool          emit_ir;
+    bool          emit_asm;
+    bool          hash_hash_hash;
 #ifdef SI_DEBUG
-    bool            emit_debug_output;
+    bool          emit_debug_output;
 #endif
 };
 
 struct CompilerContext
 {
-    SIFileDA    linker_inputs;
+    StringDA    linker_inputs;
     Module      top_module;
     ModulePTRDA modules_to_compile;
 };

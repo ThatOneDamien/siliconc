@@ -1,5 +1,6 @@
 #include "debug.h"
 #include "core/internal.h"
+#include "file_utils.h"
 
 #ifdef SI_DEBUG
 #define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
@@ -34,11 +35,11 @@ void print_all_tokens(Lexer* lexer)
     while(lexer->la_buf.buf[lexer->la_buf.head].kind != TOKEN_EOF)
     {
         Token* tok = lexer->la_buf.buf + lexer->la_buf.head;
-        printf("%-15s: Len: %-4u   %.*s\n", 
+        printf("%-15s: Len: %-4u Line: %-6u Col: %-4u\n", 
                debug_tok_to_string(tok->kind),
                tok->loc.len,
-               (int)tok->loc.len, 
-               tok->loc.start);
+               tok->loc.line_num,
+               tok->loc.col_num);
         lexer_advance(lexer);
     }
 }
@@ -46,7 +47,9 @@ void print_all_tokens(Lexer* lexer)
 void print_unit(const CompilationUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
-    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", unit->file.full_path, unit->funcs.size, unit->vars.size);
+    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", 
+           file_from_id(unit->file)->src, 
+           unit->funcs.size, unit->vars.size);
     for(size_t i = 0; i < unit->funcs.size; ++i)
         print_func(unit->funcs.data[i]);
 }
@@ -171,7 +174,6 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name)
     if(name != NULL)
         printf("%s: ", name);
     printf("[ ");
-    const SourceLoc* loc = &expr->loc;
     switch(expr->kind)
     {
     case EXPR_ARRAY_ACCESS:
@@ -203,11 +205,11 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name)
         switch(obj->kind)
         {
         case OBJ_VAR:
-            printf("Variable \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, 
+            printf("Variable \'%s\' ] (Type: %s)\n", obj->symbol,
                    debug_type_to_str(expr->type));
             return;
         case OBJ_FUNC:
-            printf("Function \'%.*s\' ]\n", loc->len, loc->start);
+            printf("Function \'%s\' ]\n", obj->symbol);
             return;
         default:
             SIC_UNREACHABLE();
@@ -229,7 +231,8 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name)
                debug_type_to_str(expr->type));
         return;
     case EXPR_PRE_SEMANTIC_IDENT: {
-        printf("Pre-Sema Identifier \'%.*s\' ] (Type: %s)\n", loc->len, loc->start, debug_type_to_str(expr->type));
+        printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
+               expr->expr.pre_sema_ident, debug_type_to_str(expr->type));
         return;
     }
     case EXPR_TERNARY:
@@ -278,8 +281,7 @@ static void print_constant(const ASTExpr* expr)
                constant->val.f, debug_type_to_str(expr->type));
         break;
     case CONSTANT_STRING:
-        printf("Constant String \'%.*s\' ]\n", 
-               expr->loc.len, expr->loc.start);
+        printf("Constant String \'%s\' ]\n", constant->val.s);
         break;
     case CONSTANT_POINTER:
         printf("Constant Integer val: 0x%lX] (Type: %s)\n",

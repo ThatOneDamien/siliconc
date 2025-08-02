@@ -11,7 +11,7 @@
 
 CompilerContext g_compiler = {.top_module = {.name = "default"}};
 
-static void compile(const SIFile* input);
+static void compile(const InputFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
@@ -32,8 +32,8 @@ int main(int argc, char* argv[])
     process_cmdln_args(argc, argv);
     
     for(size_t i = 0; i < g_args.input_files.size; ++i)
-        if(!sifile_exists(g_args.input_files.data + i))
-            sic_fatal_error("File named '%s' not found.", g_args.input_files.data[i].full_path);
+        if(!file_exists(g_args.input_files.data[i].path))
+            sic_fatal_error("File named '%s' not found.", g_args.input_files.data[i].path);
 
     sym_map_init();
     parser_init();
@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
 
     for(size_t i = 0; i < g_args.input_files.size; ++i)
     {
-        SIFile* cur_input = g_args.input_files.data + i; 
+        InputFile* cur_input = g_args.input_files.data + i; 
         
         switch(cur_input->type)
         {
@@ -60,14 +60,14 @@ int main(int argc, char* argv[])
             continue;
         case FT_OBJ:
             if(g_args.mode == MODE_LINK)
-                da_append(&g_compiler.linker_inputs, *cur_input);
+                da_append(&g_compiler.linker_inputs, cur_input->path);
             else
-                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->full_path);
+                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->path);
             continue;
         case FT_UNKNOWN:
         case FT_SHARED:
         case FT_STATIC:
-            sic_fatal_error("Input file \'%s\' has invalid extension.", cur_input->full_path);
+            sic_fatal_error("Input file \'%s\' has invalid extension.", cur_input->path);
         }
         SIC_UNREACHABLE();
     }
@@ -125,7 +125,7 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-L/usr/lib");
 
     for(size_t i = 0; i < g_compiler.linker_inputs.size; ++i)
-        da_append(&cmd, (char*)g_compiler.linker_inputs.data[i].full_path);
+        da_append(&cmd, g_compiler.linker_inputs.data[i]);
 
     da_append(&cmd, "-lc");
 
@@ -138,17 +138,17 @@ int main(int argc, char* argv[])
     return EXIT_SUCCESS;
 }
 
-void run_subprocess(char** cmd)
+void run_subprocess(const char** cmd)
 {
     if(g_args.hash_hash_hash)
     {
-        for(char** c = cmd; *c != NULL; ++c)
+        for(const char** c = cmd; *c != NULL; ++c)
             printf("%s ", *c);
         putc('\n', stdout);
     }
     if(fork() == 0)
     {
-        execvp(cmd[0], cmd);
+        execvp(cmd[0], (char**)cmd);
         fprintf(stderr, "failed to execute subprocess \'%s\': %s\n", cmd[0], strerror(errno));
         _exit(EXIT_FAILURE);
     }
@@ -160,11 +160,10 @@ void run_subprocess(char** cmd)
         exit(status);
 }
 
-static void compile(const SIFile* input)
+static void compile(const InputFile* input)
 {
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
-
-    unit->file = *input;
+    unit->file = input->id;
 
     DBG_OUTPUT({
         CompilationUnit debug_unit = *unit;

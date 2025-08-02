@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "utils/file_utils.h"
 
 #include <string.h>
 
@@ -13,7 +14,7 @@ void process_cmdln_args(int argc, char* argv[])
     {
         if(argv[i][0] != '-') // Not an argument, only an input file.
         {
-            da_append(&g_args.input_files, sifile_new(argv[i]));
+            input_file_new(argv[i]);
             continue;
         }
 

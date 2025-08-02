@@ -2,7 +2,6 @@
 #include <assert.h>
 #include "structs.h"
 #include "utils/da.h"
-#include "utils/file_utils.h"
 #include "utils/lib.h"
 
 // Compiler globals
@@ -24,7 +23,7 @@ extern Type* g_type_long;
 extern Type* g_type_float;
 extern Type* g_type_double;
 
-void run_subprocess(char** cmd);
+void run_subprocess(const char** cmd);
 
 // Command line arguments
 void process_cmdln_args(int argc, char* argv[]);
@@ -35,9 +34,24 @@ BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
 
 // Lexer functions
-void lexer_init_unit(Lexer* lexer, CompilationUnit* unit);
-void lexer_set_pos_in_unit(Lexer* lexer, CompilationUnit* unit, SourceLoc* start);
-void lexer_advance(Lexer* lexer);
+void lexer_init_unit(Lexer* l, CompilationUnit* unit);
+void lexer_advance(Lexer* l);
+static inline Token* lexer_peek(Lexer* l)
+{
+    return l->la_buf.buf + l->la_buf.cur;
+}
+static inline Token* lexer_prev(Lexer* l)
+{
+    return l->la_buf.buf + l->la_buf.head;
+}
+static inline Token* lexer_next(Lexer* l)
+{
+    return l->la_buf.buf + ((l->la_buf.cur + 1) & LOOK_AHEAD_MASK);
+}
+static inline Token* lexer_nextnext(Lexer* l)
+{
+    return l->la_buf.buf + ((l->la_buf.cur + 2) & LOOK_AHEAD_MASK);
+}
 static inline bool token_is_typename(TokenKind kind)
 {
     return kind >= TOKEN_TYPENAME_START && kind <= TOKEN_TYPENAME_END;

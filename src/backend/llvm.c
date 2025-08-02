@@ -164,14 +164,14 @@ static void gen_module(CodegenContext* c, Module* module)
     }
 
     if(g_args.mode > MODE_ASSEMBLE)
-        c->obj_filename = create_tempfile(FT_OBJ).full_path;
+        c->obj_filename = create_tempfile(FT_OBJ);
     else if(g_args.mode == MODE_ASSEMBLE)
         c->obj_filename = g_args.output_file == NULL ? 
                             convert_ext_to(module->name, FT_OBJ) : 
                             g_args.output_file;
 
     emit_file(c, c->obj_filename, LLVMObjectFile);
-    da_append(&g_compiler.linker_inputs, sifile_new(c->obj_filename));
+    da_append(&g_compiler.linker_inputs, c->obj_filename);
     LLVMDisposeTargetMachine(c->target_machine);
     LLVMDisposeModule(c->module_ref);
 
@@ -210,14 +210,14 @@ static void decl_function(CodegenContext* c, Object* function)
     sig->llvm_func_type = LLVMFunctionType(get_llvm_type(c, sig->ret_type), param_types, sig->params.size, sig->is_var_arg);
 
     scratch_clear();
-    scratch_appendn(function->loc.start, function->loc.len);
+    scratch_append(function->symbol);
     function->llvm_ref = LLVMAddFunction(c->module_ref, scratch_string(), sig->llvm_func_type);
 }
 
 static void decl_global_var(CodegenContext* c, Object* var)
 {
     scratch_clear();
-    scratch_appendn(var->loc.start, var->loc.len);
+    scratch_append(var->symbol);
     var->llvm_ref = LLVMAddGlobal(c->module_ref, get_llvm_type(c, var->var.type), scratch_string());
     // TODO: Fix this!!!
     LLVMSetInitializer(var->llvm_ref, LLVMConstInt(get_llvm_type(c, var->var.type), 0, false));
@@ -244,7 +244,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     {
         Object* param = sig->params.data[i];
         scratch_clear();
-        scratch_appendn(param->loc.start, param->loc.len);
+        scratch_append(param->symbol);
         param->llvm_ref = emit_alloca(c, scratch_string(), get_llvm_type(c, param->var.type), type_alignment(param->var.type));
     }
 
@@ -252,7 +252,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     {
         Object* param = sig->params.data[i];
         scratch_clear();
-        scratch_appendn(param->loc.start, param->loc.len);
+        scratch_append(param->symbol);
         LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
     }
 
@@ -1035,7 +1035,7 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
     SIC_ASSERT(obj->kind == OBJ_VAR);
     get_llvm_type(c, obj->var.type);
     scratch_clear();
-    scratch_appendn(obj->loc.start, obj->loc.len);
+    scratch_append(obj->symbol);
     if(obj->var.type->kind == TYPE_DS_ARRAY)
     {
         GenValue size_val = emit_expr(c, obj->var.type->array.size_expr);
@@ -1125,7 +1125,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
             element_types[i] = get_llvm_type(c, user->struct_.members.data[i]->var.type);
         scratch_clear();
         scratch_append("struct.");
-        scratch_appendn(user->loc.start, user->loc.len);
+        scratch_append(user->symbol);
         user->llvm_ref = LLVMStructCreateNamed(c->global_context, scratch_string());
         LLVMStructSetBody(user->llvm_ref, element_types, user->struct_.members.size, false);
         return type->llvm_ref = user->llvm_ref;
@@ -1139,7 +1139,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         LLVMTypeRef largest_ref = get_llvm_type(c, user->struct_.largest_type);
         scratch_clear();
         scratch_append("union.");
-        scratch_appendn(user->loc.start, user->loc.len);
+        scratch_append(user->symbol);
         user->llvm_ref = LLVMStructCreateNamed(c->global_context, scratch_string());
         LLVMStructSetBody(user->llvm_ref, &largest_ref, 1, false);
         return type->llvm_ref = user->llvm_ref;

@@ -1,21 +1,15 @@
 #pragma once
-#include "lib.h"
+#include "core/internal.h"
 
-
-
-
-SIFile      sifile_new(const char* full_path);
-bool        file_exists(const char* path);
-char*       sifile_read(const SIFile* file);
-FILE*       sifile_open_write(const SIFile* file);
-SIFile      convert_file_to(const SIFile* file, FileType desired);
+void        input_file_new(const char* path);
+void        input_file_read(InputFile* file);
 const char* convert_ext_to(const char* path, FileType desired);
-const char* ft_to_extension(FileType ft);
-SIFile      create_tempfile(FileType ft);
+bool        file_exists(const char* path);
+const char* create_tempfile(FileType ft);
 void        close_tempfiles(void);
 
-static inline bool sifile_exists(const SIFile* file)
+static inline InputFile* file_from_id(FileId id)
 {
-    SIC_ASSERT(file != NULL);
-    return file_exists(file->full_path);
+    SIC_ASSERT(id < g_args.input_files.size);
+    return g_args.input_files.data + id;
 }
