@@ -1,5 +1,9 @@
 #include "semantics.h"
 
+#define ANALYZE_EXPR_SET_VALID(expr) do { valid &= analyze_expr(c, expr); } while(0)
+#define ANALYZE_EXPR_OR_RET(expr) do { if(!analyze_expr(c, expr)) return false; } while(0)
+#define IF_INVALID_RET() do { if(!valid) return false; } while(0)
+
 // Expr kind functions
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
@@ -32,48 +36,25 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool arith_type_conv(SemaContext* c, ASTExpr* parent, ASTExpr* e1, ASTExpr* e2);
 static void promote_int_type(SemaContext* c, ASTExpr* expr);
 
-void analyze_expr(SemaContext* c, ASTExpr* expr)
+bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
 {
     switch(expr->kind)
     {
-    case EXPR_ARRAY_ACCESS: {
-        ASTExprAAccess* aa = &expr->expr.array_access;
-        analyze_expr(c, aa->array_expr);
-        analyze_expr(c, aa->index_expr);
-        if(!analyze_array_access(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
-    case EXPR_BINARY: {
-        ASTExprBinary* bin = &expr->expr.binary;
-        analyze_expr(c, bin->lhs);
-        analyze_expr(c, bin->rhs);
-        if(!analyze_binary(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
-    case EXPR_CAST: {
-        ASTExprCast* cast = &expr->expr.cast;
-        analyze_expr(c, cast->inner);
-        if(!analyze_cast(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
-    case EXPR_FUNC_CALL: {
-        ASTExprCall* call = &expr->expr.call;
-        analyze_expr(c, call->func_expr);
-        if(!analyze_call(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
+    case EXPR_ARRAY_ACCESS:
+        return analyze_array_access(c, expr);
+    case EXPR_BINARY:
+        return analyze_binary(c, expr);
+    case EXPR_CAST:
+        return analyze_cast(c, expr);
+    case EXPR_DEFAULT:
+        SIC_ERROR_DBG("here");
+        sic_error_at(expr->loc, "Keyword \'default\' not allowed in this context.");
+        return false;
+    case EXPR_FUNC_CALL:
+        return analyze_call(c, expr);
     case EXPR_POSTFIX: {
         ASTExpr* inner = expr->expr.unary.inner;
-        analyze_expr(c, inner);
-        if(inner->kind == EXPR_INVALID)
-            expr->kind = EXPR_INVALID;
-        else
-            analyze_incdec(c, expr, inner);
-        return;
+        return analyze_expr(c, inner) && analyze_incdec(c, expr, inner);
     }
     case EXPR_PRE_SEMANTIC_IDENT: {
         Symbol sym = expr->expr.pre_sema_ident;
@@ -81,63 +62,82 @@ void analyze_expr(SemaContext* c, ASTExpr* expr)
         if(ident == NULL)
         {
             sic_error_at(expr->loc, "Reference to undefined symbol \'%s\'.", sym);
-            expr->kind = EXPR_INVALID;
-            return;
+            return false;
         }
         expr->expr.ident = ident;
         expr->type = ident->var.type;
         expr->kind = EXPR_IDENT;
-        return;
+        return true;
     }
-    case EXPR_UNARY: {
-        ASTExprUnary* unary = &expr->expr.unary;
-        analyze_expr(c, unary->inner);
-        if(!analyze_unary(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
-    case EXPR_UNRESOLVED_ARR: {
-        ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-        analyze_expr(c, uaccess->parent_expr);
-        if(!analyze_unresolved_arrow(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
-    case EXPR_UNRESOLVED_DOT: {
-        ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-        analyze_expr(c, uaccess->parent_expr);
-        if(!analyze_unresolved_dot(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
+    case EXPR_UNARY:
+        return analyze_unary(c, expr);
+    case EXPR_UNRESOLVED_ARR:
+        return analyze_unresolved_arrow(c, expr);
+    case EXPR_UNRESOLVED_DOT:
+        return analyze_unresolved_dot(c, expr);
     case EXPR_CONSTANT:
+        return true;
     case EXPR_INVALID:
-    case EXPR_NOP:
-        return;
-    case EXPR_TERNARY: {
-        ASTExprTernary* ternary = &expr->expr.ternary;
-        analyze_expr(c, ternary->cond_expr);
-        if(ternary->then_expr != NULL)
-            analyze_expr(c, ternary->then_expr);
-        analyze_expr(c, ternary->else_expr);
-        if(!analyze_ternary(c, expr))
-            expr->kind = EXPR_INVALID;
-        return;
-    }
+        return false;
+    case EXPR_TERNARY:
+        return analyze_ternary(c, expr);
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
+    case EXPR_NOP:
         break;
     }
     SIC_UNREACHABLE();
 }
 
+bool resolve_default(ASTExpr* expr, Type* type)
+{
+    expr->kind = EXPR_CONSTANT;
+    expr->type = type;
+    switch(type->kind)
+    {
+    case TYPE_BOOL:
+    case TYPE_BYTE:
+    case TYPE_UBYTE:
+    case TYPE_SHORT:
+    case TYPE_USHORT:
+    case TYPE_INT:
+    case TYPE_UINT:
+    case TYPE_LONG:
+    case TYPE_ULONG:
+    case TYPE_POINTER:
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        expr->expr.constant.val.i = 0;
+        return true;
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
+        expr->expr.constant.kind = CONSTANT_FLOAT;
+        expr->expr.constant.val.i = 0;
+        return true;
+    case TYPE_SS_ARRAY:
+    case TYPE_DS_ARRAY:
+    case TYPE_ENUM:
+    case TYPE_STRUCT:
+    case TYPE_TYPEDEF:
+    case TYPE_UNION:
+        SIC_TODO();
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_NULLPTR:
+    case TYPE_PRE_SEMA_ARRAY:
+    case __TYPE_COUNT:
+        SIC_UNREACHABLE();
+    }
+    return false;
+}
+
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
-    (void)c;
+    bool valid = true;
     ASTExpr* arr = expr->expr.array_access.array_expr;
     ASTExpr* index = expr->expr.array_access.index_expr;
-    if(arr->kind == EXPR_INVALID || index->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_SET_VALID(arr);
+    ANALYZE_EXPR_SET_VALID(index);
+    IF_INVALID_RET();
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
@@ -160,11 +160,16 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_binary(SemaContext* c, ASTExpr* expr)
 {
+    bool valid = true;
     ASTExpr* left = expr->expr.binary.lhs;
     ASTExpr* right = expr->expr.binary.rhs;
-    if(left->kind == EXPR_INVALID || right->kind == EXPR_INVALID)
-        return false;
-    switch(expr->expr.binary.kind)
+    BinaryOpKind kind = expr->expr.binary.kind;
+    ANALYZE_EXPR_SET_VALID(left);
+    if(kind != BINARY_ASSIGN || right->kind != EXPR_DEFAULT)
+        ANALYZE_EXPR_SET_VALID(right);
+    IF_INVALID_RET();
+
+    switch(kind)
     {
     case BINARY_ADD:
         return analyze_add(c, expr, left, right);
@@ -217,8 +222,8 @@ static bool analyze_binary(SemaContext* c, ASTExpr* expr)
 static bool analyze_call(SemaContext* c, ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
-    if(call->func_expr->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_OR_RET(call->func_expr);
+
     if(call->func_expr->kind != EXPR_IDENT || call->func_expr->expr.ident->kind != OBJ_FUNC)
     {
         SIC_TODO_MSG("Handle complex function calling");
@@ -231,14 +236,14 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     if(call->args.size < sig->params.size)
     {
         sic_error_at(expr->loc, 
-                   "Too few arguments passed to function. Expected %s%lu, have %lu.",
+                   "Too few arguments passed to function. Expected %s%u, have %u.",
                    sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
         return false;
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
         sic_error_at(expr->loc, 
-                   "Too many arguments passed to function. Expected %lu, have %lu.",
+                   "Too many arguments passed to function. Expected %u, have %u.",
                    sig->params.size, call->args.size);
         return false;
     }
@@ -248,7 +253,7 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     {
         ASTExpr* arg = call->args.data[i];
         analyze_expr(c, arg);
-        valid = valid && arg->kind != EXPR_INVALID &&
+        valid = valid && !expr_is_bad(arg) &&
                 implicit_cast(c, arg, sig->params.data[i]->var.type);
     }
 
@@ -256,7 +261,7 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     {
         ASTExpr* arg = call->args.data[i];
         analyze_expr(c, arg);
-        if(arg->kind == EXPR_INVALID)
+        if(expr_is_bad(arg))
         {
             valid = false;
             continue;
@@ -272,16 +277,17 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr)
 {
+    bool valid = true;
     ASTExpr* cond = expr->expr.ternary.cond_expr;
     ASTExpr* then = expr->expr.ternary.then_expr;
     ASTExpr* elss = expr->expr.ternary.else_expr;
-    if(cond->kind == EXPR_INVALID || elss->kind == EXPR_INVALID)
-        return false;
-
-    if(then == NULL)
+    ANALYZE_EXPR_SET_VALID(cond);
+    if(then != NULL)
+        ANALYZE_EXPR_SET_VALID(then);
+    else
         then = cond;
-    else if(then->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_SET_VALID(elss);
+    IF_INVALID_RET();
 
     if(type_equal(then->type, elss->type))
         goto EXIT;
@@ -296,8 +302,8 @@ EXIT:
 static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 {
     ASTExpr* inner = expr->expr.unary.inner;
-    if(inner->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_OR_RET(inner);
+    
     switch(expr->expr.unary.kind)
     {
     case UNARY_ADDR_OF:
@@ -332,11 +338,9 @@ static Object* resolve_member(Type* type, ASTExprUAccess* access)
 
 static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 {
-    (void)c;
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
-    if(parent->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->type->kind != TYPE_POINTER || !type_is_user_def(parent->type->pointer_base))
     {
@@ -363,11 +367,9 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 
 static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
 {
-    (void)c;
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
-    if(parent->kind == EXPR_INVALID)
-        return false;
+    ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->type->kind == TYPE_POINTER && type_is_user_def(parent->type->pointer_base))
     {
@@ -381,7 +383,7 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
     }
     else if(!type_is_user_def(parent->type))
     {
-        sic_error_at(uaccess->member_loc, "Attempted to access member of incompatable type \'%s\'.",
+        sic_error_at(uaccess->member_loc, "Attempted to access member of non-structure type \'%s\'.",
                    type_to_string(parent->type));
         return false;
     }
@@ -554,6 +556,9 @@ static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTExpr
     if(!expr_is_lvalue(left))
         return false;
     expr->type = left->type;
+    if(right->kind == EXPR_DEFAULT && !resolve_default(right, left->type))
+       return false;
+
     return implicit_cast(c, right, left->type);
 }
 
@@ -585,7 +590,7 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr* left, ASTE
     expr->expr.binary.kind = BINARY_ASSIGN;
     expr->expr.binary.rhs = new_expr;
     analyze_binary(c, new_expr);
-    return new_expr->kind != EXPR_INVALID && analyze_assign(c, expr, left, new_expr);
+    return !expr_is_bad(new_expr) && analyze_assign(c, expr, left, new_expr);
 }
 
 static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* inner)

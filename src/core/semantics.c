@@ -47,8 +47,9 @@ void declare_obj(SemaContext* c, Object* obj)
     //       then we can have better error handling for redefinition which would show
     //       where the previous definition is.
     Scope* cur = get_cur_scope(c);
-    if(hashmap_get(&cur->objs, obj->symbol) != NULL)
-        sic_error_at(obj->loc, "Redefinition of symbol \'%s\'.", obj->symbol);
+    Object* prev;
+    if((prev = hashmap_get(&cur->objs, obj->symbol)) != NULL)
+        sic_error_redef(obj, prev);
     hashmap_put(&cur->objs, obj->symbol, obj);
 }
 
@@ -146,7 +147,6 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         return;
     }
     case STMT_BREAK:
-    case STMT_CASE:
     case STMT_CONTINUE:
         SIC_TODO();
     case STMT_EXPR_STMT:
@@ -217,7 +217,46 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     case STMT_SWAP:
         analyze_swap(c, stmt);
         return;
-    case STMT_SWITCH:
+    case STMT_SWITCH: {
+        ASTSwitch* swi = &stmt->stmt.switch_;
+        bool has_default = false;
+        analyze_expr(c, swi->expr);
+        if(!type_is_integer(swi->expr->type))
+        {
+            sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
+            return;
+        }
+        if(type_size(swi->expr->type) < 4)
+            implicit_cast(c, swi->expr, g_type_int);
+        ASTCase* cas;
+        for(uint32_t i = 0; i < swi->cases.size; ++i)
+        {
+            cas = swi->cases.data + i;
+            if(cas->expr != NULL)
+            {
+                analyze_expr(c, cas->expr);
+                implicit_cast(c, cas->expr, swi->expr->type);
+            }
+            else if(has_default)
+            {
+                // TODO: Improve this error message, Im just too fucking lazy right now.
+                sic_error_at(swi->expr->loc, "Switch statement contains duplicate default cases.");
+                continue;
+            }
+            else
+                has_default = true;
+
+            push_scope(c);
+            ASTStmt* sub_stmt = cas->body;
+            while(sub_stmt != NULL)
+            {
+                analyze_stmt(c, sub_stmt, true);
+                sub_stmt = sub_stmt->next;
+            }
+            pop_scope(c);
+        }
+        return;
+    }
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE: {
@@ -235,11 +274,16 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
 
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
+    ASTExpr* init = decl->init_expr;
+    Type* type = decl->obj->var.type;
     declare_obj(c, decl->obj);
     if(decl->init_expr != NULL)
     {
-        analyze_expr(c, decl->init_expr);
-        implicit_cast(c, decl->init_expr, decl->obj->var.type);
+        if(decl->init_expr->kind == EXPR_DEFAULT)
+            resolve_default(init, type);
+        else
+            analyze_expr(c, init);
+        implicit_cast(c, init, type);
     }
 
 }
@@ -250,7 +294,7 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
     ASTExpr* right = stmt->stmt.swap.right;
     analyze_expr(c, left);
     analyze_expr(c, right);
-    if(left->kind == EXPR_INVALID || right->kind == EXPR_INVALID ||
+    if(expr_is_bad(left) || expr_is_bad(right) || 
        !expr_is_lvalue(left) || !expr_is_lvalue(right))
         return;
 
@@ -277,7 +321,7 @@ static void declare_global_obj(SemaContext* c, Object* global)
         other = hashmap_get(c->prot_syms, global->symbol);
 
     if(other != NULL)
-        sic_error_at(global->loc, "Redefinition of symbol \'%s\'.", global->symbol);
+        sic_error_redef(global, other);
 
     switch(global->access)
     {

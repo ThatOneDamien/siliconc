@@ -63,6 +63,7 @@ static const char* s_tok_strs[] = {
     [TOKEN_CASE]            = "case",
     [TOKEN_CONST]           = "const",
     [TOKEN_CONTINUE]        = "continue",
+    [TOKEN_DEFAULT]         = "default",
     [TOKEN_ELSE]            = "else",
     [TOKEN_ENUM]            = "enum",
     [TOKEN_EXTERN]          = "extern",

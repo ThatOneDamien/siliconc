@@ -98,3 +98,9 @@ void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict
     else if(diag == DIAG_WARNING)
         g_warning_cnt++;
 }
+
+void sic_error_redef(Object* redef, Object* orig)
+{
+    sic_diagnostic_at(redef->loc, DIAG_ERROR, "Redefinition of symbol \'%s\'.", redef->symbol);
+    sic_diagnostic_at(orig->loc, DIAG_NOTE, "Previous definition here.");
+}

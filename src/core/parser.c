@@ -39,6 +39,7 @@ static ASTStmt* parse_stmt_block(Lexer* l);
 static ASTStmt* parse_for(Lexer* l);
 static ASTStmt* parse_if(Lexer* l);
 static ASTStmt* parse_return(Lexer* l);
+static ASTStmt* parse_switch(Lexer* l);
 static ASTStmt* parse_while(Lexer* l);
 static ASTStmt* parse_expr_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs);
@@ -63,6 +64,7 @@ static ASTExpr* parse_int_literal(Lexer* l);
 static ASTExpr* parse_char_literal(Lexer* l);
 static ASTExpr* parse_float_literal(Lexer* l);
 static ASTExpr* parse_string_literal(Lexer* l);
+static ASTExpr* parse_default_expr(Lexer* l);
 static ASTExpr* parse_bool_literal(Lexer* l);
 static ASTExpr* parse_nullptr(Lexer* l);
 
@@ -85,17 +87,20 @@ static inline Object*  new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 
-static ASTStmt s_badstmt = {0};
-static ASTExpr s_badexpr = {0};
-static ASTStmt s_nopstmt = { .kind = STMT_NOP };
+static ASTStmt s_bad_stmt = {0};
+static ASTExpr s_bad_expr = {0};
+static ASTStmt s_nop_stmt = { .kind = STMT_NOP };
 static ExprParseRule expr_rules[__TOKEN_COUNT];
 
 #define ERROR_AND_RET(ret_val, ...)   do { parser_error(l, __VA_ARGS__); return ret_val; } while(0)
 #define CONSUME_OR_RET(kind, ret_val) do { if(!consume(l, kind)) return ret_val; } while(0)
 #define EXPECT_OR_RET(kind, ret_val)  do { if(!expect(l, kind)) return ret_val; } while(0)
-#define BAD_STMT (&s_badstmt)
-#define BAD_EXPR (&s_badexpr)
-#define NOP_STMT (&s_nopstmt)
+#define ASSIGN_EXPR_OR_RET(expr, ret_val)  do { if(expr_is_bad(expr = parse_expr(l))) return ret_val; } while(0)
+#define ASSIGN_STMT_OR_RET(stmt, ret_val)  do { if(stmt_is_bad(stmt = parse_stmt(l))) return ret_val; } while(0)
+#define BAD_STMT     (&s_bad_stmt)
+#define BAD_EXPR     (&s_bad_expr)
+#define NOP_STMT     (&s_nop_stmt)
+#define DEFAULT_EXPR (&s_default_expr)
 
 void parser_init(void)
 {
@@ -203,7 +208,7 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
         return false;
     }
 
-    CONSUME_OR_RET(TOKEN_LBRACE, false);
+    EXPECT_OR_RET(TOKEN_LBRACE, false);
     ASTStmt* body_block = parse_stmt_block(l);
     comps->body = body_block->stmt.block.body;
     return true;
@@ -503,9 +508,9 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
         {
             // TODO: Add auto detection for size when initialized.
             //       For now size must be specified as an expression.
-            ASTExpr* size_expr = parse_expr(l);
-            if(expr_is_bad(size_expr) || !consume(l, TOKEN_RBRACKET))
-                return false;
+            ASTExpr* size_expr;
+            ASSIGN_EXPR_OR_RET(size_expr, false);
+            CONSUME_OR_RET(TOKEN_RBRACKET, false);
             ty = type_array_of(ty, size_expr);
             continue;
         }
@@ -544,9 +549,13 @@ static ASTStmt* parse_stmt(Lexer* l)
         advance(l);
         return NOP_STMT;
     case TOKEN_LBRACE:
-        advance(l);
         stmt = parse_stmt_block(l);
         return stmt; // If stmt is invalid, we know we hit the EOF, see parse_stmt_block
+    case TOKEN_CASE:
+    case TOKEN_DEFAULT:
+        sic_error_at(peek(l)->loc, "Case/Default statement in invalid location.");
+        stmt = BAD_STMT;
+        break;
     case TOKEN_FOR:
         stmt = parse_for(l);
         break;
@@ -557,7 +566,8 @@ static ASTStmt* parse_stmt(Lexer* l)
         stmt = parse_return(l);
         break;
     case TOKEN_SWITCH:
-        SIC_TODO();
+        stmt = parse_switch(l);
+        break;
     case TOKEN_WHILE:
         stmt = parse_while(l);
         break;
@@ -573,6 +583,7 @@ static ASTStmt* parse_stmt(Lexer* l)
 static ASTStmt* parse_stmt_block(Lexer* l)
 {
     ASTStmt* block = new_stmt(l, STMT_BLOCK);
+    advance(l);
     ASTStmt head;
     head.next = NULL;
     ASTStmt* cur_stmt = &head;
@@ -629,26 +640,19 @@ static ASTStmt* parse_if(Lexer* l)
     ASTStmt* stmt = new_stmt(l, STMT_IF);
     ASTIf* if_stmt = &stmt->stmt.if_;
     advance(l);
-    if(!consume(l, TOKEN_LPAREN))
-        return BAD_STMT;
+    CONSUME_OR_RET(TOKEN_LPAREN, BAD_STMT);
 
     // Condition parsing
-    if_stmt->cond = parse_expr(l);
-    if(expr_is_bad(if_stmt->cond) || !consume(l, TOKEN_RPAREN))
-        return BAD_STMT;
+    ASSIGN_EXPR_OR_RET(if_stmt->cond, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_STMT);
 
     // Then statement
-    if_stmt->then_stmt = parse_stmt(l);
-    if(stmt_is_bad(if_stmt->then_stmt))
-        return BAD_STMT;
+    ASSIGN_STMT_OR_RET(if_stmt->then_stmt, BAD_STMT);
 
     // Optional else statement
     if(try_consume(l, TOKEN_ELSE))
-    {
-        if_stmt->else_stmt = parse_stmt(l);
-        if(stmt_is_bad(if_stmt->else_stmt))
-            return BAD_STMT;
-    }
+        ASSIGN_STMT_OR_RET(if_stmt->else_stmt, BAD_STMT);
+
     return stmt;
 
 }
@@ -659,10 +663,56 @@ static ASTStmt* parse_return(Lexer* l)
     advance(l);
     if(!try_consume(l, TOKEN_SEMI))
     {
-        stmt->stmt.return_.ret_expr = parse_expr(l);
-        if(expr_is_bad(stmt->stmt.return_.ret_expr) || !consume(l, TOKEN_SEMI))
-            return BAD_STMT;
+        ASSIGN_EXPR_OR_RET(stmt->stmt.return_.ret_expr, BAD_STMT);
+        CONSUME_OR_RET(TOKEN_SEMI, BAD_STMT);
     }
+    return stmt;
+}
+
+static ASTStmt* parse_switch(Lexer* l)
+{
+    ASTStmt* stmt = new_stmt(l, STMT_SWITCH);
+    ASTCaseDA* cases = &stmt->stmt.switch_.cases;
+    ASTStmt  head;
+    ASTStmt* cur = &head;
+    head.next = NULL;
+    advance(l);
+    CONSUME_OR_RET(TOKEN_LPAREN, BAD_STMT);
+    ASSIGN_EXPR_OR_RET(stmt->stmt.switch_.expr, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_LBRACE, BAD_STMT);
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        if(tok_equal(l, TOKEN_EOF))
+            ERROR_AND_RET(BAD_STMT, "No closing parentheses.");
+        else if(tok_equal(l, TOKEN_DEFAULT))
+        {
+            advance(l);
+            da_resize(cases, cases->size + 1);
+        }
+        else if(try_consume(l, TOKEN_CASE))
+        {
+            da_resize(cases, cases->size + 1);
+            ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, BAD_STMT);
+        }
+        else
+        {
+            if(cases->size == 0)
+                ERROR_AND_RET(BAD_STMT, "Statement in switch must fall under a case.");
+            cur->next = parse_stmt(l);
+            if(!stmt_is_bad(cur->next))
+                cur = cur->next;
+            continue;
+        }
+
+        CONSUME_OR_RET(TOKEN_COLON, BAD_STMT);
+        if(cases->size > 1)
+            cases->data[cases->size - 2].body = head.next;
+        head.next = NULL;
+        cur = &head;
+    }
+    if(head.next != NULL)
+        cases->data[cases->size - 1].body = head.next;
     return stmt;
 }
 
@@ -1031,6 +1081,13 @@ static ASTExpr* parse_string_literal(Lexer* l)
     return expr;
 }
 
+static ASTExpr* parse_default_expr(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_DEFAULT);
+    advance(l);
+    return expr;
+}
+
 static ASTExpr* parse_bool_literal(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
@@ -1050,60 +1107,6 @@ static ASTExpr* parse_nullptr(Lexer* l)
     advance(l);
     return expr;
 }
-
-static ExprParseRule expr_rules[__TOKEN_COUNT] = {
-    [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
-    [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
-    [TOKEN_CHAR_LITERAL]    = { parse_char_literal, NULL, PREC_NONE },
-    [TOKEN_FLOAT_LITERAL]   = { parse_float_literal, NULL, PREC_NONE },
-    [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
-    [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
-    [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
-    [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
-    [TOKEN_BIT_OR]          = { NULL, parse_binary, PREC_BIT_OR },
-    [TOKEN_BIT_XOR]         = { NULL, parse_binary, PREC_BIT_XOR },
-    [TOKEN_ASSIGN]          = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
-    // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
-    [TOKEN_LBRACKET]        = { NULL, parse_array_access, PREC_PRIMARY_POSTFIX },
-    [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
-    [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
-    [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
-    [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_QUESTION]        = { NULL, parse_ternary, PREC_TERNARY },
-    [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
-    [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
-    [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
-    [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },
-    [TOKEN_LOG_AND]         = { NULL, parse_binary, PREC_LOG_AND },
-    [TOKEN_LOG_OR]          = { NULL, parse_binary, PREC_LOG_OR },
-    [TOKEN_EQ]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_NE]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_LE]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_GE]              = { NULL, parse_binary, PREC_RELATIONAL },
-    [TOKEN_BIT_AND_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_BIT_OR_ASSIGN]   = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_BIT_XOR_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_ADD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_SUB_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_MUL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_DIV_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_MOD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_LSHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_ASHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
-    [TOKEN_INCREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
-    [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
-
-    [TOKEN_AS]              = { NULL, parse_cast, PREC_UNARY_PREFIX },
-    [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
-    [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
-    [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
-};
 
 static inline bool tok_equal(Lexer* l, TokenKind kind)
 {
@@ -1212,3 +1215,58 @@ static inline void recover_top_level(Lexer* l)
         t = peek(l);
     }
 }
+
+static ExprParseRule expr_rules[__TOKEN_COUNT] = {
+    [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
+    [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
+    [TOKEN_CHAR_LITERAL]    = { parse_char_literal, NULL, PREC_NONE },
+    [TOKEN_FLOAT_LITERAL]   = { parse_float_literal, NULL, PREC_NONE },
+    [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
+    [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
+    [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
+    [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
+    [TOKEN_BIT_OR]          = { NULL, parse_binary, PREC_BIT_OR },
+    [TOKEN_BIT_XOR]         = { NULL, parse_binary, PREC_BIT_XOR },
+    [TOKEN_ASSIGN]          = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
+    // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
+    [TOKEN_LBRACKET]        = { NULL, parse_array_access, PREC_PRIMARY_POSTFIX },
+    [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
+    [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
+    [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
+    [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
+    [TOKEN_QUESTION]        = { NULL, parse_ternary, PREC_TERNARY },
+    [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
+    [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_SHL]             = { NULL, parse_binary, PREC_SHIFTS },
+    [TOKEN_LOG_AND]         = { NULL, parse_binary, PREC_LOG_AND },
+    [TOKEN_LOG_OR]          = { NULL, parse_binary, PREC_LOG_OR },
+    [TOKEN_EQ]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_NE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_LE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_GE]              = { NULL, parse_binary, PREC_RELATIONAL },
+    [TOKEN_BIT_AND_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_BIT_OR_ASSIGN]   = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_BIT_XOR_ASSIGN]  = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_ADD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_SUB_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_MUL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_DIV_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_MOD_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_LSHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_ASHR_ASSIGN]     = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_SHL_ASSIGN]      = { NULL, parse_binary, PREC_ASSIGN },
+    [TOKEN_INCREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
+    [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
+
+    [TOKEN_AS]              = { NULL, parse_cast, PREC_UNARY_PREFIX },
+    [TOKEN_DEFAULT]         = { parse_default_expr, NULL, PREC_NONE },
+    [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
+    [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
+    [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
+};

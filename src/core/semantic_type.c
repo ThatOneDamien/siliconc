@@ -41,7 +41,6 @@ bool resolve_struct_type(SemaContext* c, Object* obj, bool is_pointer)
     {
         if(is_pointer)
             return true;
-        // TODO: This error message can be improved greatly
         sic_error_at(obj->loc, "Recursive structure definition.");
         return false;
     }
@@ -115,7 +114,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
     // TODO: Check for negative size expr, that is BAD.
     //       For now negative sizes are implicitly casted to ulong, which
     //       means ubyte[-1] tries to allocate quintillions of bytes!! :)
-    if(size_expr->kind == EXPR_INVALID || !type_is_integer(size_expr->type) ||
+    if(expr_is_bad(size_expr) || !type_is_integer(size_expr->type) ||
        !implicit_cast(c, size_expr, g_type_ulong))
         return false;
 

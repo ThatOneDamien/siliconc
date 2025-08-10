@@ -32,7 +32,7 @@ static const char* debug_tok_to_string(TokenKind kind)
 
 void print_all_tokens(Lexer* lexer)
 {
-    while(lexer->la_buf.buf[lexer->la_buf.head].kind != TOKEN_EOF)
+    while(lexer_peek(lexer)->kind != TOKEN_EOF)
     {
         Token* tok = lexer->la_buf.buf + lexer->la_buf.head;
         printf("%-15s: Len: %-4u Line: %-6u Col: %-4u\n", 
@@ -47,8 +47,8 @@ void print_all_tokens(Lexer* lexer)
 void print_unit(const CompilationUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
-    printf("Compilation Unit: \'%s\' (%zu Funcs, %zu Global Vars)\n", 
-           file_from_id(unit->file)->src, 
+    printf("Compilation Unit: \'%s\' (%u Funcs, %u Global Vars)\n", 
+           file_from_id(unit->file)->path, 
            unit->funcs.size, unit->vars.size);
     for(size_t i = 0; i < unit->funcs.size; ++i)
         print_func(unit->funcs.data[i]);
@@ -62,7 +62,7 @@ static void print_func(const Object* func)
            func->symbol,
            s_access_strs[func->access],
            debug_type_to_str(sig->ret_type));
-    printf("  Params (count: %lu):\n", sig->params.size);
+    printf("  Params (count: %u):\n", sig->params.size);
     for(size_t i = 0; i < sig->params.size; ++i)
     {
         Object* param = sig->params.data[i];
@@ -102,7 +102,6 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
         return;
     }
     case STMT_BREAK:
-    case STMT_CASE:
     case STMT_CONTINUE:
         SIC_TODO();
     case STMT_EXPR_STMT:
@@ -153,6 +152,7 @@ static void print_stmt(const ASTStmt* stmt, int depth, const char* name)
         print_expr(stmt->stmt.swap.right, depth + 1, NULL);
         return;
     case STMT_SWITCH:
+        return;
     case STMT_TYPE_DECL:
         SIC_TODO();
     case STMT_WHILE:
@@ -194,6 +194,8 @@ static void print_expr(const ASTExpr* expr, int depth, const char* name)
     case EXPR_CONSTANT:
         print_constant(expr);
         return;
+    case EXPR_DEFAULT:
+        SIC_TODO();
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
         print_expr(expr->expr.call.func_expr, depth + 1, NULL);
@@ -294,7 +296,6 @@ static const char* s_stmt_type_strs[] = {
     [STMT_INVALID]     = "Invalid Statement",
     [STMT_BLOCK]       = "Block",
     [STMT_BREAK]       = "Break Statement",
-    [STMT_CASE]        = "Case Statement",
     [STMT_CONTINUE]    = "Continue Statement",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_FOR]         = "For Loop",

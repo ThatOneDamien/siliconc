@@ -38,6 +38,7 @@ typedef struct Type             Type;
 typedef struct StringDA         StringDA;
 typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
+typedef struct ASTCaseDA        ASTCaseDA;
 typedef struct ASTDeclDA        ASTDeclDA;
 typedef struct ScopeDA          ScopeDA;
 typedef struct CompUnitDA       CompUnitDA;
@@ -58,11 +59,13 @@ typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTBlock         ASTBlock;
+typedef struct ASTCase          ASTCase;
 typedef struct ASTDeclaration   ASTDeclaration;
 typedef struct ASTFor           ASTFor;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
 typedef struct ASTSwap          ASTSwap;
+typedef struct ASTSwitch        ASTSwitch;
 typedef struct ASTWhile         ASTWhile;
 typedef struct ASTStmt          ASTStmt;
 
@@ -195,57 +198,64 @@ struct Type
 struct StringDA
 {
     const char** data;
-    size_t size;
-    size_t capacity;
+    uint32_t size;
+    uint32_t capacity;
 };
 
 struct ObjectDA
 {
     Object** data;
-    size_t   capacity;
-    size_t   size;
+    uint32_t capacity;
+    uint32_t size;
 };
 
 struct ASTExprDA
 {
     ASTExpr** data;
-    size_t    capacity;
-    size_t    size;
+    uint32_t  capacity;
+    uint32_t  size;
+};
+
+struct ASTCaseDA
+{
+    ASTCase* data;
+    uint32_t capacity;
+    uint32_t size;
 };
 
 struct ASTDeclDA
 {
     ASTDeclaration* data;
-    size_t          capacity;
-    size_t          size;
+    uint32_t        capacity;
+    uint32_t        size;
 };
 
 struct ScopeDA
 {
-    Scope* data;
-    size_t capacity;
-    size_t size;
+    Scope*   data;
+    uint32_t capacity;
+    uint32_t size;
 };
 
 struct CompUnitDA
 {
     CompilationUnit** data;
-    size_t            capacity;
-    size_t            size;
+    uint32_t          capacity;
+    uint32_t          size;
 };
 
 struct InputFileDA
 {
     InputFile* data;
-    size_t  capacity;
-    size_t  size;
+    uint32_t   capacity;
+    uint32_t   size;
 };
 
 struct ModulePTRDA
 {
     Module** data;
-    size_t   capacity;
-    size_t   size;
+    uint32_t capacity;
+    uint32_t size;
 };
 
 struct ASTExprAAccess
@@ -337,6 +347,13 @@ struct ASTBlock
     ASTStmt* body;
 };
 
+struct ASTCase
+{
+    ASTExpr* expr;
+    ASTStmt* body;
+    void*    llvm_block_ref;
+};
+
 struct ASTDeclaration
 {
     Object*  obj;
@@ -369,6 +386,12 @@ struct ASTSwap
     ASTExpr* right;
 };
 
+struct ASTSwitch
+{
+    ASTExpr*  expr;
+    ASTCaseDA cases;
+};
+
 struct ASTWhile
 {
     ASTExpr* cond;
@@ -383,15 +406,16 @@ struct ASTStmt
 
     union
     {
-        ASTBlock        block;
-        ASTExpr*        expr;
-        ASTFor          for_;
-        ASTIf           if_;
-        ASTDeclDA       multi_decl;
-        ASTReturn       return_;
-        ASTDeclaration  single_decl;
-        ASTSwap         swap;
-        ASTWhile        while_;
+        ASTBlock       block;
+        ASTExpr*       expr;
+        ASTFor         for_;
+        ASTIf          if_;
+        ASTDeclDA      multi_decl;
+        ASTReturn      return_;
+        ASTDeclaration single_decl;
+        ASTSwap        swap;
+        ASTSwitch      switch_;
+        ASTWhile       while_;
     } stmt;
 };
 
@@ -413,7 +437,7 @@ struct ObjFunc
 
 struct ObjStruct
 {
-    ObjectDA      members;
+    ObjectDA members;
     union
     {
         struct
@@ -429,6 +453,11 @@ struct ObjStruct
 struct ObjVar
 {
     Type*    type;
+    union
+    {
+        uint64_t i;
+        double   f;
+    } default_val;
     uint32_t member_idx;
 };
 
@@ -493,9 +522,9 @@ struct Cmdline
     CompileTarget target;
     IRTarget      ir_kind;
 
-    bool          emit_ir;
-    bool          emit_asm;
-    bool          hash_hash_hash;
+    bool          emit_ir : 1;
+    bool          emit_asm : 1;
+    bool          hash_hash_hash : 1;
 #ifdef SI_DEBUG
     bool          emit_debug_output;
 #endif

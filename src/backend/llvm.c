@@ -53,6 +53,7 @@ static void     emit_stmt(CodegenContext* c, ASTStmt* stmt);
 static void     emit_for(CodegenContext* c, ASTStmt* stmt);
 static void     emit_if(CodegenContext* c, ASTStmt* stmt);
 static void     emit_swap(CodegenContext* c, ASTStmt* stmt);
+static void     emit_switch(CodegenContext* c, ASTStmt* stmt);
 static void     emit_while(CodegenContext* c, ASTStmt* stmt);
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr);
 static void     emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -73,7 +74,10 @@ static void     emit_br(CodegenContext* c, LLVMBasicBlockRef block);
 
 static void              emit_var_alloca(CodegenContext* c, Object* obj);
 static LLVMValueRef      emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
-static LLVMBasicBlockRef emit_basic_block(CodegenContext* c, const char* label);
+static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label);
+static void              append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
+static LLVMBasicBlockRef create_basic_block(CodegenContext* c, const char* label);
+static void              use_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
 static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
 static void              load_rvalue(CodegenContext* c, GenValue* lvalue);
 static LLVMTargetRef     get_llvm_target(const char* triple);
@@ -229,7 +233,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     if(function->func.body == NULL)
         return;
     c->cur_func = function;
-    emit_basic_block(c, "");
+    append_old_basic_block(c, create_basic_block(c, ""));
     c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32Type(), ".alloca_ptr");
     if(function->func.swap_stmt_size > 0)
     {
@@ -285,7 +289,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
 
 static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
 {
-    if(c->cur_bb == NULL) // Check if this is a label, for now we dont have that.
+    if(stmt == NULL || c->cur_bb == NULL) // Check if this is a label, for now we dont have that.
         return;
     switch(stmt->kind)
     {
@@ -299,7 +303,6 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         return;
     }
     case STMT_BREAK:
-    case STMT_CASE:
     case STMT_CONTINUE:
         SIC_TODO();
     case STMT_EXPR_STMT:
@@ -361,7 +364,8 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         emit_swap(c, stmt);
         return;
     case STMT_SWITCH:
-        SIC_TODO();
+        emit_switch(c, stmt);
+        return;
     case STMT_WHILE:
         emit_while(c, stmt);
         return;
@@ -376,53 +380,40 @@ static void emit_for(CodegenContext* c, ASTStmt* stmt)
 {
     ASTFor* for_stmt = &stmt->stmt.for_;
 
-    LLVMBasicBlockRef exit_block = LLVMCreateBasicBlockInContext(c->global_context, ".for_exit");
-    LLVMBasicBlockRef body_block = LLVMCreateBasicBlockInContext(c->global_context, ".for_body");
+    LLVMBasicBlockRef exit_block = create_basic_block(c, ".for_exit");
+    LLVMBasicBlockRef body_block = create_basic_block(c, ".for_body");
     LLVMBasicBlockRef cond_block = body_block;
-    LLVMBasicBlockRef loop_block;
     if(stmt_not_empty(for_stmt->init_stmt))
         emit_stmt(c, for_stmt->init_stmt);
 
     if(for_stmt->cond_expr != NULL)
     {
-        LLVMBasicBlockRef prev = c->cur_bb;
-        cond_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".for_cond");
-        emit_br(c, cond_block);
-        LLVMPositionBuilderAtEnd(c->builder, cond_block);
-        c->cur_bb = cond_block;
+        cond_block = append_new_basic_block(c, ".for_cond");
         GenValue cond = emit_expr(c, for_stmt->cond_expr);
         load_rvalue(c, &cond);
         LLVMBuildCondBr(c->builder, cond.value, body_block, exit_block);
-        LLVMPositionBuilderAtEnd(c->builder, prev);
     }
     else
         emit_br(c, body_block);
     
-    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, body_block);
-    LLVMPositionBuilderAtEnd(c->builder, body_block);
-    c->cur_bb = body_block;
+    append_old_basic_block(c, body_block);
     emit_stmt(c, for_stmt->body);
     
     if(for_stmt->loop_expr != NULL)
     {
-        loop_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".for_loop");
-        emit_br(c, loop_block);
-        LLVMPositionBuilderAtEnd(c->builder, loop_block);
-        c->cur_bb = loop_block;
+        append_new_basic_block(c, ".for_loop");
         emit_expr(c, for_stmt->loop_expr);
     }
 
     emit_br(c, cond_block);
-    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, exit_block);
-    LLVMPositionBuilderAtEnd(c->builder, exit_block);
-    c->cur_bb = exit_block;
+    append_old_basic_block(c, exit_block);
 }
 
 static void emit_if(CodegenContext* c, ASTStmt* stmt)
 {
     ASTIf* if_stmt = &stmt->stmt.if_;
 
-    LLVMBasicBlockRef exit_block = LLVMCreateBasicBlockInContext(c->global_context, ".if_exit");
+    LLVMBasicBlockRef exit_block = create_basic_block(c, ".if_exit");
     LLVMBasicBlockRef then_block = exit_block;
     LLVMBasicBlockRef else_block = exit_block;
 
@@ -430,10 +421,10 @@ static void emit_if(CodegenContext* c, ASTStmt* stmt)
     load_rvalue(c, &cond);
 
     if(stmt_not_empty(if_stmt->then_stmt))
-        then_block = LLVMCreateBasicBlockInContext(c->global_context, ".if_then");
+        then_block = create_basic_block(c, ".if_then");
     
     if(stmt_not_empty(if_stmt->else_stmt))
-        else_block = LLVMCreateBasicBlockInContext(c->global_context, ".if_else");
+        else_block = create_basic_block(c, ".if_else");
 
     if(then_block == exit_block && else_block == exit_block)
         return;
@@ -441,22 +432,18 @@ static void emit_if(CodegenContext* c, ASTStmt* stmt)
     LLVMBuildCondBr(c->builder, cond.value, then_block, else_block);
     if(then_block != exit_block)
     {
-        LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, then_block);
-        LLVMPositionBuilderAtEnd(c->builder, then_block);
+        append_old_basic_block(c, then_block);
         emit_stmt(c, if_stmt->then_stmt);
         emit_br(c, exit_block);
     }
 
     if(else_block != exit_block)
     {
-        LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, else_block);
-        LLVMPositionBuilderAtEnd(c->builder, else_block);
+        append_old_basic_block(c, else_block);
         emit_stmt(c, if_stmt->else_stmt);
         emit_br(c, exit_block);
     }
-    c->cur_bb = exit_block;
-    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, exit_block);
-    LLVMPositionBuilderAtEnd(c->builder, exit_block);
+    append_old_basic_block(c, exit_block);
 }
 
 static void emit_swap(CodegenContext* c, ASTStmt* stmt)
@@ -481,35 +468,63 @@ static void emit_swap(CodegenContext* c, ASTStmt* stmt)
     LLVMBuildMemCpy(c->builder, right.value, align, c->swap_ref, align, size);
 }
 
+static void emit_switch(CodegenContext* c, ASTStmt* stmt)
+{
+    ASTSwitch* swi = &stmt->stmt.switch_;
+    GenValue expr = emit_expr(c, swi->expr);
+    load_rvalue(c, &expr);
+    LLVMBasicBlockRef exit_block = create_basic_block(c, ".switch_exit");
+    LLVMBasicBlockRef default_block = exit_block;
+    LLVMBasicBlockRef orig_block = c->cur_bb;
+    for(uint32_t i = 0; i < swi->cases.size; ++i)
+    {
+        ASTCase* cas = swi->cases.data + i;
+        cas->llvm_block_ref = create_basic_block(c, ".switch_case");
+        append_old_basic_block(c, cas->llvm_block_ref);
+        // TODO: This needs to emit like a block statement. Just add a function that does this.
+        //       Also allow empty cases to automatically fallthrough.
+        emit_stmt(c, cas->body);
+        emit_br(c, exit_block);
+        if(cas->expr == NULL)
+            default_block = cas->llvm_block_ref;
+    }
+    LLVMPositionBuilderAtEnd(c->builder, orig_block);
+    LLVMValueRef switch_val = LLVMBuildSwitch(c->builder, expr.value, default_block, swi->cases.size - (default_block != exit_block)); 
+    for(uint32_t i = 0; i < swi->cases.size; ++i)
+    {
+        ASTCase* cas = swi->cases.data + i;
+        if(cas->expr == NULL)
+            continue;
+        SIC_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
+        LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, cas->llvm_block_ref);
+        LLVMAddCase(switch_val, LLVMConstInt(get_llvm_type(c, cas->expr->type), cas->expr->expr.constant.val.i, false), cas->llvm_block_ref);
+    }
+    append_old_basic_block(c, exit_block);
+}
+
 static void emit_while(CodegenContext* c, ASTStmt* stmt)
 {
     ASTWhile* while_stmt = &stmt->stmt.while_;
 
-    LLVMBasicBlockRef cond_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".while_cond");
+    LLVMBasicBlockRef cond_block = append_new_basic_block(c, ".while_cond");
+    LLVMBasicBlockRef exit_block = create_basic_block(c, ".while_exit");
     LLVMBasicBlockRef body_block = cond_block;
-    LLVMBasicBlockRef exit_block;
-
-    emit_br(c, cond_block);
 
     if(stmt_not_empty(while_stmt->body))
-        body_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".while_body");
+        body_block = create_basic_block(c, ".while_body");
 
-    exit_block = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".while_exit");
-
-    LLVMPositionBuilderAtEnd(c->builder, cond_block);
     GenValue cond = emit_expr(c, while_stmt->cond);
     load_rvalue(c, &cond);
     LLVMBuildCondBr(c->builder, cond.value, body_block, exit_block);
     
     if(body_block != cond_block)
     {
-        LLVMPositionBuilderAtEnd(c->builder, body_block);
+        append_old_basic_block(c, body_block);
         emit_stmt(c, while_stmt->body);
         emit_br(c, cond_block);
     }
     
-    c->cur_bb = exit_block;
-    LLVMPositionBuilderAtEnd(c->builder, exit_block);
+    append_old_basic_block(c, exit_block);
 }
 
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
@@ -532,6 +547,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_CONSTANT:
         emit_constant(c, expr, &result);
         break;
+    case EXPR_DEFAULT:
+        SIC_TODO();
     case EXPR_FUNC_CALL:
         emit_function_call(c, expr, &result);
         break;
@@ -908,8 +925,8 @@ static void emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     GenValue then;
     GenValue elss;
     LLVMBasicBlockRef then_bb = c->cur_bb;
-    LLVMBasicBlockRef else_bb = LLVMCreateBasicBlockInContext(c->global_context, ".cond_else");
-    LLVMBasicBlockRef exit_bb = LLVMCreateBasicBlockInContext(c->global_context, ".cond_exit");
+    LLVMBasicBlockRef else_bb = create_basic_block(c, ".cond_else");
+    LLVMBasicBlockRef exit_bb = create_basic_block(c, ".cond_exit");
     if(ternary->then_expr == NULL)
     {
         if(expr->type->kind == TYPE_BOOL)
@@ -933,23 +950,18 @@ static void emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     {
         cond = emit_expr(c, ternary->cond_expr);
         load_rvalue(c, &cond);
-        then_bb = LLVMAppendBasicBlock(c->cur_func->llvm_ref, ".cond_then");
+        then_bb = create_basic_block(c, ".cond_then");
         LLVMBuildCondBr(c->builder, cond.value, then_bb, else_bb);
-        LLVMPositionBuilderAtEnd(c->builder, then_bb);
-        c->cur_bb = then_bb;
+        append_old_basic_block(c, then_bb);
         then = emit_expr(c, ternary->then_expr);
         load_rvalue(c, &then);
     }
-    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, else_bb);
-    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, exit_bb);
-    LLVMPositionBuilderAtEnd(c->builder, else_bb);
-    c->cur_bb = else_bb;
+    append_old_basic_block(c, else_bb);
     elss = emit_expr(c, ternary->else_expr);
     load_rvalue(c, &elss);
-    emit_br(c, exit_bb);
 
-    LLVMPositionBuilderAtEnd(c->builder, exit_bb);
-    c->cur_bb = exit_bb;
+    emit_br(c, exit_bb);
+    append_old_basic_block(c, exit_bb);
     result->value = LLVMBuildPhi(c->builder, get_llvm_type(c, result->type), "");
     result->kind = GEN_VAL_RVALUE;
 
@@ -1051,7 +1063,7 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
 
 static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align)
 {
-    LLVMBasicBlockRef bb = LLVMGetInsertBlock(c->builder);
+    LLVMBasicBlockRef bb = c->cur_bb;
     LLVMPositionBuilderBefore(c->builder, c->alloca_ref);
     LLVMValueRef new_alloca = LLVMBuildAlloca(c->builder, type, name);
     LLVMSetAlignment(new_alloca, align);
@@ -1059,12 +1071,29 @@ static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef
     return new_alloca;
 }
 
-static LLVMBasicBlockRef emit_basic_block(CodegenContext* c, const char* label)
+static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label)
 {
-    SIC_ASSERT(c->cur_bb == NULL);
     c->cur_bb = LLVMAppendBasicBlock(c->cur_func->llvm_ref, label);
+    emit_br(c, c->cur_bb);
     LLVMPositionBuilderAtEnd(c->builder, c->cur_bb);
     return c->cur_bb;
+}
+
+static void append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
+{
+    LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, block);
+    use_basic_block(c, block);
+}
+
+static LLVMBasicBlockRef create_basic_block(CodegenContext* c, const char* label)
+{
+    return LLVMCreateBasicBlockInContext(c->global_context, label);
+}
+
+static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
+{
+    c->cur_bb = block;
+    LLVMPositionBuilderAtEnd(c->builder, c->cur_bb);
 }
 
 static void emit_llvm_ir(CodegenContext* c)

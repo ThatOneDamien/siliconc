@@ -25,13 +25,14 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
-    if(cast->expr.cast.inner->kind == EXPR_INVALID)
+    ASTExpr* inner = cast->expr.cast.inner;
+    if(!analyze_expr(c, inner))
         return false;
     CastParams params;
     params.sema_context = c;
     params.expr  = cast;
-    params.inner = cast->expr.cast.inner;
-    params.from  = cast->expr.cast.inner->type;
+    params.inner = inner;
+    params.from  = inner->type;
     params.to    = cast->type;
     params.from_group = s_type_to_group[params.from->kind];
     params.to_group   = s_type_to_group[params.to->kind];
@@ -61,7 +62,7 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
 
 bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
 {
-    if(expr_to_cast->kind == EXPR_INVALID)
+    if(expr_is_bad(expr_to_cast))
         return false;
     CastParams params;
     params.sema_context = c;

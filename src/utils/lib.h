@@ -99,6 +99,7 @@ PRINTF_FMT(3, 4)
 void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict message, ...);
 void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va);
 void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va);
+void sic_error_redef(Object* redef, Object* orig);
 
 PRINTF_FMT(2, 3)
 static inline void sic_error_at(SourceLoc loc, const char* restrict message, ...)

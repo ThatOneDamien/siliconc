@@ -1,17 +1,15 @@
-struct String
-{
-    int length;
-    ubyte* str;
-}
+priv extern int atoi(ubyte* str);
 
-pub uint main()
+pub uint main(int argc, ubyte** argv)
 {
-    String str;
-    str.length = 4;
-    str.str = "Okay";
-    byte i = 10;
-    for(int i = 0; i < str.length; ++i)
-        printf("%c", str.str[i]);
-    printf("%u\n", i);
+    if(argc == 1) return 1;
+    int a = atoi(argv[1]);
+    switch(a)
+    {
+    case 1: int b = 1; printf("1 %d\n", b);
+    case 2: printf("2\n");
+    case 10: printf("10\n");
+    default: printf("OTHER!!!\n");
+    }
     return 0;
 }

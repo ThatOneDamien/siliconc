@@ -73,6 +73,7 @@ typedef enum : uint8_t
     TOKEN_CASE,
     TOKEN_CONST,
     TOKEN_CONTINUE,
+    TOKEN_DEFAULT,
     TOKEN_ELSE,
     TOKEN_ENUM,
     TOKEN_EXTERN,
@@ -163,6 +164,7 @@ typedef enum : uint8_t
     EXPR_BINARY,
     EXPR_CAST,
     EXPR_CONSTANT,
+    EXPR_DEFAULT,
     EXPR_FUNC_CALL,
     EXPR_IDENT,
     EXPR_MEMBER_ACCESS,
@@ -232,7 +234,6 @@ typedef enum : uint8_t
 
     STMT_BLOCK,
     STMT_BREAK,
-    STMT_CASE,
     STMT_CONTINUE,
     STMT_EXPR_STMT,
     STMT_FOR,
