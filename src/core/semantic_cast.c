@@ -60,13 +60,14 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     return true;
 }
 
-bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
+bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
 {
-    if(expr_is_bad(expr_to_cast))
+    ASTExpr* prev = *expr_to_cast;
+    if(expr_is_bad(prev))
         return false;
     CastParams params;
     params.sema_context = c;
-    params.from = expr_to_cast->type;
+    params.from = prev->type;
     params.to   = desired;
     params.from_group = s_type_to_group[params.from->kind];
     params.to_group   = s_type_to_group[params.to->kind];
@@ -76,33 +77,32 @@ bool implicit_cast(SemaContext* c, ASTExpr* expr_to_cast, Type* desired)
     CastRule rule = s_rule_table[params.from_group][params.to_group];
     if(rule.able == NULL)
     {
-        sic_error_at(expr_to_cast->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
+        sic_error_at(prev->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
                      type_to_string(params.from), type_to_string(params.to));
         return false;
     }
 
-    ASTExpr* new_cast = expr_to_cast;
-    expr_to_cast = MALLOC_STRUCT(ASTExpr);
-    memcpy(expr_to_cast, new_cast, sizeof(ASTExpr));
+    ASTExpr* new_cast = CALLOC_STRUCT(ASTExpr);
     new_cast->kind = EXPR_CAST;
-    new_cast->expr.cast.inner = expr_to_cast;
+    new_cast->expr.cast.inner = prev;
+    *expr_to_cast = new_cast;
     params.expr = new_cast;
-    params.inner = expr_to_cast;
+    params.inner = prev;
 
     if(!rule.able(&params, false))
         return false;
 
     new_cast->type = desired;
     if(rule.convert != NULL)
-        rule.convert(new_cast, expr_to_cast);
+        rule.convert(new_cast, prev);
 
     return true;
 }
 
-void implicit_cast_varargs(SemaContext* c, ASTExpr* expr_to_cast)
+void implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast)
 {
     bool good = true;
-    switch(expr_to_cast->type->kind)
+    switch((*expr_to_cast)->type->kind)
     {
     case TYPE_BOOL:
     case TYPE_UBYTE:
@@ -380,15 +380,16 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define STRLIT { cast_rule_string_lit   , cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    //                       VOID    NULLPTR BOOL    INT     FLOAT   PTR     ARRAY   STRUCT
-    [CAST_GROUP_VOID]    = { NOTDEF, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_NULLPTR] = { NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NULPTR, NOALLW, NOALLW },
-    [CAST_GROUP_BOOL]    = { TOVOID, NOTDEF, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_INT]     = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW },
-    [CAST_GROUP_FLOAT]   = { TOVOID, NOTDEF, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_PTR]     = { TOVOID, NOTDEF, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW },
-    [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, STRLIT, NOALLW, NOALLW },
-    [CAST_GROUP_STRUCT]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    //                       VOID    NULLPTR BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT
+    [CAST_GROUP_VOID]    = { NOTDEF, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_NULLPTR] = { NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NULPTR, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_BOOL]    = { TOVOID, NOTDEF, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_INT]     = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_FLOAT]   = { TOVOID, NOTDEF, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_PTR]     = { TOVOID, NOTDEF, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW, NOALLW },
+    [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, STRLIT, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_ENUM]    = { TOVOID, NOTDEF, INTBOO, INTINT, NOALLW, STRLIT, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_STRUCT]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
@@ -409,7 +410,7 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_POINTER]  = CAST_GROUP_PTR,
     [TYPE_SS_ARRAY] = CAST_GROUP_ARRAY,
     [TYPE_DS_ARRAY] = CAST_GROUP_ARRAY,
-    [TYPE_ENUM]     = CAST_GROUP_INVALID,
+    [TYPE_ENUM]     = CAST_GROUP_ENUM,
     [TYPE_STRUCT]   = CAST_GROUP_STRUCT,
     [TYPE_TYPEDEF]  = CAST_GROUP_INVALID,
     [TYPE_UNION]    = CAST_GROUP_INVALID,

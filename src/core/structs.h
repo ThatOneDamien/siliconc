@@ -71,6 +71,8 @@ typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
+typedef struct ObjEnum          ObjEnum;
+typedef struct ObjEnumValue     ObjEnumValue;
 typedef struct ObjFunc          ObjFunc;
 typedef struct ObjStruct        ObjStruct;
 typedef struct ObjVar           ObjVar;
@@ -427,6 +429,22 @@ struct FuncSignature
     bool     is_var_arg;
 };
 
+struct ObjEnum
+{
+    ObjectDA      values;
+    Type*         underlying;
+    ResolveStatus status;
+};
+
+struct ObjEnumValue
+{
+    union
+    {
+        ASTExpr* value;
+        uint64_t const_val;
+    };
+};
+
 struct ObjFunc
 {
     FuncSignature* signature;
@@ -472,9 +490,11 @@ struct Object
 
     union
     {
-        ObjFunc   func;     // Components of function
-        ObjStruct struct_;  // Components of bitfield, struct, or union
-        ObjVar    var;      // Components of variable
+        ObjEnum      enum_;    // Components of enum typedef
+        ObjEnumValue enum_val; // Components of value in enum
+        ObjFunc      func;     // Components of function
+        ObjStruct    struct_;  // Components of bitfield, struct, or union
+        ObjVar       var;      // Components of variable
     };
 
 };

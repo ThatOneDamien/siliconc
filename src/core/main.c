@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "backend/codegen.h"
-#include "utils/debug.h"
 #include "utils/file_utils.h"
 #include "utils/lib.h"
 

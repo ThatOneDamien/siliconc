@@ -162,3 +162,16 @@ static inline Type* type_pointer_base(Type* ptr_ty)
     return ptr_ty->pointer_base;
 }
 
+
+// Debug printing functions
+// NOTE: These functions are only enabled when in debug mode, in release these are not compiled.
+
+#ifdef SI_DEBUG
+
+void print_all_tokens(Lexer* lexer);
+void print_unit(const CompilationUnit* unit);
+void print_func(const Object* func);
+void print_stmt(const ASTStmt* stmt);
+void print_expr(const ASTExpr* expr);
+
+#endif

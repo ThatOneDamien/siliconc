@@ -23,6 +23,7 @@ static bool      parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args
 static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
 static Object*   parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access);
+static Object*   parse_enum_decl(Lexer* l, ObjAccess access);
 
 // Type and attributes
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
@@ -146,22 +147,29 @@ static bool parse_top_level(Lexer* l)
     switch(peek(l)->kind)
     {
     case TOKEN_BITFIELD:
-    case TOKEN_ENUM:
         SIC_TODO();
+    case TOKEN_ENUM: {
+        advance(l);
+        Object* enum_ = parse_enum_decl(l, access);
+        if(enum_ == NULL)
+            return false;
+        da_append(&l->unit->types, enum_);
+        return true;
+    }
     case TOKEN_MODULE:
-        parser_error(l, "Module declaration must come at the start of the file, "
-                        "before any imports and any declarations.");
-        return false;
+        ERROR_AND_RET(false, "Module declaration must come at the start of the "
+                             "file, before any imports and any declarations.");
     case TOKEN_STRUCT:
         kind = OBJ_STRUCT;
         FALLTHROUGH;
-    case TOKEN_UNION:
+    case TOKEN_UNION: {
         advance(l);
         Object* struct_ = parse_struct_decl(l, kind, access);
         if(struct_ == NULL)
             return false;
         da_append(&l->unit->types, struct_);
         return true;
+    }
     case TOKEN_TYPEDEF:
         SIC_TODO();
     default: {
@@ -332,6 +340,48 @@ SKIP_DUPLICATE:
     }
 
     return obj;
+}
+
+static Object* parse_enum_decl(Lexer* l, ObjAccess access)
+{
+    Object* obj = new_obj(l, OBJ_ENUM, access, ATTR_NONE);
+    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
+
+    if(try_consume(l, TOKEN_COLON) && 
+       ((!tok_equal(l, TOKEN_IDENT) && !token_is_typename(peek(l)->kind)) ||
+        peek_next(l)->kind != TOKEN_LBRACE ||
+        !parse_decl_type(l, &obj->enum_.underlying, NULL)))
+    {
+        ERROR_AND_RET(NULL, "Expected unqualified typename (e.g. int).");
+    }
+
+    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
+    if(tok_equal(l, TOKEN_RBRACE))
+        ERROR_AND_RET(NULL, "Enum declaration is empty.");
+
+    ObjectDA* members = &obj->struct_.members;
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        EXPECT_OR_RET(TOKEN_IDENT, obj);
+
+        Symbol this_sym = peek(l)->sym;
+        for(uint32_t i = 0; i < members->size; ++i)
+        {
+            Symbol other = members->data[i]->symbol;
+            if(other == this_sym)
+                ERROR_AND_RET(obj, "Duplicate member \'%s\'", peek(l)->sym);
+        }
+        Object* member = new_obj(l, OBJ_ENUM_VALUE, access, ATTR_NONE);
+        advance(l);
+        if(try_consume(l, TOKEN_ASSIGN))
+            ASSIGN_EXPR_OR_RET(member->enum_val.value, obj);
+        da_append(members, member);
+        if(!try_consume(l, TOKEN_COMMA))
+            EXPECT_OR_RET(TOKEN_RBRACE, NULL);
+    }
+
+    return obj;
+    
 }
 
 static bool parse_attribute(Lexer* l, ObjAttr* attribs)

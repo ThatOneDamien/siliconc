@@ -50,6 +50,7 @@ static void     decl_function(CodegenContext* c, Object* function);
 static void     decl_global_var(CodegenContext* c, Object* var);
 static void     emit_function_body(CodegenContext* c, Object* function);
 static void     emit_stmt(CodegenContext* c, ASTStmt* stmt);
+static void     emit_block_stmt(CodegenContext* c, ASTStmt* stmt);
 static void     emit_for(CodegenContext* c, ASTStmt* stmt);
 static void     emit_if(CodegenContext* c, ASTStmt* stmt);
 static void     emit_swap(CodegenContext* c, ASTStmt* stmt);
@@ -260,12 +261,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
         LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
     }
 
-    ASTStmt* body = function->func.body;
-    while(body != NULL)
-    {
-        emit_stmt(c, body);
-        body = body->next;
-    }
+    emit_block_stmt(c, function->func.body);
 
     if(c->cur_bb != NULL)
     {
@@ -293,15 +289,9 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         return;
     switch(stmt->kind)
     {
-    case STMT_BLOCK: {
-        ASTStmt* body = stmt->stmt.block.body;
-        while(body != NULL)
-        {
-            emit_stmt(c, body);
-            body = body->next;
-        }
+    case STMT_BLOCK:
+        emit_block_stmt(c, stmt->stmt.block.body);
         return;
-    }
     case STMT_BREAK:
     case STMT_CONTINUE:
         SIC_TODO();
@@ -374,6 +364,15 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         break;
     }
     SIC_UNREACHABLE();
+}
+
+static void emit_block_stmt(CodegenContext* c, ASTStmt* stmt)
+{
+    while(stmt != NULL)
+    {
+        emit_stmt(c, stmt);
+        stmt = stmt->next;
+    }
 }
 
 static void emit_for(CodegenContext* c, ASTStmt* stmt)
@@ -476,15 +475,17 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
     LLVMBasicBlockRef exit_block = create_basic_block(c, ".switch_exit");
     LLVMBasicBlockRef default_block = exit_block;
     LLVMBasicBlockRef orig_block = c->cur_bb;
-    for(uint32_t i = 0; i < swi->cases.size; ++i)
+    LLVMBasicBlockRef last_block = exit_block;
+    for(uint32_t i = swi->cases.size - 1; i < swi->cases.size; --i)
     {
         ASTCase* cas = swi->cases.data + i;
-        cas->llvm_block_ref = create_basic_block(c, ".switch_case");
-        append_old_basic_block(c, cas->llvm_block_ref);
-        // TODO: This needs to emit like a block statement. Just add a function that does this.
-        //       Also allow empty cases to automatically fallthrough.
-        emit_stmt(c, cas->body);
-        emit_br(c, exit_block);
+        if(cas->body == NULL)
+            cas->llvm_block_ref = last_block;
+        else
+        {
+            cas->llvm_block_ref = create_basic_block(c, ".switch_case");
+            last_block = cas->llvm_block_ref;
+        }
         if(cas->expr == NULL)
             default_block = cas->llvm_block_ref;
     }
@@ -493,10 +494,15 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
         ASTCase* cas = swi->cases.data + i;
+        if(cas->body != NULL)
+        {
+            append_old_basic_block(c, cas->llvm_block_ref);
+            emit_block_stmt(c, cas->body);
+            emit_br(c, exit_block);
+        }
         if(cas->expr == NULL)
             continue;
         SIC_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
-        LLVMAppendExistingBasicBlock(c->cur_func->llvm_ref, cas->llvm_block_ref);
         LLVMAddCase(switch_val, LLVMConstInt(get_llvm_type(c, cas->expr->type), cas->expr->expr.constant.val.i, false), cas->llvm_block_ref);
     }
     append_old_basic_block(c, exit_block);

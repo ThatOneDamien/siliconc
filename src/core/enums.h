@@ -136,6 +136,7 @@ typedef enum : int8_t
     CAST_GROUP_FLOAT,
     CAST_GROUP_PTR,
     CAST_GROUP_ARRAY,
+    CAST_GROUP_ENUM,
     CAST_GROUP_STRUCT,
     __CAST_GROUP_COUNT,
 } CastGroup;

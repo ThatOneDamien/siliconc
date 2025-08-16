@@ -160,7 +160,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         if(for_stmt->cond_expr != NULL)
         {
             analyze_expr(c, for_stmt->cond_expr);
-            implicit_cast(c, for_stmt->cond_expr, g_type_bool);
+            implicit_cast(c, &for_stmt->cond_expr, g_type_bool);
         }
         if(for_stmt->loop_expr != NULL)
             analyze_expr(c, for_stmt->loop_expr);
@@ -173,7 +173,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     case STMT_IF: {
         ASTIf* if_stmt = &stmt->stmt.if_;
         analyze_expr(c, if_stmt->cond);
-        implicit_cast(c, if_stmt->cond, g_type_bool);
+        implicit_cast(c, &if_stmt->cond, g_type_bool);
         analyze_stmt(c, if_stmt->then_stmt, true);
         if(if_stmt->else_stmt != NULL)
             analyze_stmt(c, if_stmt->else_stmt, true);
@@ -202,7 +202,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
                 return;
             }
             analyze_expr(c, ret->ret_expr);
-            implicit_cast(c, ret->ret_expr, ret_type);
+            implicit_cast(c, &ret->ret_expr, ret_type);
         }
         else if(ret_type->kind != TYPE_VOID)
             sic_error_at(stmt->loc, "Function returning non-void should return a value.");
@@ -227,7 +227,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
             return;
         }
         if(type_size(swi->expr->type) < 4)
-            implicit_cast(c, swi->expr, g_type_int);
+            implicit_cast(c, &swi->expr, g_type_int);
         ASTCase* cas;
         for(uint32_t i = 0; i < swi->cases.size; ++i)
         {
@@ -235,7 +235,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
             if(cas->expr != NULL)
             {
                 analyze_expr(c, cas->expr);
-                implicit_cast(c, cas->expr, swi->expr->type);
+                implicit_cast(c, &cas->expr, swi->expr->type);
             }
             else if(has_default)
             {
@@ -262,7 +262,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     case STMT_WHILE: {
         ASTWhile* while_stmt = &stmt->stmt.while_;
         analyze_expr(c, while_stmt->cond);
-        implicit_cast(c, while_stmt->cond, g_type_bool);
+        implicit_cast(c, &while_stmt->cond, g_type_bool);
         analyze_stmt(c, while_stmt->body, true);
         return;
     }
@@ -276,16 +276,15 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
     ASTExpr* init = decl->init_expr;
     Type* type = decl->obj->var.type;
-    declare_obj(c, decl->obj);
     if(decl->init_expr != NULL)
     {
         if(decl->init_expr->kind == EXPR_DEFAULT)
             resolve_default(init, type);
         else
             analyze_expr(c, init);
-        implicit_cast(c, init, type);
+        implicit_cast(c, &decl->init_expr, type);
     }
-
+    declare_obj(c, decl->obj);
 }
 
 static void analyze_swap(SemaContext* c, ASTStmt* stmt)
@@ -335,17 +334,4 @@ static void declare_global_obj(SemaContext* c, Object* global)
         hashmap_put(c->prot_syms, global->symbol, global);
         return;
     }
-}
-
-static void push_scope(SemaContext* c)
-{
-    da_resize(&c->scope_stack, c->scope_stack.size + 1);
-    Scope* s = c->scope_stack.data + (c->scope_stack.size - 1);
-    hashmap_clear(&s->objs);
-}
-
-static void pop_scope(SemaContext* c)
-{
-    SIC_ASSERT(c->scope_stack.size > 0);
-    c->scope_stack.size--;
 }

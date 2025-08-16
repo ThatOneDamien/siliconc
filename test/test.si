@@ -1,15 +1,18 @@
-priv extern int atoi(ubyte* str);
+enum Test
+{
+    A = 0,
+    B,
+    C,
+    D,
+    E
+}
 
 pub uint main(int argc, ubyte** argv)
 {
-    if(argc == 1) return 1;
-    int a = atoi(argv[1]);
-    switch(a)
-    {
-    case 1: int b = 1; printf("1 %d\n", b);
-    case 2: printf("2\n");
-    case 10: printf("10\n");
-    default: printf("OTHER!!!\n");
-    }
+    printf("%d\n", Test.A);
+    printf("%d\n", Test.B);
+    printf("%d\n", Test.C);
+    printf("%d\n", Test.D);
+    printf("%d\n", Test.E);
     return 0;
 }
