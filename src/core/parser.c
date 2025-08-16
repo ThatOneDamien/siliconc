@@ -37,6 +37,7 @@ static inline bool parse_decl_type(Lexer* l, Type** type, ObjAttr* attribs)
 // Statements
 static ASTStmt* parse_stmt(Lexer* l);
 static ASTStmt* parse_stmt_block(Lexer* l);
+static ASTStmt* parse_break_continue(Lexer* l, StmtKind kind);
 static ASTStmt* parse_for(Lexer* l);
 static ASTStmt* parse_if(Lexer* l);
 static ASTStmt* parse_return(Lexer* l);
@@ -345,7 +346,7 @@ SKIP_DUPLICATE:
 static Object* parse_enum_decl(Lexer* l, ObjAccess access)
 {
     Object* obj = new_obj(l, OBJ_ENUM, access, ATTR_NONE);
-    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
+    CONSUME_OR_RET(TOKEN_IDENT, NULL);
 
     if(try_consume(l, TOKEN_COLON) && 
        ((!tok_equal(l, TOKEN_IDENT) && !token_is_typename(peek(l)->kind)) ||
@@ -601,6 +602,12 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_LBRACE:
         stmt = parse_stmt_block(l);
         return stmt; // If stmt is invalid, we know we hit the EOF, see parse_stmt_block
+    case TOKEN_BREAK:
+        stmt = parse_break_continue(l, STMT_BREAK);
+        return stmt;
+    case TOKEN_CONTINUE:
+        stmt = parse_break_continue(l, STMT_CONTINUE);
+        return stmt;
     case TOKEN_CASE:
     case TOKEN_DEFAULT:
         sic_error_at(peek(l)->loc, "Case/Default statement in invalid location.");
@@ -649,6 +656,14 @@ static ASTStmt* parse_stmt_block(Lexer* l)
 
     block->stmt.block.body = head.next;
     return block;
+}
+
+static ASTStmt* parse_break_continue(Lexer* l, StmtKind kind)
+{
+    ASTStmt* stmt = new_stmt(l, kind);
+    advance(l);
+    CONSUME_OR_RET(TOKEN_SEMI, BAD_STMT);
+    return stmt;
 }
 
 static ASTStmt* parse_for(Lexer* l)
@@ -793,7 +808,7 @@ static ASTStmt* parse_expr_stmt(Lexer* l)
     ASTExpr* expr;
     Type* type;
     if(!parse_decl_type_or_expr(l, &type, &expr, NULL))
-        return false;
+        return BAD_STMT;
 
     if(type != NULL)
         return parse_declaration(l, type, ATTR_NONE);

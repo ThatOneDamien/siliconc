@@ -386,7 +386,10 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
             if(values->data[i]->symbol == uaccess->member_sym)
             {
                 expr->kind = EXPR_CONSTANT;
-                expr->type = parent->expr.ident->enum_.underlying;
+                expr->type = CALLOC_STRUCT(Type);
+                expr->type->kind = TYPE_ENUM;
+                expr->type->user_def = parent->expr.ident;
+                expr->type->status = STATUS_RESOLVED;
                 expr->expr.constant.kind = CONSTANT_INTEGER;
                 expr->expr.constant.val.i = values->data[i]->enum_val.const_val;
                 return true;
@@ -541,8 +544,9 @@ static bool analyze_comparison(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, AST
     if(type_is_pointer(right->type) && !left_is_pointer)
     {
         left_is_pointer = true;
-        *lhs = right;
-        *rhs = left;
+        ASTExpr** temp = lhs;
+        lhs = rhs;
+        rhs = temp;
         left = right;
         right = *rhs;
     }
@@ -767,8 +771,9 @@ static bool arith_type_conv(SemaContext* c, ASTExpr* parent, ASTExpr** expr1, AS
 
     if(e1->type->kind < e2->type->kind)
     {
-        *expr1 = e2;
-        *expr2 = e1;
+        ASTExpr** temp = expr1;
+        expr1 = expr2;
+        expr2 = temp;
         e1 = e2;
         e2 = *expr2;
     }

@@ -17,10 +17,11 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Short Term Implementation Plans
-- Change the lexer to lex all at once, not sure exactly how this would work because
-  errors would either be out of order with regard to the parsing and semantic analysis
-  stages, or I would have to store them to be emitted when actaully passing over the token.
+- Add proper dead-code checking and only add function declarations as needed to the
+  codegen.
+- Add better main function semantics, ensuring proper return and parameter type.
+  Also ensure only one main function per program, including within other modules.
+- Add other user-defined types (namely typedefs, and bitfields)
+- Actually work on the import and module system
 - Update how the type struct works, possible adding a cache for useful variants
   of types like a pointer.
-- Add other user-defined types, namely enums, typedefs, unions, and bitfields
-- Actually work on the import and module system

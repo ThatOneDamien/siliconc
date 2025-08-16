@@ -24,6 +24,8 @@ struct CodegenContext
     LLVMValueRef           alloca_ref;
     LLVMValueRef           swap_ref;
     LLVMBasicBlockRef      cur_bb;
+    LLVMBasicBlockRef      break_bb;
+    LLVMBasicBlockRef      continue_bb;
 
     LLVMTypeRef            ptr_type;
 };
@@ -51,6 +53,7 @@ static void     decl_global_var(CodegenContext* c, Object* var);
 static void     emit_function_body(CodegenContext* c, Object* function);
 static void     emit_stmt(CodegenContext* c, ASTStmt* stmt);
 static void     emit_block_stmt(CodegenContext* c, ASTStmt* stmt);
+static void     emit_declaration(CodegenContext* c, ASTDeclaration* decl);
 static void     emit_for(CodegenContext* c, ASTStmt* stmt);
 static void     emit_if(CodegenContext* c, ASTStmt* stmt);
 static void     emit_swap(CodegenContext* c, ASTStmt* stmt);
@@ -113,7 +116,7 @@ void llvm_codegen(ModulePTRDA* modules)
     SIC_ASSERT(modules->size != 0);
     // TODO: Temporary, remove this line
     g_compiler.top_module.name = "default";
-    CodegenContext c;
+    CodegenContext c = {0};
     c.global_context = LLVMGetGlobalContext();
     c.ptr_type = LLVMPointerType(LLVMInt8Type(), 0);
     c.builder = LLVMCreateBuilder();
@@ -293,8 +296,13 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         emit_block_stmt(c, stmt->stmt.block.body);
         return;
     case STMT_BREAK:
+        SIC_ASSERT(c->break_bb != NULL);
+        emit_br(c, c->break_bb);
+        return;
     case STMT_CONTINUE:
-        SIC_TODO();
+        SIC_ASSERT(c->continue_bb != NULL);
+        emit_br(c, c->continue_bb);
+        return;
     case STMT_EXPR_STMT:
         emit_expr(c, stmt->stmt.expr);
         return;
@@ -308,19 +316,12 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         return;
     case STMT_LABEL:
         SIC_TODO();
-    case STMT_MULTI_DECL:
-        for(size_t i = 0; i < stmt->stmt.multi_decl.size; ++i)
-        {
-            ASTDeclaration* decl = stmt->stmt.multi_decl.data + i;
-            emit_var_alloca(c, decl->obj);
-            if(decl->init_expr != NULL)
-            {
-                GenValue init = emit_expr(c, decl->init_expr);
-                load_rvalue(c, &init);
-                LLVMBuildStore(c->builder, init.value, decl->obj->llvm_ref);
-            }
-        }
+    case STMT_MULTI_DECL: {
+        ASTDeclDA* decls = &stmt->stmt.multi_decl;
+        for(size_t i = 0; i < decls->size; ++i)
+            emit_declaration(c, decls->data + i); 
         return;
+    }
     case STMT_NOP:
         return;
     case STMT_RETURN:
@@ -334,22 +335,9 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         }
         c->cur_bb = NULL;
         return;
-    case STMT_SINGLE_DECL: {
-        ASTDeclaration* decl = &stmt->stmt.single_decl;
-        emit_var_alloca(c, decl->obj);
-        GenValue var;
-        var.type = decl->obj->var.type;
-        var.value = decl->obj->llvm_ref;
-        var.kind = GEN_VAL_ADDRESS;
-        if(decl->init_expr != NULL)
-        {
-            GenValue init = emit_expr(c, decl->init_expr);
-            load_rvalue(c, &init);
-            GenValue temp;
-            emit_assign(c, &var, &init, &temp);
-        }
+    case STMT_SINGLE_DECL:
+        emit_declaration(c, &stmt->stmt.single_decl);
         return;
-    }
     case STMT_SWAP:
         emit_swap(c, stmt);
         return;
@@ -375,6 +363,22 @@ static void emit_block_stmt(CodegenContext* c, ASTStmt* stmt)
     }
 }
 
+static void emit_declaration(CodegenContext* c, ASTDeclaration* decl)
+{
+    emit_var_alloca(c, decl->obj);
+    GenValue var;
+    var.type = decl->obj->var.type;
+    var.value = decl->obj->llvm_ref;
+    var.kind = GEN_VAL_ADDRESS;
+    if(decl->init_expr != NULL)
+    {
+        GenValue init = emit_expr(c, decl->init_expr);
+        load_rvalue(c, &init);
+        GenValue temp;
+        emit_assign(c, &var, &init, &temp);
+    }
+}
+
 static void emit_for(CodegenContext* c, ASTStmt* stmt)
 {
     ASTFor* for_stmt = &stmt->stmt.for_;
@@ -382,6 +386,7 @@ static void emit_for(CodegenContext* c, ASTStmt* stmt)
     LLVMBasicBlockRef exit_block = create_basic_block(c, ".for_exit");
     LLVMBasicBlockRef body_block = create_basic_block(c, ".for_body");
     LLVMBasicBlockRef cond_block = body_block;
+    LLVMBasicBlockRef loop_block;
     if(stmt_not_empty(for_stmt->init_stmt))
         emit_stmt(c, for_stmt->init_stmt);
 
@@ -394,13 +399,22 @@ static void emit_for(CodegenContext* c, ASTStmt* stmt)
     }
     else
         emit_br(c, body_block);
+
+    loop_block = for_stmt->loop_expr == NULL ? cond_block : create_basic_block(c, ".for_loop");
     
+    LLVMBasicBlockRef prev_break = c->break_bb;
+    LLVMBasicBlockRef prev_cont = c->continue_bb;
+    c->break_bb = exit_block;
+    c->continue_bb = loop_block;
     append_old_basic_block(c, body_block);
     emit_stmt(c, for_stmt->body);
+    emit_br(c, loop_block);
+    c->break_bb = prev_break;
+    c->continue_bb = prev_cont;
     
     if(for_stmt->loop_expr != NULL)
     {
-        append_new_basic_block(c, ".for_loop");
+        append_old_basic_block(c, loop_block); 
         emit_expr(c, for_stmt->loop_expr);
     }
 
@@ -489,8 +503,11 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
         if(cas->expr == NULL)
             default_block = cas->llvm_block_ref;
     }
+
     LLVMPositionBuilderAtEnd(c->builder, orig_block);
     LLVMValueRef switch_val = LLVMBuildSwitch(c->builder, expr.value, default_block, swi->cases.size - (default_block != exit_block)); 
+    LLVMBasicBlockRef prev_break = c->break_bb;
+    c->break_bb = exit_block;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
         ASTCase* cas = swi->cases.data + i;
@@ -505,6 +522,7 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
         SIC_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
         LLVMAddCase(switch_val, LLVMConstInt(get_llvm_type(c, cas->expr->type), cas->expr->expr.constant.val.i, false), cas->llvm_block_ref);
     }
+    c->break_bb = prev_break;
     append_old_basic_block(c, exit_block);
 }
 
@@ -525,8 +543,14 @@ static void emit_while(CodegenContext* c, ASTStmt* stmt)
     
     if(body_block != cond_block)
     {
+        LLVMBasicBlockRef prev_break = c->break_bb;
+        LLVMBasicBlockRef prev_cont = c->continue_bb;
+        c->break_bb = exit_block;
+        c->continue_bb = cond_block;
         append_old_basic_block(c, body_block);
         emit_stmt(c, while_stmt->body);
+        c->break_bb = prev_break;
+        c->continue_bb = prev_cont;
         emit_br(c, cond_block);
     }
     
@@ -1031,21 +1055,24 @@ static void emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValu
 static void emit_assign(CodegenContext* c, GenValue* ptr, GenValue* value, GenValue* result)
 {
     result->value = value->value;
-    if(type_is_array(value->type) || type_is_user_def(value->type))
+    if(type_is_trivially_copyable(value->type))
+    {
+        LLVMBuildStore(c->builder, value->value, ptr->value);
+    }
+    else
     {
         LLVMBuildMemCpy(c->builder, 
                         ptr->value, type_alignment(ptr->type), 
                         value->value, type_alignment(value->type), 
                         LLVMConstInt(LLVMInt64Type(), type_size(value->type), false));
     }
-    else
-        LLVMBuildStore(c->builder, value->value, ptr->value);
 }
 
 static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
 {
-    if(c->cur_bb)
+    if(c->cur_bb != NULL)
         LLVMBuildBr(c->builder, block);
+    c->cur_bb = NULL;
 }
 
 static void emit_var_alloca(CodegenContext* c, Object* obj)
@@ -1079,10 +1106,10 @@ static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef
 
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label)
 {
-    c->cur_bb = LLVMAppendBasicBlock(c->cur_func->llvm_ref, label);
-    emit_br(c, c->cur_bb);
-    LLVMPositionBuilderAtEnd(c->builder, c->cur_bb);
-    return c->cur_bb;
+    LLVMBasicBlockRef res = LLVMAppendBasicBlock(c->cur_func->llvm_ref, label);
+    emit_br(c, res);
+    LLVMPositionBuilderAtEnd(c->builder, res);
+    return c->cur_bb = res;
 }
 
 static void append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
@@ -1099,7 +1126,7 @@ static LLVMBasicBlockRef create_basic_block(CodegenContext* c, const char* label
 static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
 {
     c->cur_bb = block;
-    LLVMPositionBuilderAtEnd(c->builder, c->cur_bb);
+    LLVMPositionBuilderAtEnd(c->builder, block);
 }
 
 static void emit_llvm_ir(CodegenContext* c)
@@ -1151,6 +1178,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_DS_ARRAY:
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_ENUM:
+        return type->llvm_ref = get_llvm_type(c, type->user_def->enum_.underlying);
     case TYPE_STRUCT: {
         Object* user = type->user_def;
         if(user->llvm_ref)
@@ -1207,6 +1235,7 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER:
+    case TYPE_ENUM:
     case TYPE_STRUCT:
     case TYPE_UNION:
         lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
@@ -1217,7 +1246,6 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_NULLPTR:
-    case TYPE_ENUM:
     case TYPE_TYPEDEF:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:

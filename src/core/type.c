@@ -149,6 +149,7 @@ uint32_t type_size(Type* ty)
     case TYPE_SS_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.ss_size;
     case TYPE_ENUM:
+        return type_size(ty->user_def->enum_.underlying);
     case TYPE_TYPEDEF:
         SIC_TODO();
     case TYPE_STRUCT:
@@ -190,6 +191,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_DS_ARRAY:
         return type_alignment(ty->array.elem_type);
     case TYPE_ENUM:
+        return type_alignment(ty->user_def->enum_.underlying);
     case TYPE_TYPEDEF:
         SIC_TODO();
     case TYPE_STRUCT:

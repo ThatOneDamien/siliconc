@@ -130,7 +130,8 @@ static inline bool type_is_float(Type* ty)
 
 static inline bool type_is_numeric(Type* ty)
 {
-    return ty->kind >= TYPE_NUMERIC_START && ty->kind <= TYPE_NUMERIC_END;
+    return (ty->kind >= TYPE_NUMERIC_START && ty->kind <= TYPE_NUMERIC_END) ||
+           ty->kind == TYPE_ENUM;
 }
 
 static inline bool type_is_pointer(Type* ty)

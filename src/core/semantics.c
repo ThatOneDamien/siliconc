@@ -4,6 +4,14 @@
 static void analyze_unit(SemaContext* c, CompilationUnit* unit);
 static void analyze_function(SemaContext* c, Object* function);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope);
+static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt, bool add_scope);
+static void analyze_break(SemaContext* c, ASTStmt* stmt);
+static void analyze_continue(SemaContext* c, ASTStmt* stmt);
+static void analyze_for(SemaContext* c, ASTStmt* stmt);
+static void analyze_if(SemaContext* c, ASTStmt* stmt);
+static void analyze_return(SemaContext* c, ASTStmt* stmt);
+static void analyze_switch(SemaContext* c, ASTStmt* stmt);
+static void analyze_while(SemaContext* c, ASTStmt* stmt);
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl);
 static void analyze_swap(SemaContext* c, ASTStmt* stmt);
 
@@ -133,52 +141,26 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
 {
     switch(stmt->kind)
     {
-    case STMT_BLOCK: {
-        if(add_scope)
-            push_scope(c);
-        ASTStmt* sub_stmt = stmt->stmt.block.body;
-        while(sub_stmt != NULL)
-        {
-            analyze_stmt(c, sub_stmt, true);
-            sub_stmt = sub_stmt->next;
-        }
-        if(add_scope)
-            pop_scope(c);
+    case STMT_BLOCK:
+        analyze_stmt_block(c, stmt->stmt.block.body, add_scope);
         return;
-    }
     case STMT_BREAK:
+        analyze_break(c, stmt);
+        return;
     case STMT_CONTINUE:
-        SIC_TODO();
+        analyze_continue(c, stmt);
+        return;
     case STMT_EXPR_STMT:
         analyze_expr(c, stmt->stmt.expr);
         return;
-    case STMT_FOR: {
-        push_scope(c);
-        ASTFor* for_stmt = &stmt->stmt.for_;
-        if(for_stmt->init_stmt != NULL)
-            analyze_stmt(c, for_stmt->init_stmt, false);
-        if(for_stmt->cond_expr != NULL)
-        {
-            analyze_expr(c, for_stmt->cond_expr);
-            implicit_cast(c, &for_stmt->cond_expr, g_type_bool);
-        }
-        if(for_stmt->loop_expr != NULL)
-            analyze_expr(c, for_stmt->loop_expr);
-        analyze_stmt(c, for_stmt->body, false);
-        pop_scope(c);
+    case STMT_FOR:
+        analyze_for(c, stmt);
         return;
-    }
     case STMT_GOTO:
         SIC_TODO();
-    case STMT_IF: {
-        ASTIf* if_stmt = &stmt->stmt.if_;
-        analyze_expr(c, if_stmt->cond);
-        implicit_cast(c, &if_stmt->cond, g_type_bool);
-        analyze_stmt(c, if_stmt->then_stmt, true);
-        if(if_stmt->else_stmt != NULL)
-            analyze_stmt(c, if_stmt->else_stmt, true);
+    case STMT_IF:
+        analyze_if(c, stmt);
         return;
-    }
     case STMT_LABEL:
         SIC_TODO();
     case STMT_MULTI_DECL: {
@@ -190,24 +172,9 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     }
     case STMT_NOP:
         return;
-    case STMT_RETURN: {
-        ASTReturn* ret = &stmt->stmt.return_;
-        Type* ret_type = c->cur_func->func.signature->ret_type;
-        if(ret->ret_expr != NULL)
-        {
-            if(ret_type->kind == TYPE_VOID)
-            {
-                sic_error_at(ret->ret_expr->loc, 
-                             "Function returning void should not return a value.");
-                return;
-            }
-            analyze_expr(c, ret->ret_expr);
-            implicit_cast(c, &ret->ret_expr, ret_type);
-        }
-        else if(ret_type->kind != TYPE_VOID)
-            sic_error_at(stmt->loc, "Function returning non-void should return a value.");
+    case STMT_RETURN:
+        analyze_return(c, stmt);
         return;
-    }
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
         if(resolve_type(c, decl->obj->var.type, false))
@@ -217,59 +184,142 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     case STMT_SWAP:
         analyze_swap(c, stmt);
         return;
-    case STMT_SWITCH: {
-        ASTSwitch* swi = &stmt->stmt.switch_;
-        bool has_default = false;
-        analyze_expr(c, swi->expr);
-        if(!type_is_integer(swi->expr->type))
-        {
-            sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
-            return;
-        }
-        if(type_size(swi->expr->type) < 4)
-            implicit_cast(c, &swi->expr, g_type_int);
-        ASTCase* cas;
-        for(uint32_t i = 0; i < swi->cases.size; ++i)
-        {
-            cas = swi->cases.data + i;
-            if(cas->expr != NULL)
-            {
-                analyze_expr(c, cas->expr);
-                implicit_cast(c, &cas->expr, swi->expr->type);
-            }
-            else if(has_default)
-            {
-                // TODO: Improve this error message, Im just too fucking lazy right now.
-                sic_error_at(swi->expr->loc, "Switch statement contains duplicate default cases.");
-                continue;
-            }
-            else
-                has_default = true;
-
-            push_scope(c);
-            ASTStmt* sub_stmt = cas->body;
-            while(sub_stmt != NULL)
-            {
-                analyze_stmt(c, sub_stmt, true);
-                sub_stmt = sub_stmt->next;
-            }
-            pop_scope(c);
-        }
+    case STMT_SWITCH:
+        analyze_switch(c, stmt);
         return;
-    }
     case STMT_TYPE_DECL:
         SIC_TODO();
-    case STMT_WHILE: {
-        ASTWhile* while_stmt = &stmt->stmt.while_;
-        analyze_expr(c, while_stmt->cond);
-        implicit_cast(c, &while_stmt->cond, g_type_bool);
-        analyze_stmt(c, while_stmt->body, true);
+    case STMT_WHILE:
+        analyze_while(c, stmt);
         return;
-    }
     case STMT_INVALID:
         return;
     }
     SIC_UNREACHABLE();
+}
+
+static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt, bool add_scope)
+{
+    if(add_scope)
+        push_scope(c);
+    while(stmt != NULL)
+    {
+        analyze_stmt(c, stmt, true);
+        stmt = stmt->next;
+    }
+    if(add_scope)
+        pop_scope(c);
+}
+
+static void analyze_break(SemaContext* c, ASTStmt* stmt)
+{
+    if(~c->block_context & BLOCK_BREAKABLE)
+        sic_error_at(stmt->loc, "Cannot break in the current context.");
+}
+
+static void analyze_continue(SemaContext* c, ASTStmt* stmt)
+{
+    if(~c->block_context & BLOCK_CONTINUABLE)
+        sic_error_at(stmt->loc, "Cannot continue in the current context.");
+}
+
+static void analyze_for(SemaContext* c, ASTStmt* stmt)
+{
+    ASTFor* for_stmt = &stmt->stmt.for_;
+    push_scope(c);
+    if(for_stmt->init_stmt != NULL)
+        analyze_stmt(c, for_stmt->init_stmt, false);
+    if(for_stmt->cond_expr != NULL)
+    {
+        analyze_expr(c, for_stmt->cond_expr);
+        implicit_cast(c, &for_stmt->cond_expr, g_type_bool);
+    }
+    if(for_stmt->loop_expr != NULL)
+        analyze_expr(c, for_stmt->loop_expr);
+
+    BlockContext context = c->block_context;
+    c->block_context = BLOCK_LOOP;
+    analyze_stmt(c, for_stmt->body, false);
+    c->block_context = context;
+
+    pop_scope(c);
+}
+
+static void analyze_if(SemaContext* c, ASTStmt* stmt)
+{
+    ASTIf* if_stmt = &stmt->stmt.if_;
+    analyze_expr(c, if_stmt->cond);
+    implicit_cast(c, &if_stmt->cond, g_type_bool);
+    analyze_stmt(c, if_stmt->then_stmt, true);
+    if(if_stmt->else_stmt != NULL)
+        analyze_stmt(c, if_stmt->else_stmt, true);
+}
+
+static void analyze_return(SemaContext* c, ASTStmt* stmt)
+{
+    ASTReturn* ret = &stmt->stmt.return_;
+    Type* ret_type = c->cur_func->func.signature->ret_type;
+    if(ret->ret_expr != NULL)
+    {
+        if(ret_type->kind == TYPE_VOID)
+        {
+            sic_error_at(ret->ret_expr->loc, 
+                            "Function returning void should not return a value.");
+            return;
+        }
+        analyze_expr(c, ret->ret_expr);
+        implicit_cast(c, &ret->ret_expr, ret_type);
+    }
+    else if(ret_type->kind != TYPE_VOID)
+        sic_error_at(stmt->loc, "Function returning non-void should return a value.");
+}
+
+static void analyze_switch(SemaContext* c, ASTStmt* stmt)
+{
+    ASTSwitch* swi = &stmt->stmt.switch_;
+    bool has_default = false;
+    analyze_expr(c, swi->expr);
+    if(!type_is_integer(swi->expr->type))
+    {
+        sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
+        return;
+    }
+    if(type_size(swi->expr->type) < 4)
+        implicit_cast(c, &swi->expr, g_type_int);
+
+    BlockContext context = c->block_context;
+    c->block_context = BLOCK_SWITCH;
+    for(uint32_t i = 0; i < swi->cases.size; ++i)
+    {
+        ASTCase* cas = swi->cases.data + i;
+        if(cas->expr != NULL)
+        {
+            analyze_expr(c, cas->expr);
+            implicit_cast(c, &cas->expr, swi->expr->type);
+        }
+        else if(has_default)
+        {
+            // TODO: Improve this error message, Im just too fucking lazy right now.
+            sic_error_at(swi->expr->loc, "Switch statement contains duplicate default cases.");
+            continue;
+        }
+        else
+            has_default = true;
+
+        analyze_stmt_block(c, cas->body, true);
+    }
+    c->block_context = context;
+}
+
+static void analyze_while(SemaContext* c, ASTStmt* stmt)
+{
+    ASTWhile* while_stmt = &stmt->stmt.while_;
+    analyze_expr(c, while_stmt->cond);
+    implicit_cast(c, &while_stmt->cond, g_type_bool);
+    BlockContext context = c->block_context;
+    c->block_context = BLOCK_LOOP; 
+    analyze_stmt(c, while_stmt->body, true);
+    c->block_context = context;
 }
 
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)

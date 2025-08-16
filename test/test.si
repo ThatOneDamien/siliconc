@@ -1,18 +1,25 @@
-enum Test
+enum Test : int
 {
-    A = 0,
+    A,
     B,
-    C,
+    C = 10,
     D,
-    E
 }
 
 pub uint main(int argc, ubyte** argv)
 {
+    // Break and continue testing.
+    for(int i = 0; ; ++i)
+    {
+        if(i & 1) continue;
+        if(i >= 1000) break;
+        printf("%d\n", i);
+    }
+
+    // Enum testing.
     printf("%d\n", Test.A);
     printf("%d\n", Test.B);
     printf("%d\n", Test.C);
     printf("%d\n", Test.D);
-    printf("%d\n", Test.E);
     return 0;
 }
