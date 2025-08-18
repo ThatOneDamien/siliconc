@@ -41,6 +41,8 @@ void process_cmdln_args(int argc, char* argv[])
             i++;
             g_args.output_file = argv[i];
         }
+        else if(strcmp(arg, "Werror") == 0)
+            g_args.werror = true;
         else if(strcmp(arg, "emit-ir") == 0)
             g_args.emit_ir = true;
         else if(strcmp(arg, "emit-asm") == 0)

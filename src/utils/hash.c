@@ -81,7 +81,6 @@ static HashEntry* get_entry(HashMap* map, Symbol key, uint64_t hash)
 
 static void rehash(HashMap* map, uint32_t new_cap)
 {
-
     HashMap temp_map;
     temp_map.bucket_cnt = new_cap;
     temp_map.buckets    = CALLOC_STRUCTS(HashEntry, new_cap);
@@ -89,13 +88,14 @@ static void rehash(HashMap* map, uint32_t new_cap)
     temp_map.max_load   = new_cap * LOAD_FACTOR_HI / LOAD_FACTOR_C;
     if(map->buckets != NULL)
     {
-        for(uint32_t i = 0; i < map->entry_cnt; ++i)
+        for(uint32_t i = 0, cnt = 0; cnt < map->entry_cnt; ++i)
         {
             HashEntry* bucket = map->buckets + i;
             if(bucket->key != NULL)
             {
                 HashEntry* new_bucket = get_entry(&temp_map, bucket->key, bucket->hash);
                 memcpy(new_bucket, bucket, sizeof(HashEntry));
+                cnt++;
             }
         }
     }

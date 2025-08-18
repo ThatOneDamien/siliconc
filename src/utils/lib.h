@@ -11,6 +11,8 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
+#define BIT_SET(x, BIT) (x & BIT)
+#define BIT_UNSET(x, BIT) ((x & BIT) == 0)
 #define SCRATCH_SIZE (1 << 14)
 #ifdef __GNUC__
     #define UNUSED __attribute__((unused))

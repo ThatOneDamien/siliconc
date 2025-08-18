@@ -1,7 +1,7 @@
 #pragma once
 #include "internal.h"
 
-typedef enum
+typedef enum : uint8_t
 {
     BLOCK_REGULAR     = 0,
     BLOCK_BREAKABLE   = (1 << 0),
@@ -9,6 +9,14 @@ typedef enum
     BLOCK_LOOP        = BLOCK_BREAKABLE | BLOCK_CONTINUABLE,
     BLOCK_SWITCH      = BLOCK_BREAKABLE,
 } BlockContext;
+
+typedef enum : uint8_t
+{
+    IDENT_NONE = 0,
+    IDENT_VAR  = (1 << 1),
+    IDENT_FUNC = (1 << 2),
+    IDENT_TYPE = (1 << 3),
+} IdentMask;
 
 typedef struct SemaContext SemaContext;
 struct SemaContext
@@ -23,6 +31,7 @@ struct SemaContext
     //       multiple hashmaps per context, and checking is actually slower.
     ScopeDA          scope_stack;
     BlockContext     block_context;
+    IdentMask        ident_mask;
 };
 
 bool    analyze_expr_no_set(SemaContext* c, ASTExpr* expr);

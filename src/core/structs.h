@@ -425,7 +425,6 @@ struct FuncSignature
 {
     Type*    ret_type;
     ObjectDA params;
-    void*    llvm_func_type;
     bool     is_var_arg;
 };
 
@@ -443,6 +442,7 @@ struct ObjEnumValue
         ASTExpr* value;
         uint64_t const_val;
     };
+    Type* type;
 };
 
 struct ObjFunc
@@ -470,13 +470,17 @@ struct ObjStruct
 
 struct ObjVar
 {
-    Type*    type;
     union
     {
-        uint64_t i;
-        double   f;
-    } default_val;
+        ASTExpr* global_initializer;
+        union
+        {
+            uint64_t i;
+            double   f;
+        } default_val;
+    };
     uint32_t member_idx;
+
 };
 
 struct Object
@@ -487,6 +491,7 @@ struct Object
     ObjAccess access;
     ObjAttr   attribs;
     void*     llvm_ref;
+    Type*     type;
 
     union
     {
@@ -545,6 +550,7 @@ struct Cmdline
     bool          emit_ir : 1;
     bool          emit_asm : 1;
     bool          hash_hash_hash : 1;
+    bool          werror : 1;
 #ifdef SI_DEBUG
     bool          emit_debug_output;
 #endif
@@ -555,4 +561,5 @@ struct CompilerContext
     StringDA    linker_inputs;
     Module      top_module;
     ModulePTRDA modules_to_compile;
+    Object*     main_function;
 };

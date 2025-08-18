@@ -87,7 +87,7 @@ int main(int argc, char* argv[])
     if(g_compiler.modules_to_compile.size == 0)
         exit(EXIT_SUCCESS);
 
-    gen_ir(&g_compiler.modules_to_compile);
+    gen_ir();
 
     if(g_args.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
         exit(EXIT_SUCCESS);

@@ -67,7 +67,7 @@ void print_func(const Object* func)
         Object* param = sig->params.data[i];
         printf("    %s (type %s)\n", 
                param->symbol,
-               debug_type_to_str(param->var.type));
+               debug_type_to_str(param->type));
     }
 
     printf("  Body:\n");
@@ -252,6 +252,8 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.ternary.then_expr, depth + 1, "then");
         print_expr_at_depth(expr->expr.ternary.else_expr, depth + 1, "else");
         return;
+    case EXPR_TYPE_IDENT:
+        SIC_TODO();
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));

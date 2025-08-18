@@ -85,7 +85,6 @@ bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
     ASTExpr* new_cast = CALLOC_STRUCT(ASTExpr);
     new_cast->kind = EXPR_CAST;
     new_cast->expr.cast.inner = prev;
-    *expr_to_cast = new_cast;
     params.expr = new_cast;
     params.inner = prev;
 
@@ -96,6 +95,7 @@ bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
     if(rule.convert != NULL)
         rule.convert(new_cast, prev);
 
+    *expr_to_cast = new_cast;
     return true;
 }
 
@@ -129,7 +129,7 @@ static bool cast_rule_explicit_only(CastParams* params, bool explicit)
 {
     if(explicit)
         return true;
-    sic_error_at(params->expr->loc, "%s cannot be implicitly converted to %s.",
+    sic_error_at(params->inner->loc, "%s cannot be implicitly converted to %s.",
                  type_to_string(params->from), type_to_string(params->to));
     return false;
 }
@@ -148,7 +148,7 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
     if(params->inner->kind == EXPR_CONSTANT)
         return true;
 
-    sic_error_at(params->expr->loc, 
+    sic_error_at(params->inner->loc, 
                  "Narrowing integer type %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
     return false;
@@ -176,7 +176,7 @@ static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
         return true;
 
 ERR:
-    sic_error_at(params->expr->loc, 
+    sic_error_at(params->inner->loc, 
                  "Unable to implicitly cast between pointers of different type.");
     return false;
 }
@@ -188,7 +188,7 @@ static bool cast_rule_string_lit(CastParams* params, bool explicit)
        params->inner->expr.constant.kind == CONSTANT_STRING)
         return true;
 
-    sic_error_at(params->expr->loc,
+    sic_error_at(params->inner->loc,
                  "Arrays do not implicitly decay to pointers, use the address-of operator '&'.");
     return false;
 }

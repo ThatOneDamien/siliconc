@@ -6,4 +6,4 @@
 // void gasx86_64_codegen(const CompilationUnit* unit, FILE* out_file);
 // void gasx86_64_assemble(const char* input_path, const char* out_path);
 
-void llvm_codegen(ModulePTRDA* modules);
+void llvm_codegen();

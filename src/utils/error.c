@@ -33,6 +33,8 @@ void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...)
 void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va)
 {
     SIC_ASSERT(message != NULL);
+    if(g_args.werror && diag == DIAG_WARNING)
+        diag = DIAG_ERROR;
     fprintf(stderr, "sic: \033[%sm%s:\033[0m ", DIAG_COLOR[diag], DIAG_NAME[diag]); 
     vfprintf(stderr, message, va);
     putc('\n', stderr);
@@ -53,6 +55,8 @@ void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict 
 void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va)
 {
     SIC_ASSERT(message != NULL);
+    if(g_args.werror && diag == DIAG_WARNING)
+        diag = DIAG_ERROR;
     InputFile* file = file_from_id(loc.file);
     const char* line_start = file->src;
     const char* loc_start;

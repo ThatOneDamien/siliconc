@@ -3,6 +3,8 @@
 
 static void analyze_unit(SemaContext* c, CompilationUnit* unit);
 static void analyze_function(SemaContext* c, Object* function);
+static void analyze_global_var(SemaContext* c, Object* global_var);
+static bool analyze_main(Object* main);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope);
 static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt, bool add_scope);
 static void analyze_break(SemaContext* c, ASTStmt* stmt);
@@ -112,6 +114,9 @@ static void analyze_unit(SemaContext* c, CompilationUnit* unit)
     c->prot_syms = &unit->module->symbols;
     for(size_t i = 0; i < unit->funcs.size; ++i)
         analyze_function(c, unit->funcs.data[i]);
+
+    for(size_t i = 0; i < unit->vars.size; ++i)
+        analyze_global_var(c, unit->vars.data[i]);
 }
 
 static void analyze_function(SemaContext* c, Object* function)
@@ -122,8 +127,8 @@ static void analyze_function(SemaContext* c, Object* function)
     for(size_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
-        resolve_type(c, param->var.type, false);
-        declare_obj(c, param);
+        if(resolve_type(c, param->type, false))
+            declare_obj(c, param);
     }
 
     ASTStmt* stmt = function->func.body;
@@ -135,6 +140,64 @@ static void analyze_function(SemaContext* c, Object* function)
 
     c->cur_func = NULL;
     pop_scope(c);
+}
+
+static void analyze_global_var(SemaContext* c, Object* global_var)
+{
+    ObjVar* var = &global_var->var;
+    if(!resolve_type(c, global_var->type, false))
+        return;
+
+    if(var->global_initializer == NULL || 
+       !analyze_expr(c, var->global_initializer))
+        return;
+
+    implicit_cast(c, &var->global_initializer, global_var->type);
+}
+
+static bool analyze_main(Object* main)
+{
+    if(main->kind != OBJ_FUNC)
+    {
+        sic_error_at(main->loc, "Symbol 'main' is reserved for entry function.");
+        return false;
+    }
+
+    if(g_compiler.main_function != NULL)
+    {
+        sic_error_redef(main, g_compiler.main_function);
+        return false;
+    }
+
+    FuncSignature* sig = main->func.signature;
+    if(sig->ret_type->kind != TYPE_INT)
+        goto BAD_SIG;
+
+    if(sig->params.size >= 1 && sig->params.data[0]->type->kind != TYPE_INT)
+        goto BAD_SIG;
+
+    Type* second;
+    if(sig->params.size >= 2)
+    {
+        second = sig->params.data[1]->type;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_UBYTE)
+            goto BAD_SIG;
+    }
+
+    g_compiler.main_function = main;
+    return true;
+
+BAD_SIG:
+    sic_error_at(main->loc, "The signature of the main function is invalid. "
+                            "The return type should be 'int', with optional "
+                            "parameters 'int, ubyte**'.");
+    return false;
 }
 
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
@@ -165,7 +228,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         SIC_TODO();
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        if(resolve_type(c, decl_list->data[0].obj->var.type, false))
+        if(resolve_type(c, decl_list->data[0].obj->type, false))
             for(size_t i = 0; i < decl_list->size; ++i)
                 analyze_declaration(c, decl_list->data + i);
         return;
@@ -177,7 +240,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         return;
     case STMT_SINGLE_DECL: {
         ASTDeclaration* decl = &stmt->stmt.single_decl;
-        if(resolve_type(c, decl->obj->var.type, false))
+        if(resolve_type(c, decl->obj->type, false))
             analyze_declaration(c, decl);
         return;
     }
@@ -325,7 +388,7 @@ static void analyze_while(SemaContext* c, ASTStmt* stmt)
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
     ASTExpr* init = decl->init_expr;
-    Type* type = decl->obj->var.type;
+    Type* type = decl->obj->type;
     if(decl->init_expr != NULL)
     {
         if(decl->init_expr->kind == EXPR_DEFAULT)
@@ -364,6 +427,9 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
 
 static void declare_global_obj(SemaContext* c, Object* global)
 {
+    if(memcmp(global->symbol, "main", 4) == 0 &&
+       !analyze_main(global))
+        return;
     HashMap* pub  = &c->unit->module->public_symbols;
     Object* other = hashmap_get(c->priv_syms, global->symbol);
     if(other == NULL)
@@ -371,6 +437,7 @@ static void declare_global_obj(SemaContext* c, Object* global)
 
     if(other != NULL)
         sic_error_redef(global, other);
+
 
     switch(global->access)
     {

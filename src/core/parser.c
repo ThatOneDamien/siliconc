@@ -250,7 +250,7 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
 
         da_resize(params, params->size + 1);
         params->data[params->size - 1] = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, ATTR_NONE);
-        params->data[params->size - 1]->var.type = type;
+        params->data[params->size - 1]->type = type;
         advance(l);
     }
     
@@ -264,15 +264,13 @@ static bool global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAt
     SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
     Object* var = new_obj(l, OBJ_VAR, access, attribs);
     ObjVar* comps = &var->var;
-    comps->type = type;
+    var->type = type;
     advance(l);
 
-    if(try_consume(l, TOKEN_SEMI))
-        goto END;
-    
-    SIC_TODO_MSG("Global variable initialization.");
+    if(try_consume(l, TOKEN_ASSIGN))
+        ASSIGN_EXPR_OR_RET(comps->global_initializer, false);
 
-END:
+    CONSUME_OR_RET(TOKEN_SEMI, false);
     da_append(&l->unit->vars, var);
     return true;
 }
@@ -330,7 +328,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
                 }
             }
             Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
-            member->var.type = ty;
+            member->type = ty;
             member->var.member_idx = member_idx++;
             da_append(members, member);
 SKIP_DUPLICATE:
@@ -840,7 +838,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     decl_stmt->kind = STMT_SINGLE_DECL;
     decl_stmt->loc = peek(l)->loc;
     Object* var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
-    var->var.type = type;
+    var->type = type;
     decl_stmt->stmt.single_decl.obj = var;
     ASTExpr* expr = NULL;
     advance(l);
@@ -864,7 +862,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     {
         da_resize(decl_list, decl_list->size + 1);
         var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
-        var->var.type = type;
+        var->type = type;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
         {

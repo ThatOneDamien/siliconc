@@ -17,6 +17,7 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Short Term Implementation Plans
+- Function pointer arithmetic.
 - Add proper dead-code checking and only add function declarations as needed to the
   codegen.
 - Add better main function semantics, ensuring proper return and parameter type.

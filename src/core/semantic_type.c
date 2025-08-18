@@ -89,6 +89,7 @@ bool resolve_enum(SemaContext* c, Object* type_obj)
     for(uint32_t i = 0; i < enum_->values.size; ++i)
     {
         Object* value = enum_->values.data[i];
+        value->enum_val.type = enum_->underlying;
         ASTExpr* val_expr = value->enum_val.value;
         if(val_expr == NULL)
             value->enum_val.const_val = ++last_value;
@@ -127,7 +128,7 @@ static bool resolve_struct(SemaContext* c, Object* type_obj, bool is_pointer)
     bool success = true;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
-        Type* next_ty = struct_->members.data[i]->var.type;
+        Type* next_ty = struct_->members.data[i]->type;
         if(!resolve_type(c, next_ty, false))
         {
             success = false;
@@ -161,7 +162,7 @@ static bool resolve_union(SemaContext* c, Object* type_obj, bool is_pointer)
     bool success = true;
     for(size_t i = 0; i < struct_->members.size; ++i)
     {
-        Type* next_ty = struct_->members.data[i]->var.type;
+        Type* next_ty = struct_->members.data[i]->type;
         if(!resolve_type(c, next_ty, false))
         {
             success = false;

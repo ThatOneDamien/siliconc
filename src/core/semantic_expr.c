@@ -3,12 +3,14 @@
 #define ANALYZE_EXPR_SET_VALID(expr) do { valid &= analyze_expr(c, expr); } while(0)
 #define ANALYZE_EXPR_OR_RET(expr) do { if(!analyze_expr(c, expr)) return false; } while(0)
 #define IF_INVALID_RET() do { if(!valid) return false; } while(0)
+#define ERROR_AND_RET(ret_val, loc, ...) do { sic_error_at(loc, __VA_ARGS__); return ret_val; } while(0)
 
 // Expr kind functions
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary_no_check(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
+static bool analyze_ident(SemaContext* c, ASTExpr* expr);
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
 static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr);
@@ -48,28 +50,15 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     case EXPR_CAST:
         return analyze_cast(c, expr);
     case EXPR_DEFAULT:
-        sic_error_at(expr->loc, "Keyword \'default\' not allowed in this context.");
-        return false;
+        ERROR_AND_RET(false, expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
         return analyze_call(c, expr);
     case EXPR_POSTFIX: {
         ASTExpr* inner = expr->expr.unary.inner;
         return analyze_expr(c, inner) && analyze_incdec(c, expr, inner);
     }
-    case EXPR_PRE_SEMANTIC_IDENT: {
-        // TODO: Add better handling of enum constants.
-        Symbol sym = expr->expr.pre_sema_ident;
-        ASTExprIdent ident = find_obj(c, sym);
-        if(ident == NULL)
-        {
-            sic_error_at(expr->loc, "Reference to undefined symbol \'%s\'.", sym);
-            return false;
-        }
-        expr->expr.ident = ident;
-        expr->type = ident->kind == OBJ_VAR ? ident->var.type : TYPE_INVALID;
-        expr->kind = EXPR_IDENT;
-        return true;
-    }
+    case EXPR_PRE_SEMANTIC_IDENT:
+        return analyze_ident(c, expr);
     case EXPR_UNARY:
         return analyze_unary(c, expr);
     case EXPR_UNRESOLVED_ARR:
@@ -85,6 +74,7 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
     case EXPR_NOP:
+    case EXPR_TYPE_IDENT:
         break;
     }
     SIC_UNREACHABLE();
@@ -142,9 +132,9 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
-        sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
-                   type_to_string(arr->type));
-        return false;
+        ERROR_AND_RET(false, expr->loc, 
+                      "Attempted to access element of non-array and non-pointer type \'%s\'",
+                      type_to_string(arr->type));
     }
 
     if(arr->type->kind == TYPE_SS_ARRAY && index->kind == EXPR_CONSTANT && 
@@ -234,25 +224,22 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     if(call->func_expr->kind != EXPR_IDENT || call->func_expr->expr.ident->kind != OBJ_FUNC)
     {
         SIC_TODO_MSG("Handle complex function calling");
-        sic_error_at(expr->loc, "Identifier in call expression is not a function.");
-        return false;
+        ERROR_AND_RET(false, expr->loc, "Identifier in call expression is not a function.");
     }
 
     Object* func = call->func_expr->expr.ident;
     FuncSignature* sig = func->func.signature;
     if(call->args.size < sig->params.size)
     {
-        sic_error_at(expr->loc, 
-                   "Too few arguments passed to function. Expected %s%u, have %u.",
-                   sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
-        return false;
+        ERROR_AND_RET(false, expr->loc, 
+                      "Too few arguments passed to function. Expected %s%u, have %u.",
+                      sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
-        sic_error_at(expr->loc, 
-                   "Too many arguments passed to function. Expected %u, have %u.",
-                   sig->params.size, call->args.size);
-        return false;
+        ERROR_AND_RET(false, expr->loc, 
+                      "Too many arguments passed to function. Expected %u, have %u.",
+                      sig->params.size, call->args.size);
     }
 
     bool valid = true;
@@ -261,7 +248,7 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
         ASTExpr* arg = call->args.data[i];
         analyze_expr(c, arg);
         valid = valid && !expr_is_bad(arg) &&
-                implicit_cast(c, call->args.data + i, sig->params.data[i]->var.type);
+                implicit_cast(c, call->args.data + i, sig->params.data[i]->type);
     }
 
     for(size_t i = sig->params.size; i < call->args.size; ++i)
@@ -280,6 +267,49 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     expr->type = sig->ret_type;
 
     return valid;
+}
+
+static bool analyze_ident(SemaContext* c, ASTExpr* expr)
+{
+    // TODO: Add better handling of enum constants.
+    Symbol sym = expr->expr.pre_sema_ident;
+    ASTExprIdent ident = find_obj(c, sym);
+    if(ident == NULL)
+        ERROR_AND_RET(false, expr->loc, "Reference to undefined symbol \'%s\'.", sym);
+
+    switch(ident->kind)
+    {
+    case OBJ_ENUM_VALUE:
+        expr->type = ident->enum_val.type;
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        expr->expr.constant.val.i = ident->enum_val.const_val;
+        return true;
+    case OBJ_FUNC:
+        if(BIT_UNSET(c->ident_mask, IDENT_FUNC))
+            ERROR_AND_RET(false, expr->loc, "Function identifier not allowed in this context, expected expression.");
+        SIC_TODO();
+    case OBJ_BITFIELD:
+    case OBJ_ENUM:
+    case OBJ_STRUCT:
+    case OBJ_TYPEDEF:
+    case OBJ_UNION:
+        if(BIT_UNSET(c->ident_mask, IDENT_TYPE))
+            ERROR_AND_RET(false, expr->loc, "Type identifier not allowed in this context, expected expression.");
+        expr->type = NULL;
+        expr->kind = EXPR_TYPE_IDENT;
+        break;
+    case OBJ_VAR:
+        if(BIT_UNSET(c->ident_mask, IDENT_VAR))
+            ERROR_AND_RET(false, expr->loc, "Variable not allowed in this context.");
+        expr->type = ident->type;
+        expr->kind = EXPR_IDENT;
+        break;
+    case OBJ_INVALID:
+        SIC_UNREACHABLE();
+    }
+    expr->expr.ident = ident;
+    return true;
 }
 
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr)
@@ -368,7 +398,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
     expr->kind = EXPR_MEMBER_ACCESS;
     expr->expr.member_access.parent_expr = deref;
     expr->expr.member_access.member = member;
-    expr->type = member->var.type;
+    expr->type = member->type;
     return true;
 }
 
@@ -424,7 +454,7 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
     expr->kind = EXPR_MEMBER_ACCESS;
     expr->expr.member_access.parent_expr = parent;
     expr->expr.member_access.member = member;
-    expr->type = member->var.type;
+    expr->type = member->type;
     return true;
 }
 

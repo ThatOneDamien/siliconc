@@ -3,12 +3,12 @@
 
 #define INITIAL_CAP (1 << 12)
 
-void gen_ir(ModulePTRDA* modules)
+void gen_ir()
 {
     switch(g_args.ir_kind)
     {
     case IR_LLVM: {
-        llvm_codegen(modules);
+        llvm_codegen();
         return;
     }
     case IR_NONE:

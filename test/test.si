@@ -6,9 +6,11 @@ enum Test : int
     D,
 }
 
-pub uint main(int argc, ubyte** argv)
+int* g_intptr = &g_int;
+int g_int = 1;
+
+void test_enum_and_break()
 {
-    // Break and continue testing.
     for(int i = 0; ; ++i)
     {
         if(i & 1) continue;
@@ -21,5 +23,9 @@ pub uint main(int argc, ubyte** argv)
     printf("%d\n", Test.B);
     printf("%d\n", Test.C);
     printf("%d\n", Test.D);
-    return 0;
+}
+
+pub int main(int argc, ubyte** argv)
+{
+    return g_int;
 }
