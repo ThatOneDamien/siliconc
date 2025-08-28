@@ -43,7 +43,7 @@ typedef enum : int8_t
 {
     CAST_GROUP_INVALID = -1,
     CAST_GROUP_VOID = 0,
-    CAST_GROUP_NULLPTR,
+    CAST_GROUP_NULL,
     CAST_GROUP_BOOL,
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
@@ -93,7 +93,17 @@ typedef enum : uint8_t
     CONSTANT_FLOAT,
     CONSTANT_STRING,
     CONSTANT_POINTER,
+    CONSTANT_INIT_LIST,
 } ConstantKind;
+
+typedef enum : uint8_t
+{
+    DEBUG_NONE    = 0,
+    DEBUG_LEXER   = (1 << 0),
+    DEBUG_PARSER  = (1 << 1),
+    DEBUG_SEMA    = (1 << 2),
+    DEBUG_CODEGEN = (1 << 3)
+} DebugOutput;
 
 typedef enum : uint8_t
 {
@@ -114,6 +124,7 @@ typedef enum : uint8_t
     EXPR_DEFAULT,
     EXPR_FUNC_CALL,
     EXPR_IDENT,
+    EXPR_INITIALIZER_LIST,
     EXPR_MEMBER_ACCESS,
     EXPR_NOP,
     EXPR_POSTFIX,
@@ -135,6 +146,13 @@ typedef enum : uint8_t
     FT_STATIC,      // Static library (.a)
     FT_SHARED,      // Shared object/library (.so)
 } FileType;
+
+typedef enum : uint8_t
+{
+    INIT_LIST_ANY,
+    INIT_LIST_STRUCT,
+    INIT_LIST_ARRAY
+} InitListKind;
 
 typedef enum : uint8_t
 {
@@ -161,12 +179,14 @@ typedef enum : uint8_t
 typedef enum : uint8_t
 {
     OBJ_INVALID = 0,
+    OBJ_ALIAS_EXPR,
     OBJ_BITFIELD,
     OBJ_ENUM,
     OBJ_ENUM_VALUE,
     OBJ_FUNC,
     OBJ_STRUCT,
-    OBJ_TYPEDEF,
+    OBJ_TYPE_ALIAS,
+    OBJ_TYPE_DISTINCT,
     OBJ_UNION,
     OBJ_VAR,
 } ObjKind;
@@ -185,7 +205,6 @@ typedef enum : uint8_t
     PREC_ADD_SUB,
     PREC_SHIFTS,
     PREC_MUL_DIV_MOD,
-    PREC_UNARY_PREFIX,
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
@@ -283,8 +302,9 @@ typedef enum : uint8_t
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
+    TOKEN_ALIAS,
+    TOKEN_KEYWORD_START = TOKEN_ALIAS,
     TOKEN_AS,
-    TOKEN_KEYWORD_START = TOKEN_AS,
     TOKEN_BITFIELD,
     TOKEN_BREAK,
     TOKEN_CASE,
@@ -333,12 +353,17 @@ typedef enum : uint8_t
     __TOKEN_COUNT
 } TokenKind;
 
+typedef enum
+{
+    TYPE_CACHE_POINTER = 0,
+    __TYPE_CACHE_CNT
+} TypeCacheSpot;
+
 typedef enum : uint8_t
 {
     TYPE_INVALID = 0,
     TYPE_VOID,
     TYPE_BUILTIN_START  = TYPE_VOID,
-    TYPE_NULLPTR,
     TYPE_BOOL,
     TYPE_NUMERIC_START  = TYPE_BOOL,
 
@@ -361,6 +386,7 @@ typedef enum : uint8_t
     TYPE_BUILTIN_END    = TYPE_DOUBLE,
 
     TYPE_POINTER,
+    TYPE_FUNC_PTR,
     TYPE_SS_ARRAY, // Statically sized array (i.e. an array whose size is known at compile-time)
     TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
     TYPE_PRE_SEMA_ARRAY,
@@ -396,3 +422,10 @@ typedef enum : uint8_t
     UNARY_LOG_NOT,
     UNARY_NEG,
 } UnaryOpKind;
+
+typedef enum : uint8_t
+{
+    VAR_INVALID = 0,
+    VAR_GLOBAL,
+    VAR_LOCAL
+} VarKind;

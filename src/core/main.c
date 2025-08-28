@@ -14,12 +14,7 @@ static void compile(const InputFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
-#define DBG_OUTPUT(x) if(g_args.emit_debug_output) x
-
 static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", global_arena_allocated()); }
-
-#else // !SI_DEBUG
-#define DBG_OUTPUT(x)
 #endif // SI_DEBUG
 
 int main(int argc, char* argv[])
@@ -30,7 +25,7 @@ int main(int argc, char* argv[])
     global_arenas_init();
     process_cmdln_args(argc, argv);
     
-    for(size_t i = 0; i < g_args.input_files.size; ++i)
+    for(uint32_t i = 0; i < g_args.input_files.size; ++i)
         if(!file_exists(g_args.input_files.data[i].path))
             sic_fatal_error("File named '%s' not found.", g_args.input_files.data[i].path);
 
@@ -44,7 +39,7 @@ int main(int argc, char* argv[])
     if(g_args.ir_kind == IR_LLVM)
         llvm_initialize();
 
-    for(size_t i = 0; i < g_args.input_files.size; ++i)
+    for(uint32_t i = 0; i < g_args.input_files.size; ++i)
     {
         InputFile* cur_input = g_args.input_files.data + i; 
         
@@ -123,7 +118,7 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-L/lib");
     da_append(&cmd, "-L/usr/lib");
 
-    for(size_t i = 0; i < g_compiler.linker_inputs.size; ++i)
+    for(uint32_t i = 0; i < g_compiler.linker_inputs.size; ++i)
         da_append(&cmd, g_compiler.linker_inputs.data[i]);
 
     da_append(&cmd, "-lc");
@@ -164,18 +159,25 @@ static void compile(const InputFile* input)
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
     unit->file = input->id;
 
-    DBG_OUTPUT({
-        CompilationUnit debug_unit = *unit;
+#ifdef SI_DEBUG
+    if(g_args.debug_output & DEBUG_LEXER)
+    {
         Lexer debug_lexer;
-        lexer_init_unit(&debug_lexer, &debug_unit);
+        lexer_init_unit(&debug_lexer, unit);
         print_all_tokens(&debug_lexer);
-    });
-    parse_unit(unit);
-    DBG_OUTPUT({
-        print_unit(unit);
-        printf("\n\n\n");
-    })
+        printf("\n\n");
+    }
+#endif
 
+    parse_unit(unit);
+
+#ifdef SI_DEBUG
+    if(g_args.debug_output & DEBUG_PARSER)
+    {
+        print_unit(unit);
+        printf("\n\n");
+    }
+#endif
     semantic_declaration(unit);
 }
 

@@ -1,31 +1,5 @@
-enum Test : int
+pub int main()
 {
-    A,
-    B,
-    C = 10,
-    D,
-}
-
-int* g_intptr = &g_int;
-int g_int = 1;
-
-void test_enum_and_break()
-{
-    for(int i = 0; ; ++i)
-    {
-        if(i & 1) continue;
-        if(i >= 1000) break;
-        printf("%d\n", i);
-    }
-
-    // Enum testing.
-    printf("%d\n", Test.A);
-    printf("%d\n", Test.B);
-    printf("%d\n", Test.C);
-    printf("%d\n", Test.D);
-}
-
-pub int main(int argc, ubyte** argv)
-{
-    return g_int;
+    int* a = nullptr;
+    return 0; 
 }

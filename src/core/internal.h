@@ -10,7 +10,6 @@ extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* g_type_void;
-extern Type* g_type_nullptr;
 extern Type* g_type_bool;
 extern Type* g_type_ubyte;
 extern Type* g_type_byte;
@@ -96,6 +95,7 @@ static inline Symbol sym_map_get(const char* str, TokenKind* kind)
 Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(const Type* orig);
 Type*       type_pointer_to(Type* base);
+Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
 bool        type_equal(Type* t1, Type* t2);
 uint32_t    type_size(Type* ty);
@@ -113,14 +113,14 @@ static inline bool type_is_integer(Type* ty)
 
 static inline bool type_is_signed(Type* ty)
 {
-    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
-    return type_is_integer(ty) && !(ty->kind & 1);
+    static_assert((TYPE_BYTE & 1) == 1, "Adjust type methods.");
+    return type_is_integer(ty) && (ty->kind & 1);
 }
 
 static inline bool type_is_unsigned(Type* ty)
 {
-    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
-    return type_is_integer(ty) && (ty->kind & 1);
+    static_assert((TYPE_UBYTE & 1) == 0, "Adjust type methods.");
+    return type_is_integer(ty) && !(ty->kind & 1);
 }
 
 static inline bool type_is_float(Type* ty)

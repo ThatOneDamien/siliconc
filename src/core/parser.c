@@ -22,8 +22,10 @@ static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type
 static bool      parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
 static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
 static ObjAccess parse_access(Lexer* l);
-static Object*   parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access);
+static Object*   parse_alias(Lexer* l, ObjAccess access);
 static Object*   parse_enum_decl(Lexer* l, ObjAccess access);
+static Object*   parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access);
+static Object*   parse_typedef(Lexer* l, ObjAccess access);
 
 // Type and attributes
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
@@ -59,6 +61,7 @@ static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond);
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
 static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
+static ASTExpr* parse_initializer_list(Lexer* l);
 static ASTExpr* parse_identifier_expr(Lexer* l);
 static ASTExpr* parse_paren_expr(Lexer* l);
 static ASTExpr* parse_unary_prefix(Lexer* l);
@@ -147,6 +150,14 @@ static bool parse_top_level(Lexer* l)
     ObjKind kind = OBJ_UNION;
     switch(peek(l)->kind)
     {
+    case TOKEN_ALIAS: {
+        advance(l);
+        Object* alias = parse_alias(l, access);
+        if(alias == NULL)
+            return false;
+        da_append(&l->unit->aliases, alias);
+        return true;
+    }
     case TOKEN_BITFIELD:
         SIC_TODO();
     case TOKEN_ENUM: {
@@ -171,8 +182,14 @@ static bool parse_top_level(Lexer* l)
         da_append(&l->unit->types, struct_);
         return true;
     }
-    case TOKEN_TYPEDEF:
-        SIC_TODO();
+    case TOKEN_TYPEDEF: {
+        advance(l);
+        Object* typedef_ = parse_typedef(l, access);
+        if(typedef_ == NULL)
+            return false;
+        da_append(&l->unit->types, typedef_);
+        return true;
+    }
     default: {
         Type* type;
         ObjAttr attribs = ATTR_NONE;
@@ -202,6 +219,7 @@ static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, Obj
     ObjFunc* comps = &func->func;
     comps->signature = CALLOC_STRUCT(FuncSignature);
     comps->signature->ret_type = ret_type;
+    func->type = type_func_ptr(comps->signature);
 
     advance_many(l, 2);
     if(!parse_func_params(l, &comps->signature->params, &comps->signature->is_var_arg))
@@ -228,7 +246,7 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
     while(!tok_equal(l, TOKEN_RPAREN))
     {
         if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(false, "No closing parentheses.");
+            ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
         
         if(params->size > 0)
             consume(l, TOKEN_COMMA);
@@ -265,6 +283,7 @@ static bool global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAt
     Object* var = new_obj(l, OBJ_VAR, access, attribs);
     ObjVar* comps = &var->var;
     var->type = type;
+    comps->kind = VAR_GLOBAL;
     advance(l);
 
     if(try_consume(l, TOKEN_ASSIGN))
@@ -295,50 +314,14 @@ static ObjAccess parse_access(Lexer* l)
     return access;
 }
 
-static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
+static Object* parse_alias(Lexer* l, ObjAccess access)
 {
-    Object* obj = new_obj(l, kind, access, ATTR_NONE);
-    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
-
-    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
-    if(tok_equal(l, TOKEN_RBRACE))
-        ERROR_AND_RET(NULL, "Struct declaration is empty.");
-
-    uint32_t member_idx = 0;
-    ObjectDA* members = &obj->struct_.members;
-    while(!try_consume(l, TOKEN_RBRACE))
-    {
-        Type* ty;
-        if(!parse_decl_type(l, &ty, NULL))
-            return NULL;
-
-        do
-        {
-            // For now we don't allow anonymous members. This will change
-            EXPECT_OR_RET(TOKEN_IDENT, obj);
-
-            Symbol this_sym = peek(l)->sym;
-            for(uint32_t i = 0; i < member_idx; ++i)
-            {
-                Symbol other = members->data[i]->symbol;
-                if(other == this_sym)
-                {
-                    parser_error(l, "Duplicate member \'%s\'", peek(l)->sym);
-                    goto SKIP_DUPLICATE;
-                }
-            }
-            Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
-            member->type = ty;
-            member->var.member_idx = member_idx++;
-            da_append(members, member);
-SKIP_DUPLICATE:
-            advance(l);
-        } while(try_consume(l, TOKEN_COMMA));
-
-        CONSUME_OR_RET(TOKEN_SEMI, obj);
-    }
-
-    return obj;
+    Object* alias = new_obj(l, OBJ_ALIAS_EXPR, access, ATTR_NONE);
+    advance(l);
+    CONSUME_OR_RET(TOKEN_ASSIGN, NULL);
+    ASSIGN_EXPR_OR_RET(alias->alias_expr, NULL);
+    CONSUME_OR_RET(TOKEN_SEMI, NULL);
+    return alias;
 }
 
 static Object* parse_enum_decl(Lexer* l, ObjAccess access)
@@ -356,20 +339,15 @@ static Object* parse_enum_decl(Lexer* l, ObjAccess access)
 
     CONSUME_OR_RET(TOKEN_LBRACE, NULL);
     if(tok_equal(l, TOKEN_RBRACE))
-        ERROR_AND_RET(NULL, "Enum declaration is empty.");
+    {
+        sic_error_at(obj->loc, "Enum declaration is empty.");
+        return NULL;
+    }
 
     ObjectDA* members = &obj->struct_.members;
     while(!try_consume(l, TOKEN_RBRACE))
     {
         EXPECT_OR_RET(TOKEN_IDENT, obj);
-
-        Symbol this_sym = peek(l)->sym;
-        for(uint32_t i = 0; i < members->size; ++i)
-        {
-            Symbol other = members->data[i]->symbol;
-            if(other == this_sym)
-                ERROR_AND_RET(obj, "Duplicate member \'%s\'", peek(l)->sym);
-        }
         Object* member = new_obj(l, OBJ_ENUM_VALUE, access, ATTR_NONE);
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
@@ -381,6 +359,53 @@ static Object* parse_enum_decl(Lexer* l, ObjAccess access)
 
     return obj;
     
+}
+
+static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
+{
+    Object* obj = new_obj(l, kind, access, ATTR_NONE);
+    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
+
+    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
+    if(tok_equal(l, TOKEN_RBRACE))
+    {
+        sic_error_at(obj->loc, "Struct/Union declaration is empty.");
+        return NULL;
+    }
+
+    ObjectDA* members = &obj->struct_.members;
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        Type* ty;
+        if(!parse_decl_type(l, &ty, NULL))
+            return NULL;
+
+        do
+        {
+            // For now we don't allow anonymous members. This will change
+            EXPECT_OR_RET(TOKEN_IDENT, obj);
+            Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
+            member->type = ty;
+            member->var.member_idx = members->size;
+            da_append(members, member);
+            advance(l);
+        } while(try_consume(l, TOKEN_COMMA));
+
+        CONSUME_OR_RET(TOKEN_SEMI, obj);
+    }
+
+    return obj;
+}
+
+static Object* parse_typedef(Lexer* l, ObjAccess access)
+{
+    Object* type = new_obj(l, OBJ_TYPE_ALIAS, access, ATTR_NONE);
+    advance(l);
+    CONSUME_OR_RET(TOKEN_ASSIGN, NULL);
+    if(!parse_decl_type(l, &type->type_alias, NULL))
+        return NULL;
+    CONSUME_OR_RET(TOKEN_SEMI, NULL);
+    return type;
 }
 
 static bool parse_attribute(Lexer* l, ObjAttr* attribs)
@@ -462,28 +487,6 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
         }
         parser_error(l, "Expected typename.");
         return false;
-
-        // if(ty == NULL && tok_equal(l, TOKEN_IDENT))
-        // {
-        //     SIC_TODO_MSG("Come back to this.");
-        //     ty = CALLOC_STRUCT(Type);
-        //     ty->kind = TYPE_STRUCT;
-        //     ty->status = STATUS_UNRESOLVED;
-        //     ty->unresolved.sym = peek(l)->sym;
-        //     ty->unresolved.loc = peek(l)->loc;
-        //     ty->qualifiers = qual;
-        //     *type = ty;
-        //     advance(l);
-        //     if(ambiguous)
-        //     {
-        //         static TokenKind bad_toks[] = { TOKEN_LBRACKET };
-        //         TokenKind next = peek(l)->kind;
-        //         for(size_t i = 0; i < sizeof(bad_toks) / sizeof(bad_toks[0]); ++i)
-        //             if(next == bad_toks[i])
-        //                 return false;
-        //     }
-        //     return true;
-        // }
     }
 
     if(ambiguous && expr != NULL)
@@ -491,7 +494,7 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
         SourceLoc ident_loc = peek(l)->loc;
         Symbol ident_sym = peek(l)->sym;
         ASTExpr* temp_buf[64];
-        size_t dims = 0;
+        uint32_t dims = 0;
         advance(l);
         while(try_consume(l, TOKEN_LBRACKET))
         {
@@ -513,7 +516,7 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             ty->unresolved.sym = ident_sym;
             ty->unresolved.loc = ident_loc;
             ty->qualifiers = qual;
-            for(size_t i = 0; i < dims; ++i)
+            for(uint32_t i = 0; i < dims; ++i)
                 ty = type_array_of(ty, temp_buf[i]);
         }
         else
@@ -522,7 +525,7 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             cur->kind = EXPR_PRE_SEMANTIC_IDENT;
             cur->loc = ident_loc;
             cur->expr.pre_sema_ident = ident_sym;
-            for(size_t i = 0; i < dims; ++i)
+            for(uint32_t i = 0; i < dims; ++i)
             {
                 ASTExpr* next = CALLOC_STRUCT(ASTExpr);
                 cur->loc = temp_buf[i]->loc;
@@ -646,7 +649,7 @@ static ASTStmt* parse_stmt_block(Lexer* l)
     while(!try_consume(l, TOKEN_RBRACE))
     {
         if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(BAD_STMT, "No closing }.");
+            ERROR_AND_RET(BAD_STMT, "Encountered end of file, expected '}'.");
         cur_stmt->next = parse_stmt(l);
         if(!stmt_is_bad(cur_stmt->next))
             cur_stmt = cur_stmt->next;
@@ -747,7 +750,7 @@ static ASTStmt* parse_switch(Lexer* l)
     while(!try_consume(l, TOKEN_RBRACE))
     {
         if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(BAD_STMT, "No closing parentheses.");
+            ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
         else if(tok_equal(l, TOKEN_DEFAULT))
         {
             advance(l);
@@ -839,6 +842,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     decl_stmt->loc = peek(l)->loc;
     Object* var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
     var->type = type;
+    var->var.kind = VAR_LOCAL;
     decl_stmt->stmt.single_decl.obj = var;
     ASTExpr* expr = NULL;
     advance(l);
@@ -1014,6 +1018,46 @@ static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
     return result;
 }
 
+static ASTExpr* parse_initializer_list(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_INITIALIZER_LIST);
+    ASTExprInitList* list = &expr->expr.init_list;
+    advance(l);
+    while(true)
+    {
+        switch(peek(l)->kind)
+        {
+        case TOKEN_IDENT:
+            if(peek_next(l)->kind != TOKEN_ASSIGN)
+                break;
+            da_resize(list, list->size + 1);
+            list->data[list->size - 1].arr_index = parse_identifier_expr(l);
+            advance(l);
+            break;
+        case TOKEN_LBRACKET:
+            da_resize(list, list->size + 1);
+            list->data[list->size - 1].arr_index = parse_expr_with_prec(l, PREC_TERNARY, NULL);
+            CONSUME_OR_RET(TOKEN_RBRACKET, BAD_EXPR);
+            CONSUME_OR_RET(TOKEN_ASSIGN, BAD_EXPR);
+            break;
+        case TOKEN_RBRACE:
+            goto OUTER;
+        case TOKEN_EOF:
+            ERROR_AND_RET(BAD_EXPR, "Encountered end of file, expected '}'.");
+        default:
+            da_resize(list, list->size + 1);
+            break;
+        }
+        ASSIGN_EXPR_OR_RET(list->data[list->size - 1].init_value, BAD_EXPR);
+
+        if(!try_consume(l, TOKEN_COMMA))
+            break;
+    }
+OUTER:
+    CONSUME_OR_RET(TOKEN_RBRACE, BAD_EXPR);
+    return expr;
+}
+
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
@@ -1036,7 +1080,7 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_UNARY);
     TokenKind kind = peek(l)->kind;
     advance(l);
-    expr->expr.unary.inner = parse_expr_with_prec(l, PREC_UNARY_PREFIX, NULL);
+    expr->expr.unary.inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
     if(expr_is_bad(expr->expr.unary.inner))
         return BAD_EXPR;
     expr->expr.unary.kind = tok_to_unary_op(kind);
@@ -1164,9 +1208,9 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 static ASTExpr* parse_nullptr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_POINTER;
+    expr->type = type_pointer_to(g_type_void);
     expr->expr.constant.val.i = 0;
-    expr->type = g_type_nullptr;
+    expr->expr.constant.kind = CONSTANT_POINTER;
     advance(l);
     return expr;
 }
@@ -1287,8 +1331,8 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
     [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
     [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
-    [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_UNARY_PREFIX },
+    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_NONE },
+    [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_NONE },
     [TOKEN_BIT_OR]          = { NULL, parse_binary, PREC_BIT_OR },
     [TOKEN_BIT_XOR]         = { NULL, parse_binary, PREC_BIT_XOR },
     [TOKEN_ASSIGN]          = { NULL, parse_binary, PREC_ASSIGN },
@@ -1296,7 +1340,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
-    // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
+    [TOKEN_LBRACE]          = { parse_initializer_list, NULL, PREC_NONE },
     [TOKEN_LBRACKET]        = { NULL, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
@@ -1327,7 +1371,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_INCREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
     [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
 
-    [TOKEN_AS]              = { NULL, parse_cast, PREC_UNARY_PREFIX },
+    [TOKEN_AS]              = { NULL, parse_cast, PREC_PRIMARY_POSTFIX },
     [TOKEN_DEFAULT]         = { parse_default_expr, NULL, PREC_NONE },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },

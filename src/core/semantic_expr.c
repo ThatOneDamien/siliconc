@@ -8,7 +8,6 @@
 // Expr kind functions
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
-static bool analyze_binary_no_check(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
 static bool analyze_ident(SemaContext* c, ASTExpr* expr);
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr);
@@ -41,6 +40,9 @@ static void promote_int_type(SemaContext* c, ASTExpr** expr);
 
 bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
 {
+    if(expr->evaluated)
+        return expr->kind != EXPR_INVALID;
+    expr->evaluated = true;
     switch(expr->kind)
     {
     case EXPR_ARRAY_ACCESS:
@@ -53,6 +55,8 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
         ERROR_AND_RET(false, expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
         return analyze_call(c, expr);
+    case EXPR_INITIALIZER_LIST:
+        ERROR_AND_RET(false, expr->loc, "Initializer list not allowed in this context.");
     case EXPR_POSTFIX: {
         ASTExpr* inner = expr->expr.unary.inner;
         return analyze_expr(c, inner) && analyze_incdec(c, expr, inner);
@@ -66,7 +70,7 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(c, expr);
     case EXPR_CONSTANT:
-        return true;
+        return resolve_type(c, expr->type);
     case EXPR_INVALID:
         return false;
     case EXPR_TERNARY:
@@ -80,53 +84,14 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-bool resolve_default(ASTExpr* expr, Type* type)
-{
-    expr->kind = EXPR_CONSTANT;
-    expr->type = type;
-    switch(type->kind)
-    {
-    case TYPE_BOOL:
-    case TYPE_BYTE:
-    case TYPE_UBYTE:
-    case TYPE_SHORT:
-    case TYPE_USHORT:
-    case TYPE_INT:
-    case TYPE_UINT:
-    case TYPE_LONG:
-    case TYPE_ULONG:
-    case TYPE_POINTER:
-        expr->expr.constant.kind = CONSTANT_INTEGER;
-        expr->expr.constant.val.i = 0;
-        return true;
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
-        expr->expr.constant.kind = CONSTANT_FLOAT;
-        expr->expr.constant.val.i = 0;
-        return true;
-    case TYPE_SS_ARRAY:
-    case TYPE_DS_ARRAY:
-    case TYPE_ENUM:
-    case TYPE_STRUCT:
-    case TYPE_TYPEDEF:
-    case TYPE_UNION:
-        SIC_TODO();
-    case TYPE_INVALID:
-    case TYPE_VOID:
-    case TYPE_NULLPTR:
-    case TYPE_PRE_SEMA_ARRAY:
-    case __TYPE_COUNT:
-        SIC_UNREACHABLE();
-    }
-    return false;
-}
-
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
     bool valid = true;
     ASTExpr* arr = expr->expr.array_access.array_expr;
     ASTExpr* index = expr->expr.array_access.index_expr;
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_SET_VALID(arr);
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_SET_VALID(index);
     IF_INVALID_RET();
 
@@ -152,20 +117,19 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 static inline bool analyze_binary(SemaContext* c, ASTExpr* expr)
 {
     bool valid = true;
+    ASTExpr** lhs = &expr->expr.binary.lhs;
+    ASTExpr** rhs = &expr->expr.binary.rhs;
     ASTExpr* left = expr->expr.binary.lhs;
     ASTExpr* right = expr->expr.binary.rhs;
     BinaryOpKind kind = expr->expr.binary.kind;
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_SET_VALID(left);
     if(kind != BINARY_ASSIGN || right->kind != EXPR_DEFAULT)
+    {
+        c->ident_mask = IDENT_VAR;
         ANALYZE_EXPR_SET_VALID(right);
+    }
     IF_INVALID_RET();
-    return analyze_binary_no_check(c, expr);
-}
-
-static bool analyze_binary_no_check(SemaContext* c, ASTExpr* expr)
-{
-    ASTExpr** lhs = &expr->expr.binary.lhs;
-    ASTExpr** rhs = &expr->expr.binary.rhs;
     switch(expr->expr.binary.kind)
     {
     case BINARY_ADD:
@@ -219,13 +183,8 @@ static bool analyze_binary_no_check(SemaContext* c, ASTExpr* expr)
 static bool analyze_call(SemaContext* c, ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
+    c->ident_mask = IDENT_VAR | IDENT_FUNC;
     ANALYZE_EXPR_OR_RET(call->func_expr);
-
-    if(call->func_expr->kind != EXPR_IDENT || call->func_expr->expr.ident->kind != OBJ_FUNC)
-    {
-        SIC_TODO_MSG("Handle complex function calling");
-        ERROR_AND_RET(false, expr->loc, "Identifier in call expression is not a function.");
-    }
 
     Object* func = call->func_expr->expr.ident;
     FuncSignature* sig = func->func.signature;
@@ -243,19 +202,15 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     }
 
     bool valid = true;
-    for(size_t i = 0; i < sig->params.size; ++i)
-    {
-        ASTExpr* arg = call->args.data[i];
-        analyze_expr(c, arg);
-        valid = valid && !expr_is_bad(arg) &&
-                implicit_cast(c, call->args.data + i, sig->params.data[i]->type);
-    }
+    for(uint32_t i = 0; i < sig->params.size; ++i)
+        if(!implicit_cast(c, call->args.data + i, sig->params.data[i]->type))
+            valid = false;
 
-    for(size_t i = sig->params.size; i < call->args.size; ++i)
+    for(uint32_t i = sig->params.size; i < call->args.size; ++i)
     {
         ASTExpr* arg = call->args.data[i];
-        analyze_expr(c, arg);
-        if(expr_is_bad(arg))
+        
+        if(!analyze_expr(c, arg))
         {
             valid = false;
             continue;
@@ -279,28 +234,34 @@ static bool analyze_ident(SemaContext* c, ASTExpr* expr)
 
     switch(ident->kind)
     {
+    case OBJ_ALIAS_EXPR:
+        SIC_TODO();
     case OBJ_ENUM_VALUE:
-        expr->type = ident->enum_val.type;
+        expr->type = ident->type;
         expr->kind = EXPR_CONSTANT;
         expr->expr.constant.kind = CONSTANT_INTEGER;
         expr->expr.constant.val.i = ident->enum_val.const_val;
         return true;
     case OBJ_FUNC:
-        if(BIT_UNSET(c->ident_mask, IDENT_FUNC))
+        if(BIT_IS_UNSET(c->ident_mask, IDENT_FUNC))
             ERROR_AND_RET(false, expr->loc, "Function identifier not allowed in this context, expected expression.");
-        SIC_TODO();
+        expr->type = ident->type;
+        expr->kind = EXPR_IDENT;
+        break;
     case OBJ_BITFIELD:
     case OBJ_ENUM:
-    case OBJ_STRUCT:
-    case OBJ_TYPEDEF:
-    case OBJ_UNION:
-        if(BIT_UNSET(c->ident_mask, IDENT_TYPE))
+        if(BIT_IS_UNSET(c->ident_mask, IDENT_ENUM))
             ERROR_AND_RET(false, expr->loc, "Type identifier not allowed in this context, expected expression.");
         expr->type = NULL;
         expr->kind = EXPR_TYPE_IDENT;
         break;
+    case OBJ_STRUCT:
+    case OBJ_TYPE_ALIAS:
+    case OBJ_TYPE_DISTINCT:
+    case OBJ_UNION:
+        ERROR_AND_RET(false, expr->loc, "Type identifier not an enum.");
     case OBJ_VAR:
-        if(BIT_UNSET(c->ident_mask, IDENT_VAR))
+        if(BIT_IS_UNSET(c->ident_mask, IDENT_VAR))
             ERROR_AND_RET(false, expr->loc, "Variable not allowed in this context.");
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
@@ -318,11 +279,16 @@ static bool analyze_ternary(SemaContext* c, ASTExpr* expr)
     ASTExpr* cond = expr->expr.ternary.cond_expr;
     ASTExpr* then = expr->expr.ternary.then_expr;
     ASTExpr* elss = expr->expr.ternary.else_expr;
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_SET_VALID(cond);
     if(then != NULL)
+    {
+        c->ident_mask = IDENT_VAR;
         ANALYZE_EXPR_SET_VALID(then);
+    }
     else
         then = cond;
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_SET_VALID(elss);
     IF_INVALID_RET();
 
@@ -338,15 +304,19 @@ EXIT:
 
 static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 {
-    ASTExpr* inner = expr->expr.unary.inner;
+    ASTExprUnary* unary = &expr->expr.unary;
+    ASTExpr* inner = unary->inner;
+    c->ident_mask = unary->kind == UNARY_ADDR_OF ? 
+                        IDENT_VAR | IDENT_FUNC :
+                        IDENT_VAR;
     ANALYZE_EXPR_OR_RET(inner);
     
-    switch(expr->expr.unary.kind)
+    switch(unary->kind)
     {
     case UNARY_ADDR_OF:
         return analyze_addr_of(c, expr, inner);
     case UNARY_BIT_NOT:
-        return analyze_bit_not(c, expr, &expr->expr.unary.inner);
+        return analyze_bit_not(c, expr, &unary->inner);
     case UNARY_DEC:
     case UNARY_INC:
         return analyze_incdec(c, expr, inner);
@@ -365,7 +335,7 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 static Object* resolve_member(Type* type, ASTExprUAccess* access)
 {
     ObjectDA* members = &type->user_def->struct_.members;
-    for(size_t i = 0; i < members->size; ++i)
+    for(uint32_t i = 0; i < members->size; ++i)
         if(members->data[i]->symbol == access->member_sym)
             return members->data[i];
     sic_error_at(access->member_loc, "Type \'%s\' has no member \'%s\'.",
@@ -377,6 +347,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
+    c->ident_mask = IDENT_VAR;
     ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->type->kind != TYPE_POINTER || !type_is_user_def(parent->type->pointer_base))
@@ -406,13 +377,13 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
+    c->ident_mask = IDENT_VAR | IDENT_ENUM;
     ANALYZE_EXPR_OR_RET(parent);
 
-    if(parent->kind == EXPR_IDENT && parent->expr.ident->kind == OBJ_ENUM)
+    if(parent->kind == EXPR_TYPE_IDENT)
     {
-        resolve_enum(c, parent->expr.ident);
         ObjectDA* values = &parent->expr.ident->enum_.values;
-        for(size_t i = 0; i < values->size; ++i)
+        for(uint32_t i = 0; i < values->size; ++i)
             if(values->data[i]->symbol == uaccess->member_sym)
             {
                 expr->kind = EXPR_CONSTANT;
@@ -634,14 +605,10 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
-    ASTExpr* right = *rhs;
     if(!expr_is_lvalue(left))
         return false;
     expr->type = left->type;
-    if(right->kind == EXPR_DEFAULT && !resolve_default(right, left->type))
-       return false;
-
-    return implicit_cast(c, &expr->expr.binary.rhs, left->type);
+    return implicit_cast(c, rhs, left->type);
 }
 
 static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
@@ -669,7 +636,8 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTE
     new_rhs->expr.binary.rhs = *rhs;
     expr->expr.binary.kind = BINARY_ASSIGN;
     *rhs = new_rhs;
-    analyze_binary_no_check(c, new_rhs);
+    analyze_binary(c, new_rhs);
+    new_rhs->evaluated = true;
     return !expr_is_bad(new_rhs) && analyze_assign(c, expr, lhs, rhs);
 }
 
@@ -714,7 +682,7 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
         return true;
     default:
         sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
-                   type_to_string(inner->type));
+                     type_to_string(inner->type));
         return false;
     }
 }

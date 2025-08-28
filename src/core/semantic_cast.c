@@ -10,8 +10,8 @@ struct CastParams
     ASTExpr*     inner;
     Type*        from;
     Type*        to;
-    CastGroup    from_group;
-    CastGroup    to_group;
+    TypeKind     from_kind;
+    TypeKind     to_kind;
 };
 
 struct CastRule
@@ -23,10 +23,12 @@ struct CastRule
 static CastGroup s_type_to_group[__TYPE_COUNT];
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
+static inline CastGroup type_to_group(Type* type);
+
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
     ASTExpr* inner = cast->expr.cast.inner;
-    if(!analyze_expr(c, inner))
+    if(!resolve_type(c, cast->type) || !analyze_expr(c, inner))
         return false;
     CastParams params;
     params.sema_context = c;
@@ -34,16 +36,16 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     params.inner = inner;
     params.from  = inner->type;
     params.to    = cast->type;
-    params.from_group = s_type_to_group[params.from->kind];
-    params.to_group   = s_type_to_group[params.to->kind];
+    params.from_kind = params.from->kind;
+    params.to_kind   = params.to->kind;
     if(type_equal(params.from, params.to))
     {
         // Essentially delete the cast expression if it does nothing.
-        memcpy(cast, cast->expr.cast.inner, sizeof(ASTExpr));
+        memcpy(cast, inner, sizeof(ASTExpr));
         return true;
     }
 
-    CastRule rule = s_rule_table[params.from_group][params.to_group];
+    CastRule rule = s_rule_table[type_to_group(params.from)][type_to_group(params.to)];
     if(rule.able == NULL)
     {
         sic_error_at(cast->loc, "Casting from %s to %s is not allowed.",
@@ -55,7 +57,7 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
         return false;
 
     if(rule.convert != NULL)
-        rule.convert(cast, cast->expr.cast.inner);
+        rule.convert(cast, inner);
 
     return true;
 }
@@ -63,18 +65,18 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
 bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
 {
     ASTExpr* prev = *expr_to_cast;
-    if(expr_is_bad(prev))
+    if(!analyze_expr(c, prev) || !resolve_type(c, desired))
         return false;
     CastParams params;
     params.sema_context = c;
     params.from = prev->type;
     params.to   = desired;
-    params.from_group = s_type_to_group[params.from->kind];
-    params.to_group   = s_type_to_group[params.to->kind];
+    params.from_kind = params.from->kind;
+    params.to_kind   = params.to->kind;
     if(type_equal(params.from, params.to))
         return true;
 
-    CastRule rule = s_rule_table[params.from_group][params.to_group];
+    CastRule rule = s_rule_table[type_to_group(params.from)][type_to_group(params.to)];
     if(rule.able == NULL)
     {
         sic_error_at(prev->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
@@ -123,9 +125,9 @@ void implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast)
         SIC_UNREACHABLE();
 }
 
-static bool cast_rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit) { SIC_UNREACHABLE(); }
-static bool cast_rule_always(UNUSED CastParams* params, UNUSED bool explicit) { return true; }
-static bool cast_rule_explicit_only(CastParams* params, bool explicit)
+static bool rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit) { SIC_UNREACHABLE(); }
+static bool rule_always(UNUSED CastParams* params, UNUSED bool explicit) { return true; }
+static bool rule_explicit_only(CastParams* params, bool explicit)
 {
     if(explicit)
         return true;
@@ -134,9 +136,9 @@ static bool cast_rule_explicit_only(CastParams* params, bool explicit)
     return false;
 }
 
-static bool cast_rule_size_change(CastParams* params, bool explicit)
+static bool rule_size_change(CastParams* params, bool explicit)
 {
-    if(explicit || params->expr)
+    if(explicit)
         return true;
 
     TypeKind from_kind = params->from->kind;
@@ -154,12 +156,17 @@ static bool cast_rule_size_change(CastParams* params, bool explicit)
     return false;
 }
 
-static bool cast_rule_ptr_to_ptr(CastParams* params, bool explicit)
+static bool rule_ptr_to_ptr(CastParams* params, bool explicit)
 {
+    if(explicit)
+        return true;
     Type* from_ptr = params->from->pointer_base;
     Type* to_ptr   = params->to->pointer_base;
-    if(explicit || from_ptr->kind == TYPE_VOID || to_ptr->kind == TYPE_VOID)
+    if((params->from_kind == TYPE_POINTER && from_ptr->kind == TYPE_VOID) || 
+       (params->to_kind == TYPE_POINTER && to_ptr->kind == TYPE_VOID))
        return true;
+
+    // if(params->)
 
     bool from_is_arr = type_is_array(from_ptr);
     if(type_is_array(to_ptr))
@@ -181,7 +188,7 @@ ERR:
     return false;
 }
 
-static bool cast_rule_string_lit(CastParams* params, bool explicit)
+static bool rule_string_lit(CastParams* params, bool explicit)
 {
     (void)explicit;
     if(params->inner->kind == EXPR_CONSTANT && 
@@ -195,11 +202,6 @@ static bool cast_rule_string_lit(CastParams* params, bool explicit)
 
 
 // Casting functions
-
-static void cast_nullptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
-{
-    memcpy(cast, inner, sizeof(ASTExpr));
-}
 
 static void cast_any_to_void(ASTExpr* cast, ASTExpr* inner)
 {
@@ -283,6 +285,7 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner)
     if(inner->kind == EXPR_CONSTANT)
     {
         // Handle constants
+        SIC_TODO();
     }
 
     cast->expr.cast.kind = CAST_INT_TO_PTR;
@@ -332,10 +335,12 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner)
 
 static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
 {
-    (void)cast;
     if(inner->kind == EXPR_CONSTANT)
     {
-        // Handle constants
+        cast->kind = EXPR_CONSTANT;
+        cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
+        cast->expr.constant.kind = CONSTANT_BOOL;
+        return;
     }
 
     ASTExpr* intermediate = MALLOC_STRUCT(ASTExpr);
@@ -350,7 +355,10 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
 {
     if(inner->kind == EXPR_CONSTANT)
     {
-        // Handle constants
+        cast->kind = EXPR_CONSTANT;
+        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.kind = CONSTANT_INTEGER;
+        return;
     }
 
     cast->expr.cast.kind = CAST_PTR_TO_INT;
@@ -358,44 +366,47 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
 
 static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 {
-    (void)inner;
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        cast->kind = EXPR_CONSTANT;
+        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.kind = CONSTANT_POINTER;
+        return;
+    }
     cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
 
-#define NOALLW { NULL                   , NULL }
-#define NOTDEF { cast_rule_not_defined  , NULL }
-#define NULPTR { cast_rule_always       , cast_nullptr_to_ptr }
-#define TOVOID { cast_rule_explicit_only, cast_any_to_void }
-#define INTINT { cast_rule_size_change  , cast_int_to_int }
-#define INTBOO { cast_rule_always       , cast_int_to_bool }
-#define INTFLT { cast_rule_always       , cast_int_to_float }
-#define INTPTR { cast_rule_explicit_only, cast_int_to_ptr }
-#define FLTFLT { cast_rule_size_change  , cast_float_to_float }
-#define FLTBOO { cast_rule_explicit_only, cast_float_to_bool }
-#define FLTINT { cast_rule_explicit_only, cast_float_to_int }
-#define PTRBOO { cast_rule_always       , cast_ptr_to_bool }
-#define PTRINT { cast_rule_explicit_only, cast_ptr_to_int }
-#define PTRPTR { cast_rule_ptr_to_ptr   , cast_ptr_to_ptr }
-#define STRLIT { cast_rule_string_lit   , cast_ptr_to_ptr }
+#define NOALLW { NULL              , NULL }
+#define NOTDEF { rule_not_defined  , NULL }
+#define TOVOID { rule_explicit_only, cast_any_to_void }
+#define INTINT { rule_size_change  , cast_int_to_int }
+#define INTBOO { rule_always       , cast_int_to_bool }
+#define INTFLT { rule_always       , cast_int_to_float }
+#define INTPTR { rule_explicit_only, cast_int_to_ptr }
+#define FLTFLT { rule_size_change  , cast_float_to_float }
+#define FLTBOO { rule_explicit_only, cast_float_to_bool }
+#define FLTINT { rule_explicit_only, cast_float_to_int }
+#define PTRBOO { rule_always       , cast_ptr_to_bool }
+#define PTRINT { rule_explicit_only, cast_ptr_to_int }
+#define PTRPTR { rule_ptr_to_ptr   , cast_ptr_to_ptr }
+#define STRLIT { rule_string_lit   , cast_ptr_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    //                       VOID    NULLPTR BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT
+    //                       VOID    NULL_T  BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT
     [CAST_GROUP_VOID]    = { NOTDEF, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_NULLPTR] = { NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NULPTR, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_BOOL]    = { TOVOID, NOTDEF, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_INT]     = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_FLOAT]   = { TOVOID, NOTDEF, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_PTR]     = { TOVOID, NOTDEF, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW, NOALLW },
     [CAST_GROUP_ARRAY]   = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, STRLIT, NOALLW, NOALLW, NOALLW },
-    [CAST_GROUP_ENUM]    = { TOVOID, NOTDEF, INTBOO, INTINT, NOALLW, STRLIT, NOALLW, NOALLW, NOALLW },
+    [CAST_GROUP_ENUM]    = { TOVOID, NOTDEF, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW },
     [CAST_GROUP_STRUCT]  = { TOVOID, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_INVALID]  = CAST_GROUP_INVALID,
     [TYPE_VOID]     = CAST_GROUP_VOID,
-    [TYPE_NULLPTR]  = CAST_GROUP_NULLPTR,
     [TYPE_BOOL]     = CAST_GROUP_BOOL,
     [TYPE_BYTE]     = CAST_GROUP_INT,
     [TYPE_UBYTE]    = CAST_GROUP_INT,
@@ -408,10 +419,17 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_FLOAT]    = CAST_GROUP_FLOAT,
     [TYPE_DOUBLE]   = CAST_GROUP_FLOAT,
     [TYPE_POINTER]  = CAST_GROUP_PTR,
+    [TYPE_FUNC_PTR] = CAST_GROUP_PTR,
     [TYPE_SS_ARRAY] = CAST_GROUP_ARRAY,
     [TYPE_DS_ARRAY] = CAST_GROUP_ARRAY,
     [TYPE_ENUM]     = CAST_GROUP_ENUM,
     [TYPE_STRUCT]   = CAST_GROUP_STRUCT,
     [TYPE_TYPEDEF]  = CAST_GROUP_INVALID,
-    [TYPE_UNION]    = CAST_GROUP_INVALID,
+    [TYPE_UNION]    = CAST_GROUP_STRUCT,
 };
+
+static inline CastGroup type_to_group(Type* type)
+{
+    SIC_ASSERT(s_type_to_group[type->kind] != CAST_GROUP_INVALID);
+    return s_type_to_group[type->kind];
+}

@@ -52,8 +52,20 @@ void process_cmdln_args(int argc, char* argv[])
         else if(strcmp(arg, "###") == 0)
             g_args.hash_hash_hash = true;
 #ifdef SI_DEBUG
-        else if(strcmp(arg, "v") == 0)
-            g_args.emit_debug_output = true;
+        else if(arg[0] == 'v')
+        {
+            while(*(++arg) != '\0')
+            {
+                if(arg[0] == 'l')
+                    g_args.debug_output |= DEBUG_LEXER;
+                else if(arg[0] == 'p')
+                    g_args.debug_output |= DEBUG_PARSER;
+                else if(arg[0] == 's')
+                    g_args.debug_output |= DEBUG_SEMA;
+                else if(arg[0] == 'c')
+                    g_args.debug_output |= DEBUG_CODEGEN;
+            }
+        }
 #endif
         else
             sic_diagnostic(DIAG_NOTE, "Unknown argument \'-%s\', ignoring.", arg);

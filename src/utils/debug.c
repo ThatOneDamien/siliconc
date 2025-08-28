@@ -31,9 +31,9 @@ static const char* debug_tok_to_string(TokenKind kind)
 
 void print_all_tokens(Lexer* lexer)
 {
-    while(lexer_peek(lexer)->kind != TOKEN_EOF)
+    Token* tok;
+    while((tok = lexer_peek(lexer))->kind != TOKEN_EOF)
     {
-        Token* tok = lexer->la_buf.buf + lexer->la_buf.head;
         printf("%-15s: Len: %-4u Line: %-6u Col: %-4u\n", 
                debug_tok_to_string(tok->kind),
                tok->loc.len,
@@ -49,7 +49,7 @@ void print_unit(const CompilationUnit* unit)
     printf("Compilation Unit: \'%s\' (%u Funcs, %u Global Vars)\n", 
            file_from_id(unit->file)->path, 
            unit->funcs.size, unit->vars.size);
-    for(size_t i = 0; i < unit->funcs.size; ++i)
+    for(uint32_t i = 0; i < unit->funcs.size; ++i)
         print_func(unit->funcs.data[i]);
 }
 
@@ -62,7 +62,7 @@ void print_func(const Object* func)
            s_access_strs[func->access],
            debug_type_to_str(sig->ret_type));
     printf("  Params (count: %u):\n", sig->params.size);
-    for(size_t i = 0; i < sig->params.size; ++i)
+    for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         Object* param = sig->params.data[i];
         printf("    %s (type %s)\n", 
@@ -112,7 +112,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     }
     case STMT_BREAK:
     case STMT_CONTINUE:
-        SIC_TODO();
+        return;
     case STMT_EXPR_STMT:
         print_expr_at_depth(stmt->stmt.expr, depth + 1, NULL);
         return;
@@ -133,7 +133,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         SIC_TODO();
     case STMT_MULTI_DECL: {
         const ASTDeclDA* decls = &stmt->stmt.multi_decl;
-        for(size_t i = 0; i < decls->size; ++i)
+        for(uint32_t i = 0; i < decls->size; ++i)
         {
             ASTDeclaration* decl = &decls->data[i];
             print_expr_at_depth(decl->init_expr, depth + 1, decl->obj->symbol);
@@ -208,7 +208,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
         print_expr_at_depth(expr->expr.call.func_expr, depth + 1, NULL);
-        for(size_t i = 0; i < expr->expr.call.args.size; ++i)
+        for(uint32_t i = 0; i < expr->expr.call.args.size; ++i)
             print_expr_at_depth(expr->expr.call.args.data[i], depth + 1, NULL);
         return;
     case EXPR_IDENT: {
@@ -226,6 +226,8 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
             SIC_UNREACHABLE();
         }
     }
+    case EXPR_INITIALIZER_LIST:
+        SIC_TODO();
     case EXPR_INVALID:
         printf("Invalid ]\n");
         return;
@@ -294,12 +296,14 @@ static void print_constant(const ASTExpr* expr)
                constant->val.f, debug_type_to_str(expr->type));
         break;
     case CONSTANT_STRING:
-        printf("Constant String \'%s\' ]\n", constant->val.s);
+        printf("Constant String ]\n");
         break;
     case CONSTANT_POINTER:
         printf("Constant Integer val: 0x%lX] (Type: %s)\n",
                constant->val.i, debug_type_to_str(expr->type));
         break;
+    case CONSTANT_INIT_LIST:
+        SIC_TODO();
     }
 }
 

@@ -151,7 +151,7 @@ const char* create_tempfile(FileType ft)
 
 void close_tempfiles(void)
 {
-    for(size_t i = 0; i < s_tempfiles.size; ++i)
+    for(uint32_t i = 0; i < s_tempfiles.size; ++i)
         unlink(s_tempfiles.data[i]);
 }
 

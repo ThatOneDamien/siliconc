@@ -33,6 +33,7 @@ typedef struct Type*            TypePointer;
 typedef struct TypeUnresolved   TypeUnresolved;
 typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
+typedef struct Type*            TypeCache[__TYPE_CACHE_CNT];
 
 // Dynamic Array Structs
 typedef struct StringDA         StringDA;
@@ -52,6 +53,8 @@ typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct Object*          ASTExprIdent;
+typedef struct InitListEntry    InitListEntry;
+typedef struct ASTExprInitList  ASTExprInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
 typedef Symbol                  ASTExprPSIdent; // Pre-semantic Identifier
 typedef struct ASTExprTernary   ASTExprTernary;
@@ -71,6 +74,8 @@ typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
+typedef struct ASTExpr*         ObjAliasExpr;
+typedef struct Type*            ObjTypeAlias;
 typedef struct ObjEnum          ObjEnum;
 typedef struct ObjEnumValue     ObjEnumValue;
 typedef struct ObjFunc          ObjFunc;
@@ -185,6 +190,7 @@ struct Type
     TypeQualifier qualifiers;
     ResolveStatus status;
     void*         llvm_ref;
+    TypeCache     cache;
 
     union
     {
@@ -285,14 +291,28 @@ struct ASTExprCast
     CastKind kind;
 };
 
+struct InitListEntry
+{
+    ASTExpr* arr_index;
+    ASTExpr* init_value;
+};
+
+struct ASTExprInitList
+{
+    InitListEntry* data;
+    uint32_t       capacity;
+    uint32_t       size;
+};
+
 struct ASTExprConstant
 {
     ConstantKind kind;
     union
     {
-        uint64_t  i;
-        double    f;
-        char*     s;
+        uint64_t        i;
+        double          f;
+        char*           s;
+        ASTExprInitList list;
     } val;
 };
 
@@ -327,6 +347,7 @@ struct ASTExpr
     Type*     type;
     SourceLoc loc;
     ExprKind  kind;
+    bool      evaluated;
 
     union
     {
@@ -336,6 +357,7 @@ struct ASTExpr
         ASTExprCast     cast;
         ASTExprConstant constant;
         ASTExprIdent    ident;
+        ASTExprInitList init_list;
         ASTExprMAccess  member_access;
         ASTExprPSIdent  pre_sema_ident;
         ASTExprTernary  ternary;
@@ -430,9 +452,8 @@ struct FuncSignature
 
 struct ObjEnum
 {
-    ObjectDA      values;
-    Type*         underlying;
-    ResolveStatus status;
+    ObjectDA values;
+    Type*    underlying;
 };
 
 struct ObjEnumValue
@@ -442,7 +463,6 @@ struct ObjEnumValue
         ASTExpr* value;
         uint64_t const_val;
     };
-    Type* type;
 };
 
 struct ObjFunc
@@ -465,7 +485,6 @@ struct ObjStruct
         };
         Type* largest_type;
     };
-    ResolveStatus status;
 };
 
 struct ObjVar
@@ -480,25 +499,28 @@ struct ObjVar
         } default_val;
     };
     uint32_t member_idx;
+    VarKind  kind;
 
 };
 
 struct Object
 {
-    Symbol    symbol;
-    SourceLoc loc;
-    ObjKind   kind;
-    ObjAccess access;
-    ObjAttr   attribs;
-    void*     llvm_ref;
-    Type*     type;
-
+    Symbol        symbol;
+    SourceLoc     loc;
+    ObjKind       kind;
+    ObjAccess     access;
+    ObjAttr       attribs;
+    ResolveStatus status;
+    void*         llvm_ref;
+    Type*         type;
     union
     {
+        ObjAliasExpr alias_expr;
         ObjEnum      enum_;    // Components of enum typedef
         ObjEnumValue enum_val; // Components of value in enum
         ObjFunc      func;     // Components of function
         ObjStruct    struct_;  // Components of bitfield, struct, or union
+        ObjTypeAlias type_alias;
         ObjVar       var;      // Components of variable
     };
 
@@ -525,6 +547,7 @@ struct CompilationUnit
     ObjectDA funcs;
     ObjectDA types;
     ObjectDA vars;
+    ObjectDA aliases;
 };
 
 
@@ -552,7 +575,7 @@ struct Cmdline
     bool          hash_hash_hash : 1;
     bool          werror : 1;
 #ifdef SI_DEBUG
-    bool          emit_debug_output;
+    DebugOutput   debug_output;
 #endif
 };
 

@@ -8,23 +8,21 @@
     .builtin = { SIZE }             \
 }
 
-static Type s_void    = BUILTIN_DEF(TYPE_VOID    ,  0);
-static Type s_nullptr = BUILTIN_DEF(TYPE_NULLPTR ,  8);
-static Type s_bool    = BUILTIN_DEF(TYPE_BOOL    ,  1);
-static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE   ,  1);
-static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT  ,  2);
-static Type s_uint    = BUILTIN_DEF(TYPE_UINT    ,  4);
-static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG   ,  8);
-static Type s_byte    = BUILTIN_DEF(TYPE_BYTE    ,  1);
-static Type s_short   = BUILTIN_DEF(TYPE_SHORT   ,  2);
-static Type s_int     = BUILTIN_DEF(TYPE_INT     ,  4);
-static Type s_long    = BUILTIN_DEF(TYPE_LONG    ,  8);
-static Type s_float   = BUILTIN_DEF(TYPE_FLOAT   ,  4);
-static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE  ,  8);
+static Type s_void    = BUILTIN_DEF(TYPE_VOID   ,  0);
+static Type s_bool    = BUILTIN_DEF(TYPE_BOOL   ,  1);
+static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE  ,  1);
+static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT ,  2);
+static Type s_uint    = BUILTIN_DEF(TYPE_UINT   ,  4);
+static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG  ,  8);
+static Type s_byte    = BUILTIN_DEF(TYPE_BYTE   ,  1);
+static Type s_short   = BUILTIN_DEF(TYPE_SHORT  ,  2);
+static Type s_int     = BUILTIN_DEF(TYPE_INT    ,  4);
+static Type s_long    = BUILTIN_DEF(TYPE_LONG   ,  8);
+static Type s_float   = BUILTIN_DEF(TYPE_FLOAT  ,  4);
+static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE ,  8);
 
 // Builtin-types
 Type* g_type_void    = &s_void;
-Type* g_type_nullptr = &s_nullptr;
 Type* g_type_bool    = &s_bool;
 Type* g_type_ubyte   = &s_ubyte;
 Type* g_type_ushort  = &s_ushort;
@@ -75,8 +73,19 @@ Type* type_pointer_to(Type* base)
     return new_type;
 }
 
+Type* type_func_ptr(FuncSignature* signature)
+{
+    SIC_ASSERT(signature != NULL);
+    Type* new_type = CALLOC_STRUCT(Type);
+    new_type->kind = TYPE_FUNC_PTR;
+    new_type->func_ptr = signature;
+    return new_type;
+}
+
 Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
+    SIC_ASSERT(elem_ty != NULL);
+    SIC_ASSERT(size_expr != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
     new_type->kind = TYPE_PRE_SEMA_ARRAY;
     new_type->array.elem_type = elem_ty;
@@ -107,6 +116,18 @@ bool type_equal(Type* t1, Type* t2)
         return true;
     case TYPE_POINTER:
         return type_equal(t1->pointer_base, t2->pointer_base);
+    case TYPE_FUNC_PTR: {
+        FuncSignature* s1 = t1->func_ptr;
+        FuncSignature* s2 = t2->func_ptr;
+        if(s1->is_var_arg != s2->is_var_arg || 
+           s1->params.size != s2->params.size ||
+           !type_equal(s1->ret_type, s2->ret_type))
+            return false;
+        for(uint32_t i = 0; i < s1->params.size; ++i)
+            if(!type_equal(s1->params.data[i]->type, s2->params.data[i]->type))
+                return false;
+        return true;
+    }
     case TYPE_DS_ARRAY:
         return false;
     case TYPE_SS_ARRAY:
@@ -117,8 +138,6 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_TYPEDEF:
     case TYPE_UNION:
         return t1->user_def == t2->user_def;
-    case TYPE_NULLPTR:
-        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:
@@ -145,6 +164,7 @@ uint32_t type_size(Type* ty)
     case TYPE_DOUBLE:
         return ty->builtin.size;
     case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
         return 8;
     case TYPE_SS_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.ss_size;
@@ -158,7 +178,6 @@ uint32_t type_size(Type* ty)
         return type_size(ty->user_def->struct_.largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_NULLPTR:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_DS_ARRAY:
     case __TYPE_COUNT:
@@ -186,6 +205,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_DOUBLE:
         return ty->builtin.size;
     case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
         return 8;
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
@@ -200,7 +220,6 @@ uint32_t type_alignment(Type* ty)
         return type_alignment(ty->user_def->struct_.largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_NULLPTR:
     case TYPE_PRE_SEMA_ARRAY:
     case __TYPE_COUNT:
         break;
@@ -212,9 +231,9 @@ uint32_t type_alignment(Type* ty)
 const char* type_to_string(Type* type)
 {
     SIC_ASSERT(type != NULL);
+    SIC_ASSERT(type->status == STATUS_RESOLVED);
     static const char* type_names[] = {
         [TYPE_VOID]    = "void",
-        [TYPE_NULLPTR] = "nullptr_t",
         [TYPE_BOOL]    = "bool",
         [TYPE_UBYTE]   = "ubyte",
         [TYPE_USHORT]  = "ushort",
@@ -227,12 +246,9 @@ const char* type_to_string(Type* type)
         [TYPE_FLOAT]   = "float",
         [TYPE_DOUBLE]  = "double",
     };
-    // TODO: Make this use the scratch buffer.
-
     switch(type->kind)
     {
     case TYPE_VOID:
-    case TYPE_NULLPTR:
     case TYPE_BOOL:
     case TYPE_UBYTE:
     case TYPE_USHORT:
@@ -247,6 +263,22 @@ const char* type_to_string(Type* type)
         return type_names[type->kind];
     case TYPE_POINTER:
         return str_format("%s*", type_to_string(type->pointer_base));
+    case TYPE_FUNC_PTR: {
+        FuncSignature* sig = type->func_ptr;
+        scratch_clear();
+        scratch_append("fn ");
+        scratch_append(type_to_string(sig->ret_type));
+        scratch_appendc('(');
+        if(sig->params.size > 0)
+            scratch_append(type_to_string(sig->params.data[0]->type));
+        for(uint32_t i = 1; i < sig->params.size; ++i)
+        {
+            scratch_appendc(',');
+            scratch_append(type_to_string(sig->params.data[i]->type));
+        }
+        scratch_appendc(')');
+        return str_dupn(scratch_string(), g_scratch.len);
+    }
     case TYPE_SS_ARRAY:
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
     case TYPE_DS_ARRAY:
