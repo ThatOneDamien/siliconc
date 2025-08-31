@@ -159,16 +159,6 @@ static void compile(const InputFile* input)
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
     unit->file = input->id;
 
-#ifdef SI_DEBUG
-    if(g_args.debug_output & DEBUG_LEXER)
-    {
-        Lexer debug_lexer;
-        lexer_init_unit(&debug_lexer, unit);
-        print_all_tokens(&debug_lexer);
-        printf("\n\n");
-    }
-#endif
-
     parse_unit(unit);
 
 #ifdef SI_DEBUG

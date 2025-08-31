@@ -255,7 +255,7 @@ static inline bool c_is_alpha(char c)
 
 static inline bool c_is_num(char c)
 {
-    return c >= '0' && c <= '9';
+    return c <= '9' && c >= '0';
 }
 
 static inline bool c_is_undnum(char c)
@@ -273,3 +273,12 @@ static inline bool c_is_undalphanum(char c)
     return c_is_alphanum(c) || c == '_';
 }
 
+static inline bool c_is_binary(char c)
+{
+    return c == '0' || c == '1';
+}
+
+static inline bool c_is_octal(char c)
+{
+    return c <= '7' && c >= '0';
+}

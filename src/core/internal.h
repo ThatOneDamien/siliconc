@@ -169,7 +169,7 @@ static inline Type* type_pointer_base(Type* ptr_ty)
 
 #ifdef SI_DEBUG
 
-void print_all_tokens(Lexer* lexer);
+void print_token(Token* tok);
 void print_unit(const CompilationUnit* unit);
 void print_func(const Object* func);
 void print_stmt(const ASTStmt* stmt);

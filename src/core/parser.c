@@ -18,14 +18,14 @@ struct ExprParseRule
 // Top-level grammar
 static bool      parse_top_level(Lexer* l);
 // static bool      parse_path_prefix(Lexer* l);
-static bool      function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs);
+static bool      function_declaration(Lexer* l, Visibility access, Type* ret_type, ObjAttr attribs);
 static bool      parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
-static bool      global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs);
-static ObjAccess parse_access(Lexer* l);
-static Object*   parse_alias(Lexer* l, ObjAccess access);
-static Object*   parse_enum_decl(Lexer* l, ObjAccess access);
-static Object*   parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access);
-static Object*   parse_typedef(Lexer* l, ObjAccess access);
+static bool      global_var_declaration(Lexer* l, Visibility access, Type* type, ObjAttr attribs);
+static Visibility parse_visibility(Lexer* l);
+static Object*   parse_alias(Lexer* l, Visibility access);
+static Object*   parse_enum_decl(Lexer* l, Visibility access);
+static Object*   parse_struct_decl(Lexer* l, ObjKind kind, Visibility access);
+static Object*   parse_typedef(Lexer* l, Visibility access);
 
 // Type and attributes
 static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
@@ -65,7 +65,10 @@ static ASTExpr* parse_initializer_list(Lexer* l);
 static ASTExpr* parse_identifier_expr(Lexer* l);
 static ASTExpr* parse_paren_expr(Lexer* l);
 static ASTExpr* parse_unary_prefix(Lexer* l);
-static ASTExpr* parse_int_literal(Lexer* l);
+static ASTExpr* parse_binary_literal(Lexer* l);
+static ASTExpr* parse_octal_literal(Lexer* l);
+static ASTExpr* parse_decimal_literal(Lexer* l);
+static ASTExpr* parse_hexadecimal_literal(Lexer* l);
 static ASTExpr* parse_char_literal(Lexer* l);
 static ASTExpr* parse_float_literal(Lexer* l);
 static ASTExpr* parse_string_literal(Lexer* l);
@@ -88,7 +91,7 @@ static inline bool     try_consume(Lexer* l, TokenKind kind);
 static inline bool     consume(Lexer* l, TokenKind kind);
 static inline void     recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count);
 static inline void     recover_top_level(Lexer* l);
-static inline Object*  new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs);
+static inline Object*  new_obj(Lexer* l, ObjKind kind, Visibility access, ObjAttr attribs);
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 
@@ -146,7 +149,7 @@ void parse_unit(CompilationUnit* unit)
 
 static bool parse_top_level(Lexer* l)
 {
-    ObjAccess access = parse_access(l);
+    Visibility access = parse_visibility(l);
     ObjKind kind = OBJ_UNION;
     switch(peek(l)->kind)
     {
@@ -210,7 +213,7 @@ static bool parse_top_level(Lexer* l)
 // {
 // }
 
-static bool function_declaration(Lexer* l, ObjAccess access, Type* ret_type, ObjAttr attribs)
+static bool function_declaration(Lexer* l, Visibility access, Type* ret_type, ObjAttr attribs)
 {
     SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
     SIC_ASSERT(peek_next(l)->kind == TOKEN_LPAREN);
@@ -267,7 +270,7 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
         EXPECT_OR_RET(TOKEN_IDENT, false);
 
         da_resize(params, params->size + 1);
-        params->data[params->size - 1] = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, ATTR_NONE);
+        params->data[params->size - 1] = new_obj(l, OBJ_VAR, VIS_DEFAULT, ATTR_NONE);
         params->data[params->size - 1]->type = type;
         advance(l);
     }
@@ -277,7 +280,7 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
     return true;
 }
 
-static bool global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAttr attribs)
+static bool global_var_declaration(Lexer* l, Visibility access, Type* type, ObjAttr attribs)
 {
     SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
     Object* var = new_obj(l, OBJ_VAR, access, attribs);
@@ -294,18 +297,18 @@ static bool global_var_declaration(Lexer* l, ObjAccess access, Type* type, ObjAt
     return true;
 }
 
-static ObjAccess parse_access(Lexer* l)
+static Visibility parse_visibility(Lexer* l)
 {
-    ObjAccess access = ACCESS_PROTECTED;
+    Visibility access = VIS_PROTECTED;
     switch(peek(l)->kind)
     {
     case TOKEN_PRIV:
-        access = ACCESS_PRIVATE;
+        access = VIS_PRIVATE;
         break;
     case TOKEN_PROT:
         break;
     case TOKEN_PUB:
-        access = ACCESS_PUBLIC;
+        access = VIS_PUBLIC;
         break;
     default:
         return access;
@@ -314,7 +317,7 @@ static ObjAccess parse_access(Lexer* l)
     return access;
 }
 
-static Object* parse_alias(Lexer* l, ObjAccess access)
+static Object* parse_alias(Lexer* l, Visibility access)
 {
     Object* alias = new_obj(l, OBJ_ALIAS_EXPR, access, ATTR_NONE);
     advance(l);
@@ -324,7 +327,7 @@ static Object* parse_alias(Lexer* l, ObjAccess access)
     return alias;
 }
 
-static Object* parse_enum_decl(Lexer* l, ObjAccess access)
+static Object* parse_enum_decl(Lexer* l, Visibility access)
 {
     Object* obj = new_obj(l, OBJ_ENUM, access, ATTR_NONE);
     CONSUME_OR_RET(TOKEN_IDENT, NULL);
@@ -361,7 +364,7 @@ static Object* parse_enum_decl(Lexer* l, ObjAccess access)
     
 }
 
-static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
+static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility access)
 {
     Object* obj = new_obj(l, kind, access, ATTR_NONE);
     CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
@@ -397,7 +400,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, ObjAccess access)
     return obj;
 }
 
-static Object* parse_typedef(Lexer* l, ObjAccess access)
+static Object* parse_typedef(Lexer* l, Visibility access)
 {
     Object* type = new_obj(l, OBJ_TYPE_ALIAS, access, ATTR_NONE);
     advance(l);
@@ -840,7 +843,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     ASTStmt* decl_stmt = CALLOC_STRUCT(ASTStmt);
     decl_stmt->kind = STMT_SINGLE_DECL;
     decl_stmt->loc = peek(l)->loc;
-    Object* var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
+    Object* var = new_obj(l, OBJ_VAR, VIS_DEFAULT, attribs);
     var->type = type;
     var->var.kind = VAR_LOCAL;
     decl_stmt->stmt.single_decl.obj = var;
@@ -865,8 +868,9 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
     while(try_consume(l, TOKEN_COMMA))
     {
         da_resize(decl_list, decl_list->size + 1);
-        var = new_obj(l, OBJ_VAR, ACCESS_DEFAULT, attribs);
+        var = new_obj(l, OBJ_VAR, VIS_DEFAULT, attribs);
         var->type = type;
+        decl_list->data[decl_list->size - 1].obj = var;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
         {
@@ -875,14 +879,14 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
                 goto ERR;
             decl_list->data[decl_list->size - 1].init_expr = expr;
         }
-        decl_list->data[decl_list->size - 1].obj = var;
     }
 
     if(consume(l, TOKEN_SEMI))
         return decl_stmt;
+    decl_stmt = BAD_STMT;
 ERR:
     recover_to(l, s_stmt_recover_list, 2);
-    return BAD_STMT;
+    return decl_stmt;
 }
 
 static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left)
@@ -1085,9 +1089,58 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
         return BAD_EXPR;
     expr->expr.unary.kind = tok_to_unary_op(kind);
     return expr;
+
 }
 
-static ASTExpr* parse_int_literal(Lexer* l)
+static ASTExpr* parse_binary_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    advance(l);
+
+    const char* src = peek_prev(l)->start;
+    uint64_t val = 0;
+    for(uint32_t i = 2; i < expr->loc.len; ++i)
+    {
+        if(src[i] == '_')
+            continue;
+        if(val > (UINT64_MAX >> 1))
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
+        val = (val << 1) + src[i] - '0';
+    }
+
+    expr->expr.constant.val.i = val;
+    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+
+    // TODO: Deal with the suffix.
+    return expr;
+}
+
+static ASTExpr* parse_octal_literal(Lexer* l)
+{
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    advance(l);
+
+    const char* src = peek_prev(l)->start;
+    uint64_t val = 0;
+    for(uint32_t i = 2; i < expr->loc.len; ++i)
+    {
+        if(src[i] == '_')
+            continue;
+        if(val > (UINT64_MAX >> 3))
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
+        val = (val << 3) + src[i] - '0';
+    }
+
+    expr->expr.constant.val.i = val;
+    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+
+    // TODO: Deal with the suffix.
+    return expr;
+}
+
+static ASTExpr* parse_decimal_literal(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_INTEGER;
@@ -1101,11 +1154,10 @@ static ASTExpr* parse_int_literal(Lexer* l)
     {
         if(src[i] == '_')
             continue;
-        uint64_t prev = val;
-        val *= 10;
-        val += src[i] - '0';
-        if(prev > val)
+        uint64_t digit = src[i] - '0';
+        if(val > (UINT64_MAX - digit) / 10)
             ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
+        val = (val * 10) + digit;
     }
 
     expr->expr.constant.val.i = val;
@@ -1113,6 +1165,55 @@ static ASTExpr* parse_int_literal(Lexer* l)
 
     // TODO: Deal with the suffix.
     return expr;
+}
+
+static ASTExpr* parse_hexadecimal_literal(Lexer* l)
+{
+    static uint8_t hex_val[256] = {
+        ['0'] = 0,
+        ['1'] = 1,
+        ['2'] = 2,
+        ['3'] = 3,
+        ['4'] = 4,
+        ['5'] = 5,
+        ['6'] = 6,
+        ['7'] = 7,
+        ['8'] = 8,
+        ['9'] = 9,
+        ['A'] = 10,
+        ['B'] = 11,
+        ['C'] = 12,
+        ['D'] = 13,
+        ['E'] = 14,
+        ['F'] = 15,
+        ['a'] = 10,
+        ['b'] = 11,
+        ['c'] = 12,
+        ['d'] = 13,
+        ['e'] = 14,
+        ['f'] = 15,
+    };
+    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    advance(l);
+
+    const char* src = peek_prev(l)->start;
+    uint64_t val = 0;
+    for(uint32_t i = 2; i < expr->loc.len; ++i)
+    {
+        if(src[i] == '_')
+            continue;
+        if(val > (UINT64_MAX >> 4))
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
+        val = (val << 4) + hex_val[(size_t)src[i]];
+    }
+
+    expr->expr.constant.val.i = val;
+    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+
+    // TODO: Deal with the suffix.
+    return expr;
+    
 }
 
 static ASTExpr* parse_char_literal(Lexer* l)
@@ -1240,6 +1341,10 @@ static inline bool expect(Lexer* l, TokenKind kind)
 static inline void advance(Lexer* l)
 {
     lexer_advance(l);
+#ifdef SI_DEBUG
+    if(g_args.debug_output & DEBUG_LEXER)
+        print_token(peek(l));
+#endif
 }
 
 static inline void advance_many(Lexer* l, uint32_t steps)
@@ -1268,15 +1373,15 @@ static inline bool consume(Lexer* l, TokenKind kind)
     return false;
 }
 
-static inline Object* new_obj(Lexer* l, ObjKind kind, ObjAccess access, ObjAttr attribs)
+static inline Object* new_obj(Lexer* l, ObjKind kind, Visibility access, ObjAttr attribs)
 {
     SIC_ASSERT(peek(l)->kind == TOKEN_IDENT);
-    Object* obj  = CALLOC_STRUCT(Object);
-    obj->symbol  = peek(l)->sym;
-    obj->loc     = peek(l)->loc;
-    obj->kind    = kind;
-    obj->access  = access;
-    obj->attribs = attribs;
+    Object* obj     = CALLOC_STRUCT(Object);
+    obj->symbol     = peek(l)->sym;
+    obj->loc        = peek(l)->loc;
+    obj->kind       = kind;
+    obj->visibility = access;
+    obj->attribs    = attribs;
     return obj;
 }
 
@@ -1325,7 +1430,10 @@ static inline void recover_top_level(Lexer* l)
 
 static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = { parse_identifier_expr, NULL, PREC_NONE },
-    [TOKEN_INT_LITERAL]     = { parse_int_literal, NULL, PREC_NONE },
+    [TOKEN_BIN_INT_LITERAL] = { parse_binary_literal, NULL, PREC_NONE },
+    [TOKEN_OCT_INT_LITERAL] = { parse_octal_literal, NULL, PREC_NONE },
+    [TOKEN_DEC_INT_LITERAL] = { parse_decimal_literal, NULL, PREC_NONE },
+    [TOKEN_HEX_INT_LITERAL] = { parse_hexadecimal_literal, NULL, PREC_NONE },
     [TOKEN_CHAR_LITERAL]    = { parse_char_literal, NULL, PREC_NONE },
     [TOKEN_FLOAT_LITERAL]   = { parse_float_literal, NULL, PREC_NONE },
     [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },

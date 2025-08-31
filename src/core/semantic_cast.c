@@ -87,6 +87,7 @@ bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
     ASTExpr* new_cast = CALLOC_STRUCT(ASTExpr);
     new_cast->kind = EXPR_CAST;
     new_cast->expr.cast.inner = prev;
+    new_cast->evaluated = true;
     params.expr = new_cast;
     params.inner = prev;
 
@@ -196,7 +197,7 @@ static bool rule_string_lit(CastParams* params, bool explicit)
         return true;
 
     sic_error_at(params->inner->loc,
-                 "Arrays do not implicitly decay to pointers, use the address-of operator '&'.");
+                 "Arrays do not directly decay to pointers, use the address-of operator '&'.");
     return false;
 }
 
@@ -376,6 +377,12 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
     cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
+static void cast_str_lit_to_ptr(ASTExpr* cast, ASTExpr* inner)
+{
+    cast->kind = EXPR_UNARY;
+    cast->expr.unary.inner = inner;
+    cast->expr.unary.kind = UNARY_ADDR_OF;
+}
 
 #define NOALLW { NULL              , NULL }
 #define NOTDEF { rule_not_defined  , NULL }
@@ -390,7 +397,7 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 #define PTRBOO { rule_always       , cast_ptr_to_bool }
 #define PTRINT { rule_explicit_only, cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr   , cast_ptr_to_ptr }
-#define STRLIT { rule_string_lit   , cast_ptr_to_ptr }
+#define STRLIT { rule_string_lit   , cast_str_lit_to_ptr }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     //                       VOID    NULL_T  BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT

@@ -38,7 +38,7 @@ bool     implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
 void     implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
 bool     resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer);
 void     push_obj(Object* obj);
-Object*  find_obj(Symbol symbol);
+Object*  find_obj(SemaContext* c, Symbol symbol);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
 bool     expr_is_lvalue(ASTExpr* expr);

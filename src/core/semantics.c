@@ -107,11 +107,22 @@ static void analyze_function(SemaContext* c, Object* function)
     uint32_t scope = push_scope();
     c->cur_func = function;
     ObjectDA* params = &function->func.signature->params;
+    Type* ret_type = function->func.signature->ret_type;
+
+    if(resolve_type(c, ret_type) && ret_type->visibility < function->visibility)
+        sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
+
     for(uint32_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
-        if(resolve_type(c, param->type))
-            push_obj(param);
+        if(!resolve_type(c, param->type))
+            continue;
+        push_obj(param);
+        if(param->type->visibility < function->visibility)
+        {
+            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
+            continue;
+        }
     }
 
     ASTStmt* stmt = function->func.body;
@@ -131,6 +142,9 @@ static void analyze_global_var(SemaContext* c, Object* global_var)
     if(var->global_initializer == NULL || 
        !implicit_cast(c, &var->global_initializer, global_var->type))
         return;
+    if(global_var->type->visibility < global_var->visibility)
+        // TODO: Make this error print the actual visibility of both.
+        sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");
 }
 
 static bool analyze_main(Object* main)
@@ -306,6 +320,7 @@ static void analyze_return(SemaContext* c, ASTStmt* stmt)
                             "Function returning void should not return a value.");
             return;
         }
+        c->ident_mask = IDENT_VAR;
         implicit_cast(c, &ret->ret_expr, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
@@ -495,6 +510,13 @@ static void analyze_struct_obj(SemaContext* c, Object* type_obj)
             type_obj->kind = OBJ_INVALID;
             continue;
         }
+        if(next_ty->visibility < type_obj->visibility)
+        {
+            // TODO: Make this error print the actual visibility of both.
+            sic_error_at(member->loc, "Member has type with less visibility than parent.");
+            type_obj->kind = OBJ_INVALID;
+            continue;
+        }
         uint32_t align = type_alignment(next_ty);
         SIC_ASSERT(is_pow_of_2(align));
         struct_->size = ALIGN_UP(struct_->size, align) + type_size(next_ty);
@@ -515,6 +537,13 @@ static void analyze_union_obj(SemaContext* c, Object* type_obj)
         if(!resolve_type(c, next_ty))
         {
             check_circular_def(c, next_ty->user_def, member->loc);
+            type_obj->kind = OBJ_INVALID;
+            continue;
+        }
+        if(next_ty->visibility < type_obj->visibility)
+        {
+            // TODO: Make this error print the actual visibility of both.
+            sic_error_at(member->loc, "Member has type with less visibility than parent.");
             type_obj->kind = OBJ_INVALID;
             continue;
         }
@@ -549,15 +578,15 @@ static void declare_global_obj(SemaContext* c, Object* global)
         sic_error_redef(global, other);
 
 
-    switch(global->access)
+    switch(global->visibility)
     {
-    case ACCESS_PRIVATE:
+    case VIS_PRIVATE:
         hashmap_put(c->priv_syms, global->symbol, global);
         return;
-    case ACCESS_PUBLIC:
+    case VIS_PUBLIC:
         hashmap_put(pub, global->symbol, global);
         FALLTHROUGH;
-    case ACCESS_PROTECTED:
+    case VIS_PROTECTED:
         hashmap_put(c->prot_syms, global->symbol, global);
         return;
     }

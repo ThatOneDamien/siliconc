@@ -15,7 +15,10 @@ bool resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer)
     {
     case TYPE_POINTER:
         type->status = STATUS_RESOLVED;
-        return resolve_type_or_ptr(c, type->pointer_base, true);
+        if(!resolve_type_or_ptr(c, type->pointer_base, true))
+            return false;
+        type->visibility = type->pointer_base->visibility;
+        return true;
     case TYPE_PRE_SEMA_ARRAY:
         return resolve_array(c, type);
     case TYPE_STRUCT:
@@ -45,6 +48,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
         return false;
 
     arr_ty->status = STATUS_RESOLVED;
+    arr_ty->visibility = elem_type->visibility;
 
     if(size_expr->kind == EXPR_CONSTANT)
     {
@@ -63,7 +67,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
 
 static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
 {
-    Object* type_obj = find_obj(user_ty->unresolved.sym);
+    Object* type_obj = find_obj(c, user_ty->unresolved.sym);
     if(type_obj == NULL)
     {
         sic_error_at(user_ty->unresolved.loc, "Unknown typename.");
@@ -77,6 +81,7 @@ static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
     analyze_type_obj(c, type_obj, is_pointer);
     user_ty->user_def = type_obj;
     user_ty->status = STATUS_RESOLVED;
+    user_ty->visibility = type_obj->visibility;
     if(type_obj->kind == OBJ_INVALID)
         return false;
     switch(type_obj->kind)

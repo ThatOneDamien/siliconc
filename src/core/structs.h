@@ -41,7 +41,6 @@ typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTCaseDA        ASTCaseDA;
 typedef struct ASTDeclDA        ASTDeclDA;
-typedef struct ScopeDA          ScopeDA;
 typedef struct CompUnitDA       CompUnitDA;
 typedef struct InputFileDA      InputFileDA;
 typedef struct ModulePTRDA      ModulePTRDA;
@@ -82,9 +81,6 @@ typedef struct ObjFunc          ObjFunc;
 typedef struct ObjStruct        ObjStruct;
 typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
-
-// Semantic Analysis Structs
-typedef struct Scope            Scope;
 
 // Compiler-wide important structs
 typedef struct InputFile        InputFile;
@@ -189,6 +185,7 @@ struct Type
     TypeKind      kind;
     TypeQualifier qualifiers;
     ResolveStatus status;
+    Visibility    visibility;
     void*         llvm_ref;
     TypeCache     cache;
 
@@ -236,13 +233,6 @@ struct ASTDeclDA
     ASTDeclaration* data;
     uint32_t        capacity;
     uint32_t        size;
-};
-
-struct ScopeDA
-{
-    Scope*   data;
-    uint32_t capacity;
-    uint32_t size;
 };
 
 struct CompUnitDA
@@ -508,7 +498,7 @@ struct Object
     Symbol        symbol;
     SourceLoc     loc;
     ObjKind       kind;
-    ObjAccess     access;
+    Visibility    visibility;
     ObjAttr       attribs;
     ResolveStatus status;
     void*         llvm_ref;
@@ -524,11 +514,6 @@ struct Object
         ObjVar       var;      // Components of variable
     };
 
-};
-
-struct Scope
-{
-    HashMap objs;
 };
 
 struct InputFile

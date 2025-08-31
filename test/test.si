@@ -1,4 +1,20 @@
+priv struct Test
+{
+    int a;
+}
+
+pub int other_func()
+{
+    Test t;
+    t.a = 1;
+    return t.a;
+}
+
 pub int main()
 {
-    return test; 
+    uint binary = 0b1111_1111_1111_1111_1111_1011_1111_1111;
+    uint octal  = 0o666;
+    uint hex    = 0xFFFFFFCFF1B;
+    printf("%X %X %X\n", binary, octal, hex);
+    return 0;
 }

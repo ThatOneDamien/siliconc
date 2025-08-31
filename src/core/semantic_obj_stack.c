@@ -34,15 +34,19 @@ void push_obj(Object* obj)
     s_obj_stack.data[--s_obj_stack.stack_bottom] = obj;
 }
 
-Object* find_obj(Symbol symbol)
+Object* find_obj(SemaContext* c, Symbol symbol)
 {
+    Object* o;
     for(uint32_t i = s_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
     {
-        Object* other = s_obj_stack.data[i];
-        if(other->symbol == symbol)
-            return other;
+        o = s_obj_stack.data[i];
+        if(o->symbol == symbol)
+            return o;
     }
-    return NULL;
+    o = hashmap_get(c->priv_syms, symbol);
+    if(o != NULL)
+        return o;
+    return hashmap_get(c->prot_syms, symbol);
 }
 
 uint32_t push_scope()

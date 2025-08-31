@@ -163,12 +163,12 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
-    ACCESS_PRIVATE,     // Accessible only to compilation unit
-    ACCESS_PROTECTED,   // Accessible only to module and submodules(default behavior)
-    ACCESS_PUBLIC,      // Accessible to all modules that import this module
+    VIS_PRIVATE,     // Accessible only to compilation unit
+    VIS_PROTECTED,   // Accessible only to module and submodules(default behavior)
+    VIS_PUBLIC,      // Accessible to all modules that import this module
 
-    ACCESS_DEFAULT = ACCESS_PROTECTED,
-} ObjAccess;
+    VIS_DEFAULT = VIS_PROTECTED,
+} Visibility;
 
 typedef enum : uint8_t
 {
@@ -242,7 +242,10 @@ typedef enum : uint8_t
     TOKEN_INVALID = 0,
 
     TOKEN_IDENT,            // Identifier
-    TOKEN_INT_LITERAL,
+    TOKEN_BIN_INT_LITERAL,
+    TOKEN_OCT_INT_LITERAL,
+    TOKEN_DEC_INT_LITERAL,
+    TOKEN_HEX_INT_LITERAL,
     TOKEN_CHAR_LITERAL,
     TOKEN_FLOAT_LITERAL,
     TOKEN_STRING_LITERAL,

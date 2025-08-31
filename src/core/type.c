@@ -5,6 +5,7 @@
     .kind = TYPE,                   \
     .status = STATUS_RESOLVED,      \
     .qualifiers = QUALIFIER_NONE,   \
+    .visibility = VIS_PUBLIC,       \
     .builtin = { SIZE }             \
 }
 

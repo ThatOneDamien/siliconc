@@ -7,7 +7,7 @@
 static const char* s_stmt_type_strs[];
 static const char* s_binary_op_strs[];
 static const char* s_unary_op_strs[];
-static const char* s_access_strs[];
+static const char* s_vis_strs[];
 
 static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name);
 static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name);
@@ -24,23 +24,15 @@ static inline const char* debug_type_to_str(Type* type)
     return type_to_string(type);
 }
 
-static const char* debug_tok_to_string(TokenKind kind)
+void print_token(Token* tok)
 {
-    return kind == TOKEN_INVALID ? "Invalid" : tok_kind_to_str(kind);
-}
-
-void print_all_tokens(Lexer* lexer)
-{
-    Token* tok;
-    while((tok = lexer_peek(lexer))->kind != TOKEN_EOF)
-    {
-        printf("%-15s: Len: %-4u Line: %-6u Col: %-4u\n", 
-               debug_tok_to_string(tok->kind),
-               tok->loc.len,
-               tok->loc.line_num,
-               tok->loc.col_num);
-        lexer_advance(lexer);
-    }
+    printf("(%3d) %-15.*s: Len: %-4u Line: %-6u Col: %-4u\n", 
+           tok->kind,
+           tok->loc.len,
+           tok->start,
+           tok->loc.len,
+           tok->loc.line_num,
+           tok->loc.col_num);
 }
 
 void print_unit(const CompilationUnit* unit)
@@ -59,7 +51,7 @@ void print_func(const Object* func)
     const FuncSignature* sig = comps->signature;
     printf("Function \'%s\' %s (returns %s):\n", 
            func->symbol,
-           s_access_strs[func->access],
+           s_vis_strs[func->visibility],
            debug_type_to_str(sig->ret_type));
     printf("  Params (count: %u):\n", sig->params.size);
     for(uint32_t i = 0; i < sig->params.size; ++i)
@@ -373,10 +365,10 @@ static const char* s_unary_op_strs[] = {
     [UNARY_NEG]     = "Negate",
 };
 
-static const char* s_access_strs[] = {
-    [ACCESS_PUBLIC]     = "public",
-    [ACCESS_PROTECTED]  = "protected",
-    [ACCESS_PRIVATE]    = "private",
+static const char* s_vis_strs[] = {
+    [VIS_PUBLIC]     = "public",
+    [VIS_PROTECTED]  = "protected",
+    [VIS_PRIVATE]    = "private",
 };
 
 #endif // SI_DEBUG

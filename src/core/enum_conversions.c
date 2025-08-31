@@ -1,11 +1,7 @@
 #include "internal.h"
 
-static const char* s_tok_strs[] = {
+static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = "identifier",
-    [TOKEN_INT_LITERAL]     = "Int Literal",
-    [TOKEN_CHAR_LITERAL]    = "Char Literal",
-    [TOKEN_FLOAT_LITERAL]   = "Float Literal",
-    [TOKEN_STRING_LITERAL]  = "String Literal",
     [TOKEN_AMP]             = "&",
     [TOKEN_ASTERISK]        = "*",
     [TOKEN_LOG_NOT]         = "!",
