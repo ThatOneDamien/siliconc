@@ -228,7 +228,7 @@ static bool analyze_ident(SemaContext* c, ASTExpr* expr)
 {
     // TODO: Add better handling of enum constants.
     Symbol sym = expr->expr.pre_sema_ident;
-    ASTExprIdent ident = find_obj(c, sym);
+    ASTExprIdent ident = find_obj(sym);
     if(ident == NULL)
         ERROR_AND_RET(false, expr->loc, "Reference to undefined symbol \'%s\'.", sym);
 

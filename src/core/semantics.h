@@ -26,24 +26,23 @@ struct SemaContext
     HashMap*         prot_syms;
     Object*          cur_func;
 
-    // TODO: Turn this into a real stack that persists
-    //       Right now this is very inefficient, as we create
-    //       multiple hashmaps per context, and checking is actually slower.
-    ScopeDA          scope_stack;
     BlockContext     block_context;
     IdentMask        ident_mask;
     Object*          circular_def;
 };
 
-bool    analyze_expr_no_set(SemaContext* c, ASTExpr* expr);
-void    analyze_type_obj(SemaContext* c, Object* type_obj, bool is_pointer);
-bool    analyze_cast(SemaContext* c, ASTExpr* cast);
-bool    implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
-void    implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
-bool    resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer);
-void    declare_obj(SemaContext* c, Object* obj);
-Object* find_obj(SemaContext* c, Symbol symbol);
-bool    expr_is_lvalue(ASTExpr* expr);
+bool     analyze_expr_no_set(SemaContext* c, ASTExpr* expr);
+void     analyze_type_obj(SemaContext* c, Object* type_obj, bool is_pointer);
+bool     analyze_cast(SemaContext* c, ASTExpr* cast);
+bool     implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
+void     implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
+bool     resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer);
+void     push_obj(Object* obj);
+Object*  find_obj(Symbol symbol);
+uint32_t push_scope();
+void     pop_scope(uint32_t old);
+bool     expr_is_lvalue(ASTExpr* expr);
+
 static inline bool resolve_type(SemaContext* c, Type* type)
 {
     if(!resolve_type_or_ptr(c, type, false))
@@ -82,22 +81,4 @@ static inline bool obj_is_type(Object* obj)
         return true;
     }
     SIC_UNREACHABLE();
-}
-
-static inline void push_scope(SemaContext* c)
-{
-    da_resize(&c->scope_stack, c->scope_stack.size + 1);
-    Scope* s = c->scope_stack.data + (c->scope_stack.size - 1);
-    hashmap_clear(&s->objs);
-}
-
-static inline void pop_scope(SemaContext* c)
-{
-    SIC_ASSERT(c->scope_stack.size > 0);
-    c->scope_stack.size--;
-}
-
-static inline Scope* get_cur_scope(SemaContext* c)
-{
-    return c->scope_stack.data + (c->scope_stack.size - 1);
 }

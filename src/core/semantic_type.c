@@ -63,7 +63,7 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
 
 static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
 {
-    Object* type_obj = find_obj(c, user_ty->unresolved.sym);
+    Object* type_obj = find_obj(user_ty->unresolved.sym);
     if(type_obj == NULL)
     {
         sic_error_at(user_ty->unresolved.loc, "Unknown typename.");

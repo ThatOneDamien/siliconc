@@ -6,7 +6,7 @@ static void analyze_function(SemaContext* c, Object* function);
 static void analyze_global_var(SemaContext* c, Object* global_var);
 static bool analyze_main(Object* main);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope);
-static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt, bool add_scope);
+static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt);
 static void analyze_break(SemaContext* c, ASTStmt* stmt);
 static void analyze_continue(SemaContext* c, ASTStmt* stmt);
 static void analyze_for(SemaContext* c, ASTStmt* stmt);
@@ -23,9 +23,6 @@ static void analyze_union_obj(SemaContext* c, Object* type_obj);
 static void check_circular_def(SemaContext* c, Object* other, SourceLoc loc);
 
 static void declare_global_obj(SemaContext* c, Object* global);
-
-static inline void push_scope(SemaContext* c);
-static inline void pop_scope(SemaContext* c);
 
 void semantic_declaration(CompilationUnit* unit)
 {
@@ -60,35 +57,6 @@ void semantic_analysis(ModulePTRDA* modules)
 #endif
         }
     }
-}
-
-void declare_obj(SemaContext* c, Object* obj)
-{
-    // TODO: Change the way that SourceLoc works, so that it tracks file location
-    //       then we can have better error handling for redefinition which would show
-    //       where the previous definition is.
-    Scope* cur = get_cur_scope(c);
-    Object* prev;
-    if((prev = hashmap_get(&cur->objs, obj->symbol)) != NULL)
-        sic_error_redef(obj, prev);
-    hashmap_put(&cur->objs, obj->symbol, obj);
-}
-
-Object* find_obj(SemaContext* c, Symbol symbol)
-{
-    Object* o;
-    for(uint32_t i = c->scope_stack.size - 1; i < c->scope_stack.size; --i)
-    {
-        Scope* s = c->scope_stack.data + i;
-        o = hashmap_get(&s->objs, symbol);
-        if(o != NULL)
-            return o;
-    }
-    
-    o = hashmap_get(c->priv_syms, symbol);
-    if(o != NULL)
-        return o;
-    return hashmap_get(c->prot_syms, symbol);
 }
 
 bool expr_is_lvalue(ASTExpr* expr)
@@ -136,14 +104,14 @@ static void analyze_unit(SemaContext* c, CompilationUnit* unit)
 
 static void analyze_function(SemaContext* c, Object* function)
 {
-    push_scope(c);
+    uint32_t scope = push_scope();
     c->cur_func = function;
     ObjectDA* params = &function->func.signature->params;
     for(uint32_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
         if(resolve_type(c, param->type))
-            declare_obj(c, param);
+            push_obj(param);
     }
 
     ASTStmt* stmt = function->func.body;
@@ -154,7 +122,7 @@ static void analyze_function(SemaContext* c, Object* function)
     }
 
     c->cur_func = NULL;
-    pop_scope(c);
+    pop_scope(scope);
 }
 
 static void analyze_global_var(SemaContext* c, Object* global_var)
@@ -214,9 +182,15 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
 {
     switch(stmt->kind)
     {
-    case STMT_BLOCK:
-        analyze_stmt_block(c, stmt->stmt.block.body, add_scope);
+    case STMT_BLOCK: {
+        uint32_t scope;
+        if(add_scope)
+            scope = push_scope();
+        analyze_stmt_block(c, stmt->stmt.block.body);
+        if(add_scope)
+            pop_scope(scope);
         return;
+    }
     case STMT_BREAK:
         analyze_break(c, stmt);
         return;
@@ -271,17 +245,13 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     SIC_UNREACHABLE();
 }
 
-static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt, bool add_scope)
+static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt)
 {
-    if(add_scope)
-        push_scope(c);
     while(stmt != NULL)
     {
         analyze_stmt(c, stmt, true);
         stmt = stmt->next;
     }
-    if(add_scope)
-        pop_scope(c);
 }
 
 static void analyze_break(SemaContext* c, ASTStmt* stmt)
@@ -299,7 +269,7 @@ static void analyze_continue(SemaContext* c, ASTStmt* stmt)
 static void analyze_for(SemaContext* c, ASTStmt* stmt)
 {
     ASTFor* for_stmt = &stmt->stmt.for_;
-    push_scope(c);
+    uint32_t scope = push_scope();
     if(for_stmt->init_stmt != NULL)
         analyze_stmt(c, for_stmt->init_stmt, false);
     if(for_stmt->cond_expr != NULL)
@@ -312,7 +282,7 @@ static void analyze_for(SemaContext* c, ASTStmt* stmt)
     analyze_stmt(c, for_stmt->body, false);
     c->block_context = context;
 
-    pop_scope(c);
+    pop_scope(scope);
 }
 
 static void analyze_if(SemaContext* c, ASTStmt* stmt)
@@ -371,7 +341,9 @@ static void analyze_switch(SemaContext* c, ASTStmt* stmt)
         else
             has_default = true;
 
-        analyze_stmt_block(c, cas->body, true);
+        uint32_t scope = push_scope();
+        analyze_stmt_block(c, cas->body);
+        pop_scope(scope);
     }
     c->block_context = context;
 }
@@ -391,7 +363,7 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
     Type* type = decl->obj->type;
     if(decl->init_expr != NULL)
         implicit_cast(c, &decl->init_expr, type);
-    declare_obj(c, decl->obj);
+    push_obj(decl->obj);
 }
 
 static void analyze_swap(SemaContext* c, ASTStmt* stmt)
@@ -476,7 +448,7 @@ static void analyze_enum_obj(SemaContext* c, Object* type_obj)
         return;
     }
 
-    push_scope(c);
+    uint32_t scope = push_scope();
     uint64_t last_value = -1;
     for(uint32_t i = 0; i < enum_->values.size; ++i)
     {
@@ -505,9 +477,9 @@ static void analyze_enum_obj(SemaContext* c, Object* type_obj)
         }
         else
             last_value = value->enum_val.const_val = val_expr->expr.constant.val.i;
-        declare_obj(c, value);
+        push_obj(value);
     }
-    pop_scope(c);
+    pop_scope(scope);
 }
 
 static void analyze_struct_obj(SemaContext* c, Object* type_obj)

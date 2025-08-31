@@ -19,7 +19,7 @@ static inline Token*   next_token_loc(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
 static inline void     extract_char_literal(Lexer* l, Token* t);
 static inline void     extract_string_literal(Lexer* l, Token* t);
-static inline void     extract_num_literal(Lexer* l, Token* t);
+static inline void     extract_base_10(Lexer* l, Token* t);
 static inline bool     extract_num_suffix(Lexer* l, bool* is_float);
 static inline int      escaped_char(const char** pos, uint64_t* real);
 static inline uint32_t get_col(Lexer* l);
@@ -194,22 +194,42 @@ void lexer_advance(Lexer* l)
     case '\"':
         extract_string_literal(l, t);
         break;
-    case '_':
-    CASE_IDENT:
-        extract_identifier(l, t);
-        return;
-    default:
-        if(c_is_num(c))
+    case '0':
+        switch(peek(l))
         {
-            backtrack(l);
-            extract_num_literal(l, t);
-            break;
+        case 'x':
+            SIC_TODO_MSG("Hex literal.");
+        case 'o':
+            SIC_TODO_MSG("Octal literal.");
+        case 'b':
+            SIC_TODO_MSG("Binary literal.");
+        default:
+            goto CASE_DECIMAL;
         }
-        if(c_is_alpha(c))
-            goto CASE_IDENT;
-
-        t->loc.len = 1;
-        sic_error_at(t->loc, "Unknown character.");
+        break;
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+    case '8':
+    case '9':
+    CASE_DECIMAL:
+        backtrack(l);
+        extract_base_10(l, t);
+        break;
+    default:
+        if(!c_is_alpha(c))
+        {
+            t->loc.len = 1;
+            sic_error_at(t->loc, "Unknown character.");
+            return;
+        }
+        FALLTHROUGH;
+    case '_':
+        extract_identifier(l, t);
         return;
     }
     t->loc.len = get_col(l) - t->loc.col_num;
@@ -392,27 +412,9 @@ static inline void extract_string_literal(Lexer* l, Token* t)
     next(l);
 }
 
-static inline void extract_num_literal(Lexer* l, Token* t)
+static inline void extract_base_10(Lexer* l, Token* t)
 {
     const char* err_str = "Invalid underscore placement.";
-    // Scan prefix
-    if(peek(l) == '0')
-    {
-        switch(peek_next(l))
-        {
-        case 'x': // Hex literal
-            SIC_TODO_MSG("Hex literal.");
-        case 'o':
-            SIC_TODO_MSG("Octal literal.");
-        case 'b':
-            SIC_TODO_MSG("Binary literal.");
-        }
-        if(peek(l) == '_')
-        {
-            next(l);
-            goto ERR;
-        }
-    }
 
     while(c_is_undnum(peek(l)))
         next(l);
