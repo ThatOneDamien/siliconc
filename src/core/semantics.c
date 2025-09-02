@@ -66,24 +66,27 @@ bool expr_is_lvalue(ASTExpr* expr)
     case EXPR_ARRAY_ACCESS:
     case EXPR_MEMBER_ACCESS:
         return true;
-    case EXPR_IDENT:
-        if(expr->expr.ident->kind != OBJ_VAR)
-        {
-            sic_error_at(expr->loc, "Unable to assign object \'%s\'.",
-                         expr->expr.ident->symbol);
+    case EXPR_IDENT: {
+        Object* o = expr->expr.ident;
+        if(o->kind != OBJ_VAR)
             return false;
-        }
-        return true;
-    case EXPR_UNARY:
-        if(expr->expr.unary.kind != UNARY_DEREF)
+        switch(o->var.kind)
+        {
+        case VAR_LOCAL:
+        case VAR_GLOBAL:
+            return true;
+        case VAR_PARAM:
+            return o->var.param_flags & PARAM_OUT;
+        case VAR_INVALID:
             break;
-        return true;
-    default:
-        break;
+        }
+        SIC_UNREACHABLE();
     }
-
-    sic_error_at(expr->loc, "Expression is not assignable.");
-    return false;
+    case EXPR_UNARY:
+        return expr->expr.unary.kind == UNARY_DEREF;
+    default:
+        return false;
+    }
 }
 
 static void analyze_unit(SemaContext* c, CompilationUnit* unit)
@@ -376,6 +379,7 @@ static void analyze_while(SemaContext* c, ASTStmt* stmt)
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
     Type* type = decl->obj->type;
+    c->ident_mask = IDENT_VAR;
     if(decl->init_expr != NULL)
         implicit_cast(c, &decl->init_expr, type);
     push_obj(decl->obj);
@@ -387,8 +391,8 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
     ASTExpr* right = stmt->stmt.swap.right;
     analyze_expr(c, left);
     analyze_expr(c, right);
-    if(expr_is_bad(left) || expr_is_bad(right) || 
-       !expr_is_lvalue(left) || !expr_is_lvalue(right))
+    if(expr_is_bad(left) || expr_is_bad(right) ||
+       !expr_ensure_lvalue(left) || !expr_ensure_lvalue(right))
         return;
 
     if(!type_equal(left->type, right->type))

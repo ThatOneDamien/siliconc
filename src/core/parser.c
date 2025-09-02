@@ -16,21 +16,19 @@ struct ExprParseRule
 };
 
 // Top-level grammar
-static bool      parse_top_level(Lexer* l);
-// static bool      parse_path_prefix(Lexer* l);
-static bool      function_declaration(Lexer* l, Visibility access, Type* ret_type, ObjAttr attribs);
-static bool      parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
-static bool      global_var_declaration(Lexer* l, Visibility access, Type* type, ObjAttr attribs);
+static bool       parse_top_level(Lexer* l);
+static bool       function_declaration(Lexer* l, Visibility access, ObjAttr attribs);
+static bool       parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
+static bool       global_var_declaration(Lexer* l, Visibility access, Type* type, ObjAttr attribs);
 static Visibility parse_visibility(Lexer* l);
-static Object*   parse_alias(Lexer* l, Visibility access);
-static Object*   parse_enum_decl(Lexer* l, Visibility access);
-static Object*   parse_struct_decl(Lexer* l, ObjKind kind, Visibility access);
-static Object*   parse_typedef(Lexer* l, Visibility access);
+static Object*    parse_alias(Lexer* l, Visibility access);
+static Object*    parse_enum_decl(Lexer* l, Visibility access);
+static Object*    parse_struct_decl(Lexer* l, ObjKind kind, Visibility access);
+static Object*    parse_typedef(Lexer* l, Visibility access);
 
 // Type and attributes
-static bool     parse_attribute(Lexer* l, ObjAttr* attribs);
-static bool     parse_type_qualifier(Lexer* l, TypeQualifier* qual);
-static bool     parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAttr* attribs);
+static bool        parse_attribute(Lexer* l, ObjAttr* attribs);
+static bool        parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAttr* attribs);
 static inline bool parse_decl_type(Lexer* l, Type** type, ObjAttr* attribs)
 {
     return parse_decl_type_or_expr(l, type, NULL, attribs);
@@ -86,7 +84,6 @@ static inline bool     tok_equal(Lexer* lexer, TokenKind kind);
 static inline void     parser_error(Lexer* lexer, const char* restrict message, ...);
 static inline bool     expect(Lexer* l, TokenKind kind);
 static inline void     advance(Lexer* l);
-static inline void     advance_many(Lexer* l, uint32_t steps);
 static inline bool     try_consume(Lexer* l, TokenKind kind);
 static inline bool     consume(Lexer* l, TokenKind kind);
 static inline void     recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count);
@@ -171,6 +168,11 @@ static bool parse_top_level(Lexer* l)
         da_append(&l->unit->types, enum_);
         return true;
     }
+    case TOKEN_FN:
+        if(peek_next(l)->kind == TOKEN_LPAREN)
+            goto VAR_DECL;
+        advance(l);
+        return function_declaration(l, access, ATTR_NONE);
     case TOKEN_MODULE:
         ERROR_AND_RET(false, "Module declaration must come at the start of the "
                              "file, before any imports and any declarations.");
@@ -193,39 +195,35 @@ static bool parse_top_level(Lexer* l)
         da_append(&l->unit->types, typedef_);
         return true;
     }
-    default: {
+    default: 
+    VAR_DECL: {
         Type* type;
         ObjAttr attribs = ATTR_NONE;
         if(!parse_decl_type(l, &type, &attribs))
             return false;
-
         EXPECT_OR_RET(TOKEN_IDENT, false);
-        if(peek_next(l)->kind == TOKEN_LPAREN)
-            return function_declaration(l, access, type, attribs);
-        
         return global_var_declaration(l, access, type, attribs);
     }
     }
 
 }
 
-// static bool parse_path_prefix(Lexer* l)
-// {
-// }
-
-static bool function_declaration(Lexer* l, Visibility access, Type* ret_type, ObjAttr attribs)
+static bool function_declaration(Lexer* l, Visibility access, ObjAttr attribs)
 {
-    SIC_ASSERT(tok_equal(l, TOKEN_IDENT));
-    SIC_ASSERT(peek_next(l)->kind == TOKEN_LPAREN);
-
+    EXPECT_OR_RET(TOKEN_IDENT, false);
     Object* func = new_obj(l, OBJ_FUNC, access, attribs);
     ObjFunc* comps = &func->func;
     comps->signature = CALLOC_STRUCT(FuncSignature);
-    comps->signature->ret_type = ret_type;
     func->type = type_func_ptr(comps->signature);
 
-    advance_many(l, 2);
+    advance(l);
+    CONSUME_OR_RET(TOKEN_LPAREN, false);
     if(!parse_func_params(l, &comps->signature->params, &comps->signature->is_var_arg))
+        return false;
+
+    if(!try_consume(l, TOKEN_ARROW))
+        comps->signature->ret_type = g_type_void;
+    else if(!parse_decl_type(l, &comps->signature->ret_type, NULL))
         return false;
 
     da_append(&l->unit->funcs, func);
@@ -252,15 +250,31 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
             ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
         
         if(params->size > 0)
-            consume(l, TOKEN_COMMA);
+            CONSUME_OR_RET(TOKEN_COMMA, false);
 
-        // TODO: Make a more robust variable argument system
-        if(tok_equal(l, TOKEN_ELLIPSIS))
+        ParamFlags flags;
+        switch(peek(l)->kind)
         {
+        case TOKEN_ELLIPSIS:
+            // TODO: Make a more robust variable argument system
             advance(l);
             CONSUME_OR_RET(TOKEN_RPAREN, false);
             *is_var_args = true;
             return true;
+        case TOKEN_IN:
+            advance(l);
+            FALLTHROUGH;
+        default:
+            flags = PARAM_IN;
+            break;
+        case TOKEN_INOUT:
+            advance(l);
+            flags = PARAM_INOUT;
+            break;
+        case TOKEN_OUT:
+            advance(l);
+            flags = PARAM_OUT;
+            break;
         }
 
         Type* type;
@@ -269,9 +283,11 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
 
         EXPECT_OR_RET(TOKEN_IDENT, false);
 
-        da_resize(params, params->size + 1);
-        params->data[params->size - 1] = new_obj(l, OBJ_VAR, VIS_DEFAULT, ATTR_NONE);
-        params->data[params->size - 1]->type = type;
+        Object* p = new_obj(l, OBJ_VAR, VIS_DEFAULT, ATTR_NONE);
+        p->type = type;
+        p->var.kind = VAR_PARAM;
+        p->var.param_flags = flags;
+        da_append(params, p);
         advance(l);
     }
     
@@ -434,41 +450,16 @@ static bool parse_attribute(Lexer* l, ObjAttr* attribs)
     return true;
 }
 
-static bool parse_type_qualifier(Lexer* l, TypeQualifier* qual)
-{
-    TypeQualifier temp;
-    switch(peek(l)->kind)
-    {
-    case TOKEN_CONST:
-        temp = QUALIFIER_CONST;
-        break;
-    default:
-        temp = QUALIFIER_NONE;
-        break;
-    }
-
-    if(temp != QUALIFIER_NONE)
-    {
-        // This would be where we warn for duplicate type qualifier
-        if(*qual & temp) {}
-        *qual |= temp;
-        advance(l);
-        return true;
-    }
-    return false;
-
-}
 
 static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAttr* attribs)
 {
     *type = NULL;
     Type* ty = NULL;
     TokenKind kind;
-    TypeQualifier qual = QUALIFIER_NONE;
     bool ambiguous = true; 
 
     // First get attributes (e.g. extern) and qualifiers (e.g. const, volatile)
-    while(parse_attribute(l, attribs) || parse_type_qualifier(l, &qual))
+    while(parse_attribute(l, attribs))
         ambiguous = false;
 
     // Then we parse actual typename, which will be resolved later in semantics
@@ -518,7 +509,6 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             ty->status = STATUS_UNRESOLVED;
             ty->unresolved.sym = ident_sym;
             ty->unresolved.loc = ident_loc;
-            ty->qualifiers = qual;
             for(uint32_t i = 0; i < dims; ++i)
                 ty = type_array_of(ty, temp_buf[i]);
         }
@@ -548,13 +538,7 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
         ty->status = STATUS_UNRESOLVED;
         ty->unresolved.sym = peek(l)->sym;
         ty->unresolved.loc = peek(l)->loc;
-        ty->qualifiers = qual;
         advance(l);
-    }
-    else if(qual != QUALIFIER_NONE)
-    {
-        ty = type_copy(ty);
-        ty->qualifiers = qual;
     }
     
     while(true)
@@ -583,9 +567,6 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             ty = type_pointer_to(ty);
         else
             break;
-
-        ty->qualifiers = QUALIFIER_NONE;
-        while(parse_type_qualifier(l, &ty->qualifiers)) {}
     }
 
     *type = ty;
@@ -752,20 +733,19 @@ static ASTStmt* parse_switch(Lexer* l)
     CONSUME_OR_RET(TOKEN_LBRACE, BAD_STMT);
     while(!try_consume(l, TOKEN_RBRACE))
     {
-        if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
-        else if(tok_equal(l, TOKEN_DEFAULT))
+        switch(peek(l)->kind)
         {
-            advance(l);
-            da_resize(cases, cases->size + 1);
-        }
-        else if(try_consume(l, TOKEN_CASE))
-        {
+        case TOKEN_CASE: 
             da_resize(cases, cases->size + 1);
             ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, BAD_STMT);
-        }
-        else
-        {
+            break;
+        case TOKEN_DEFAULT:
+            advance(l);
+            da_resize(cases, cases->size + 1);
+            break;
+        case TOKEN_EOF:
+            ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
+        default:
             if(cases->size == 0)
                 ERROR_AND_RET(BAD_STMT, "Statement in switch must fall under a case.");
             cur->next = parse_stmt(l);
@@ -1340,18 +1320,11 @@ static inline bool expect(Lexer* l, TokenKind kind)
 
 static inline void advance(Lexer* l)
 {
-    lexer_advance(l);
 #ifdef SI_DEBUG
     if(g_args.debug_output & DEBUG_LEXER)
         print_token(peek(l));
 #endif
-}
-
-static inline void advance_many(Lexer* l, uint32_t steps)
-{
-    SIC_ASSERT(steps > 1);
-    for(uint32_t i = 0; i < steps; ++i)
-        advance(l);
+    lexer_advance(l);
 }
 
 static inline bool try_consume(Lexer* l, TokenKind kind)
@@ -1417,6 +1390,7 @@ static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t
 
 static inline void recover_top_level(Lexer* l)
 {
+    printf("here at recover\n");
     advance(l);
     Token* t = peek(l);
     while(t->kind != TOKEN_EOF && 

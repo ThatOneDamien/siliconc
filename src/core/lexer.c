@@ -50,6 +50,7 @@ void lexer_init_unit(Lexer* l, CompilationUnit* unit)
         lexer_advance(l);
         l->la_buf.buf[i].loc.file = unit->file;
     }
+    l->la_buf.buf[LOOK_AHEAD_SIZE - 1].loc.file = unit->file;
 }
 
 void lexer_advance(Lexer* l)

@@ -1,20 +1,13 @@
-priv struct Test
+priv fn other(int* a)
 {
-    int a;
+    *a = 10;
 }
 
-pub int other_func()
+pub fn main() -> int
 {
-    Test t;
-    t.a = 1;
-    return t.a;
-}
-
-pub int main()
-{
-    uint binary = 0b1111_1111_1111_1111_1111_1011_1111_1111;
-    uint octal  = 0o666;
-    uint hex    = 0xFFFFFFCFF1B;
-    printf("%X %X %X\n", binary, octal, hex);
+    int a = 1;
+    printf("a = %d\n", a);
+    other(&a);
+    printf("a = %d\n", a);
     return 0;
 }

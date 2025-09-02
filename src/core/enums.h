@@ -210,6 +210,14 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
+    PARAM_NONE  = 0,
+    PARAM_IN    = (1 << 0),
+    PARAM_OUT   = (1 << 1),
+    PARAM_INOUT = PARAM_IN | PARAM_OUT,
+} ParamFlags;
+
+typedef enum : uint8_t
+{
     STATUS_UNRESOLVED,
     STATUS_RESOLVING,
     STATUS_RESOLVED
@@ -311,19 +319,22 @@ typedef enum : uint8_t
     TOKEN_BITFIELD,
     TOKEN_BREAK,
     TOKEN_CASE,
-    TOKEN_CONST,
     TOKEN_CONTINUE,
     TOKEN_DEFAULT,
     TOKEN_ELSE,
     TOKEN_ENUM,
     TOKEN_EXTERN,
     TOKEN_FALSE,
+    TOKEN_FN,
     TOKEN_FOR,
     TOKEN_GOTO,
     TOKEN_IF,
+    TOKEN_IN,
+    TOKEN_INOUT,
     TOKEN_LABEL,
     TOKEN_MODULE,
     TOKEN_NULLPTR,
+    TOKEN_OUT,
     TOKEN_PRIV,
     TOKEN_PROT,
     TOKEN_PUB,
@@ -407,14 +418,6 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
-    QUALIFIER_NONE = 0,
-    QUALIFIER_CONST = (1 << 0),
-    // QUALIFIER_VOLATILE = (1 << 1),
-    // QUALIFIER_RESTRICT = (1 << 2),
-} TypeQualifier;
-
-typedef enum : uint8_t
-{
     UNARY_INVALID = 0,
 
     UNARY_ADDR_OF,
@@ -430,5 +433,6 @@ typedef enum : uint8_t
 {
     VAR_INVALID = 0,
     VAR_GLOBAL,
-    VAR_LOCAL
+    VAR_LOCAL,
+    VAR_PARAM,
 } VarKind;

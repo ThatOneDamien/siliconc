@@ -203,8 +203,21 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
 
     bool valid = true;
     for(uint32_t i = 0; i < sig->params.size; ++i)
-        if(!implicit_cast(c, call->args.data + i, sig->params.data[i]->type))
+    {
+        Object* param = sig->params.data[i];
+        ASTExpr* arg = call->args.data[i];
+        if(!implicit_cast(c, call->args.data + i, param->type))
+        {
             valid = false;
+            continue;
+        }
+        if((param->var.param_flags & PARAM_OUT) && !expr_is_lvalue(arg))
+        {
+            sic_error_at(arg->loc, "Argument passed as out parameter '%s' must be assignable.", 
+                         param->symbol);
+            valid = false;
+        }
+    }
 
     for(uint32_t i = sig->params.size; i < call->args.size; ++i)
     {
@@ -605,7 +618,7 @@ static bool analyze_bit_op(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr
 static bool analyze_assign(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
-    if(!expr_is_lvalue(left))
+    if(!expr_ensure_lvalue(left))
         return false;
     expr->type = left->type;
     return implicit_cast(c, rhs, left->type);
@@ -690,7 +703,7 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 static bool analyze_incdec(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
     (void)c;
-    if(!expr_is_lvalue(inner))
+    if(!expr_ensure_lvalue(inner))
         return false;
 
     expr->type = inner->type;

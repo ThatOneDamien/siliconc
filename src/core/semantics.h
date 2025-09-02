@@ -43,6 +43,16 @@ uint32_t push_scope();
 void     pop_scope(uint32_t old);
 bool     expr_is_lvalue(ASTExpr* expr);
 
+static inline bool expr_ensure_lvalue(ASTExpr* expr)
+{
+    if(!expr_is_lvalue(expr))
+    {
+        sic_error_at(expr->loc, "Expression is not assignable.");
+        return false;
+    }
+    return true;
+}
+
 static inline bool resolve_type(SemaContext* c, Type* type)
 {
     if(!resolve_type_or_ptr(c, type, false))

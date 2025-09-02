@@ -183,7 +183,6 @@ struct TypeUnresolved
 struct Type
 {
     TypeKind      kind;
-    TypeQualifier qualifiers;
     ResolveStatus status;
     Visibility    visibility;
     void*         llvm_ref;
@@ -488,9 +487,12 @@ struct ObjVar
             double   f;
         } default_val;
     };
-    uint32_t member_idx;
+    union
+    {
+        uint32_t   member_idx;
+        ParamFlags param_flags;
+    };
     VarKind  kind;
-
 };
 
 struct Object
