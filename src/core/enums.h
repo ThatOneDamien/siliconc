@@ -174,6 +174,7 @@ typedef enum : uint8_t
 {
     ATTR_NONE   = 0,
     ATTR_EXTERN = (1 << 0),
+    ATTR_CONST  = (1 << 1),
 } ObjAttr;
 
 typedef enum : uint8_t
@@ -316,9 +317,11 @@ typedef enum : uint8_t
     TOKEN_ALIAS,
     TOKEN_KEYWORD_START = TOKEN_ALIAS,
     TOKEN_AS,
+    TOKEN_AUTO,
     TOKEN_BITFIELD,
     TOKEN_BREAK,
     TOKEN_CASE,
+    TOKEN_CONST,
     TOKEN_CONTINUE,
     TOKEN_DEFAULT,
     TOKEN_ELSE,
@@ -339,10 +342,12 @@ typedef enum : uint8_t
     TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
+    TOKEN_SIZEOF,
     TOKEN_STRUCT,
     TOKEN_SWITCH,
     TOKEN_TRUE,
     TOKEN_TYPEDEF,
+    TOKEN_TYPEOF,
     TOKEN_UNION,
     TOKEN_WHILE,
 
@@ -404,6 +409,9 @@ typedef enum : uint8_t
     TYPE_SS_ARRAY, // Statically sized array (i.e. an array whose size is known at compile-time)
     TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
     TYPE_PRE_SEMA_ARRAY,
+    TYPE_AUTO,
+    TYPE_TYPEOF,
+
 
     TYPE_ENUM,
     TYPE_USER_DEF_START = TYPE_ENUM,

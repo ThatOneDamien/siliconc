@@ -12,6 +12,8 @@ static_assert((LOOK_AHEAD_SIZE & 1) == 0, "Look ahead size must be power of 2");
 // Aliases
 typedef const char* Symbol;
 typedef uint8_t     FileId;
+typedef uint32_t    BitSize;
+typedef uint32_t    ByteSize;
 
 // Compiler-Wide Data Structures
 typedef struct HashEntry        HashEntry;
@@ -50,12 +52,11 @@ typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
+typedef union  ConstantValue    ConstantValue;
 typedef struct ASTExprConstant  ASTExprConstant;
-typedef struct Object*          ASTExprIdent;
 typedef struct InitListEntry    InitListEntry;
 typedef struct ASTExprInitList  ASTExprInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
-typedef Symbol                  ASTExprPSIdent; // Pre-semantic Identifier
 typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
@@ -73,8 +74,6 @@ typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
-typedef struct ASTExpr*         ObjAliasExpr;
-typedef struct Type*            ObjTypeAlias;
 typedef struct ObjEnum          ObjEnum;
 typedef struct ObjEnumValue     ObjEnumValue;
 typedef struct ObjFunc          ObjFunc;
@@ -171,7 +170,8 @@ struct TypeArray
 
 struct TypeBuiltin
 {
-    uint32_t size;
+    BitSize  bit_size;
+    ByteSize byte_size;
 };
 
 struct TypeUnresolved
@@ -191,9 +191,11 @@ struct Type
     union
     {
         TypeArray      array;
+        SourceLoc      auto_loc;
         TypeBuiltin    builtin;
         TypeFuncPtr    func_ptr;
         TypePointer    pointer_base;
+        ASTExpr*       type_of;
         TypeUnresolved unresolved;
         TypeUserdef    user_def;
     };
@@ -293,22 +295,25 @@ struct ASTExprInitList
     uint32_t       size;
 };
 
+union ConstantValue
+{
+    uint64_t        i;
+    double          f;
+    char*           s;
+    ASTExprInitList list;
+};
+
 struct ASTExprConstant
 {
-    ConstantKind kind;
-    union
-    {
-        uint64_t        i;
-        double          f;
-        char*           s;
-        ASTExprInitList list;
-    } val;
+    ConstantKind  kind;
+    ConstantValue val;
 };
 
 struct ASTExprMAccess
 {
     ASTExpr* parent_expr;
     Object*  member;
+    uint32_t member_idx;
 };
 
 struct ASTExprTernary
@@ -345,10 +350,10 @@ struct ASTExpr
         ASTExprCall     call;
         ASTExprCast     cast;
         ASTExprConstant constant;
-        ASTExprIdent    ident;
+        Object*         ident;
         ASTExprInitList init_list;
         ASTExprMAccess  member_access;
-        ASTExprPSIdent  pre_sema_ident;
+        Symbol          pre_sema_ident;
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
@@ -481,15 +486,11 @@ struct ObjVar
     union
     {
         ASTExpr* global_initializer;
-        union
-        {
-            uint64_t i;
-            double   f;
-        } default_val;
+        ConstantValue default_val;
+        ConstantValue const_val;
     };
     union
     {
-        uint32_t   member_idx;
         ParamFlags param_flags;
     };
     VarKind  kind;
@@ -507,12 +508,11 @@ struct Object
     Type*         type;
     union
     {
-        ObjAliasExpr alias_expr;
         ObjEnum      enum_;    // Components of enum typedef
         ObjEnumValue enum_val; // Components of value in enum
         ObjFunc      func;     // Components of function
         ObjStruct    struct_;  // Components of bitfield, struct, or union
-        ObjTypeAlias type_alias;
+        Type*        type_alias;
         ObjVar       var;      // Components of variable
     };
 

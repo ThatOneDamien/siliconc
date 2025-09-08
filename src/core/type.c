@@ -5,35 +5,38 @@
     .kind = TYPE,                   \
     .status = STATUS_RESOLVED,      \
     .visibility = VIS_PUBLIC,       \
-    .builtin = { SIZE }             \
+    .builtin = {                    \
+        .bit_size  = SIZE * 8,      \
+        .byte_size = SIZE           \
+    }                               \
 }
 
-static Type s_void    = BUILTIN_DEF(TYPE_VOID   ,  0);
-static Type s_bool    = BUILTIN_DEF(TYPE_BOOL   ,  1);
-static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE  ,  1);
-static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT ,  2);
-static Type s_uint    = BUILTIN_DEF(TYPE_UINT   ,  4);
-static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG  ,  8);
-static Type s_byte    = BUILTIN_DEF(TYPE_BYTE   ,  1);
-static Type s_short   = BUILTIN_DEF(TYPE_SHORT  ,  2);
-static Type s_int     = BUILTIN_DEF(TYPE_INT    ,  4);
-static Type s_long    = BUILTIN_DEF(TYPE_LONG   ,  8);
-static Type s_float   = BUILTIN_DEF(TYPE_FLOAT  ,  4);
-static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE ,  8);
+static Type s_void   = BUILTIN_DEF(TYPE_VOID   ,  0);
+static Type s_bool   = BUILTIN_DEF(TYPE_BOOL   ,  1);
+static Type s_ubyte  = BUILTIN_DEF(TYPE_UBYTE  ,  1);
+static Type s_ushort = BUILTIN_DEF(TYPE_USHORT ,  2);
+static Type s_uint   = BUILTIN_DEF(TYPE_UINT   ,  4);
+static Type s_ulong  = BUILTIN_DEF(TYPE_ULONG  ,  8);
+static Type s_byte   = BUILTIN_DEF(TYPE_BYTE   ,  1);
+static Type s_short  = BUILTIN_DEF(TYPE_SHORT  ,  2);
+static Type s_int    = BUILTIN_DEF(TYPE_INT    ,  4);
+static Type s_long   = BUILTIN_DEF(TYPE_LONG   ,  8);
+static Type s_float  = BUILTIN_DEF(TYPE_FLOAT  ,  4);
+static Type s_double = BUILTIN_DEF(TYPE_DOUBLE ,  8);
 
 // Builtin-types
-Type* g_type_void    = &s_void;
-Type* g_type_bool    = &s_bool;
-Type* g_type_ubyte   = &s_ubyte;
-Type* g_type_ushort  = &s_ushort;
-Type* g_type_uint    = &s_uint;
-Type* g_type_ulong   = &s_ulong;
-Type* g_type_byte    = &s_byte;
-Type* g_type_short   = &s_short;
-Type* g_type_int     = &s_int;
-Type* g_type_long    = &s_long;
-Type* g_type_float   = &s_float;
-Type* g_type_double  = &s_double;
+Type* g_type_void   = &s_void;
+Type* g_type_bool   = &s_bool;
+Type* g_type_ubyte  = &s_ubyte;
+Type* g_type_ushort = &s_ushort;
+Type* g_type_uint   = &s_uint;
+Type* g_type_ulong  = &s_ulong;
+Type* g_type_byte   = &s_byte;
+Type* g_type_short  = &s_short;
+Type* g_type_int    = &s_int;
+Type* g_type_long   = &s_long;
+Type* g_type_float  = &s_float;
+Type* g_type_double = &s_double;
 
 static Type* builtin_type_lookup[] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
@@ -140,13 +143,15 @@ bool type_equal(Type* t1, Type* t2)
         return t1->user_def == t2->user_def;
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }
     SIC_UNREACHABLE();
 }
 
-uint32_t type_size(Type* ty)
+ByteSize type_size(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
     switch(ty->kind)
@@ -162,7 +167,7 @@ uint32_t type_size(Type* ty)
     case TYPE_LONG:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
-        return ty->builtin.size;
+        return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
         return 8;
@@ -178,8 +183,10 @@ uint32_t type_size(Type* ty)
         return type_size(ty->user_def->struct_.largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_PRE_SEMA_ARRAY:
     case TYPE_DS_ARRAY:
+    case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }
@@ -203,9 +210,10 @@ uint32_t type_alignment(Type* ty)
     case TYPE_LONG:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
-        return ty->builtin.size;
+        return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
+        // TODO: Make this specific to build arch
         return 8;
     case TYPE_SS_ARRAY:
     case TYPE_DS_ARRAY:
@@ -221,6 +229,8 @@ uint32_t type_alignment(Type* ty)
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }
@@ -290,6 +300,8 @@ const char* type_to_string(Type* type)
         return str_format("%s", type->user_def->symbol);
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }

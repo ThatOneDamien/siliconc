@@ -885,11 +885,10 @@ static void emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* resul
 {
     ASTExprMAccess* maccess = &expr->expr.member_access;
     ASTExpr* parent = expr->expr.member_access.parent_expr;
-    Object* member = expr->expr.member_access.member;
     GenValue parent_val = emit_expr(c, parent);
 
     result->kind = GEN_VAL_ADDRESS;
-    if(parent->type->kind == TYPE_UNION || member->var.member_idx == 0)
+    if(parent->type->kind == TYPE_UNION || maccess->member_idx == 0)
     {
         result->value = parent_val.value;
         return;
@@ -898,7 +897,7 @@ static void emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* resul
     result->value = LLVMBuildStructGEP2(c->builder, 
                                         get_llvm_type(c, maccess->parent_expr->type), 
                                         parent_val.value, 
-                                        member->var.member_idx, 
+                                        maccess->member_idx, 
                                         "");
 }
 
@@ -1124,8 +1123,10 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
     case TYPE_TYPEDEF:
     case TYPE_UNION:
         SIC_TODO();
-    case TYPE_PRE_SEMA_ARRAY:
     case TYPE_INVALID:
+    case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }
@@ -1187,14 +1188,17 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMVoidType();
     case TYPE_BOOL:
     case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
     case TYPE_BYTE:
+        return type->llvm_ref = LLVMInt8Type();
+    case TYPE_USHORT:
     case TYPE_SHORT:
+        return type->llvm_ref = LLVMInt16Type();
+    case TYPE_UINT:
     case TYPE_INT:
+        return type->llvm_ref = LLVMInt32Type();
+    case TYPE_ULONG:
     case TYPE_LONG:
-        return type->llvm_ref = LLVMIntType(type->builtin.size * 8);
+        return type->llvm_ref = LLVMInt64Type();
     case TYPE_FLOAT:
         return type->llvm_ref = LLVMFloatType();
     case TYPE_DOUBLE:
@@ -1248,6 +1252,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     }
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
     }
@@ -1319,8 +1325,10 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
         return;
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_TYPEDEF:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
+    case TYPE_TYPEDEF:
     case __TYPE_COUNT:
         break;
     }

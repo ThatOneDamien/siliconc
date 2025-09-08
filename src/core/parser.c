@@ -21,9 +21,9 @@ static bool       function_declaration(Lexer* l, Visibility access, ObjAttr attr
 static bool       parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args);
 static bool       global_var_declaration(Lexer* l, Visibility access, Type* type, ObjAttr attribs);
 static Visibility parse_visibility(Lexer* l);
-static Object*    parse_alias(Lexer* l, Visibility access);
 static Object*    parse_enum_decl(Lexer* l, Visibility access);
 static Object*    parse_struct_decl(Lexer* l, ObjKind kind, Visibility access);
+static Object*    parse_bitfield_decl(Lexer* l, Visibility access);
 static Object*    parse_typedef(Lexer* l, Visibility access);
 
 // Type and attributes
@@ -148,26 +148,21 @@ static bool parse_top_level(Lexer* l)
 {
     Visibility access = parse_visibility(l);
     ObjKind kind = OBJ_UNION;
+    Object* type;
     switch(peek(l)->kind)
     {
-    case TOKEN_ALIAS: {
-        advance(l);
-        Object* alias = parse_alias(l, access);
-        if(alias == NULL)
-            return false;
-        da_append(&l->unit->aliases, alias);
-        return true;
-    }
-    case TOKEN_BITFIELD:
+    case TOKEN_ALIAS:
         SIC_TODO();
-    case TOKEN_ENUM: {
+    case TOKEN_BITFIELD:
         advance(l);
-        Object* enum_ = parse_enum_decl(l, access);
-        if(enum_ == NULL)
-            return false;
-        da_append(&l->unit->types, enum_);
-        return true;
-    }
+        type = parse_bitfield_decl(l, access);
+        break;
+    case TOKEN_CONST:
+        SIC_TODO();
+    case TOKEN_ENUM:
+        advance(l);
+        type = parse_enum_decl(l, access);
+        break;
     case TOKEN_FN:
         if(peek_next(l)->kind == TOKEN_LPAREN)
             goto VAR_DECL;
@@ -179,22 +174,14 @@ static bool parse_top_level(Lexer* l)
     case TOKEN_STRUCT:
         kind = OBJ_STRUCT;
         FALLTHROUGH;
-    case TOKEN_UNION: {
+    case TOKEN_UNION:
         advance(l);
-        Object* struct_ = parse_struct_decl(l, kind, access);
-        if(struct_ == NULL)
-            return false;
-        da_append(&l->unit->types, struct_);
-        return true;
-    }
-    case TOKEN_TYPEDEF: {
+        type = parse_struct_decl(l, kind, access);
+        break;
+    case TOKEN_TYPEDEF:
         advance(l);
-        Object* typedef_ = parse_typedef(l, access);
-        if(typedef_ == NULL)
-            return false;
-        da_append(&l->unit->types, typedef_);
-        return true;
-    }
+        type = parse_typedef(l, access);
+        break;
     default: 
     VAR_DECL: {
         Type* type;
@@ -206,6 +193,10 @@ static bool parse_top_level(Lexer* l)
     }
     }
 
+    if(type == NULL)
+        return false;
+    da_append(&l->unit->types, type);
+    return true;
 }
 
 static bool function_declaration(Lexer* l, Visibility access, ObjAttr attribs)
@@ -333,16 +324,6 @@ static Visibility parse_visibility(Lexer* l)
     return access;
 }
 
-static Object* parse_alias(Lexer* l, Visibility access)
-{
-    Object* alias = new_obj(l, OBJ_ALIAS_EXPR, access, ATTR_NONE);
-    advance(l);
-    CONSUME_OR_RET(TOKEN_ASSIGN, NULL);
-    ASSIGN_EXPR_OR_RET(alias->alias_expr, NULL);
-    CONSUME_OR_RET(TOKEN_SEMI, NULL);
-    return alias;
-}
-
 static Object* parse_enum_decl(Lexer* l, Visibility access)
 {
     Object* obj = new_obj(l, OBJ_ENUM, access, ATTR_NONE);
@@ -405,10 +386,42 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility access)
             EXPECT_OR_RET(TOKEN_IDENT, obj);
             Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
             member->type = ty;
-            member->var.member_idx = members->size;
             da_append(members, member);
             advance(l);
         } while(try_consume(l, TOKEN_COMMA));
+
+        CONSUME_OR_RET(TOKEN_SEMI, obj);
+    }
+
+    return obj;
+}
+
+static Object* parse_bitfield_decl(Lexer* l, Visibility access)
+{
+    Object* obj = new_obj(l, OBJ_BITFIELD, access, ATTR_NONE);
+    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
+
+    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
+    if(tok_equal(l, TOKEN_RBRACE))
+    {
+        sic_error_at(obj->loc, "Bitfield declaration is empty.");
+        return NULL;
+    }
+
+    ObjectDA* members = &obj->struct_.members;
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        Type* ty;
+        if(!parse_decl_type(l, &ty, NULL))
+            return NULL;
+
+        // For now we don't allow anonymous members. This will change
+        EXPECT_OR_RET(TOKEN_IDENT, obj);
+        Object* member = new_obj(l, OBJ_VAR, access, ATTR_NONE);
+        member->type = ty;
+        da_append(members, member);
+        advance(l);
+        // CONSUME_OR_RET()
 
         CONSUME_OR_RET(TOKEN_SEMI, obj);
     }
@@ -432,6 +445,9 @@ static bool parse_attribute(Lexer* l, ObjAttr* attribs)
     ObjAttr temp;
     switch(peek(l)->kind)
     {
+    case TOKEN_CONST:
+        temp = ATTR_CONST;
+        break;
     case TOKEN_EXTERN:
         temp = ATTR_EXTERN;
         break;
@@ -455,23 +471,57 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
 {
     *type = NULL;
     Type* ty = NULL;
-    TokenKind kind;
     bool ambiguous = true; 
 
-    // First get attributes (e.g. extern) and qualifiers (e.g. const, volatile)
+    // First get attributes (e.g. extern)
     while(parse_attribute(l, attribs))
         ambiguous = false;
 
-    // Then we parse actual typename, which will be resolved later in semantics
-    while(token_is_typename(kind = peek(l)->kind))
+    // Then we see if there is a builtin type or typeof, which
+    // confirms that this is a type.
+    while(true)
     {
-        if(ty != NULL)
-            parser_error(l, "Two or more data types in type prefix");
-        ty = type_from_token(kind);
-        ambiguous = false;
-        advance(l);
+        TokenKind kind = peek(l)->kind;
+        if(token_is_typename(kind))
+        {
+            if(ty != NULL)
+                parser_error(l, "Two or more data types in type prefix");
+            ty = type_from_token(kind);
+            ambiguous = false;
+            advance(l);
+            continue;
+        }
+
+        if(kind == TOKEN_TYPEOF)
+        {
+            if(ty != NULL)
+                parser_error(l, "Two or more data types in type prefix");
+            ambiguous = false;
+            advance(l);
+            CONSUME_OR_RET(TOKEN_LPAREN, false);
+            ty = CALLOC_STRUCT(Type);
+            ty->kind = TYPE_TYPEOF;
+            ASSIGN_EXPR_OR_RET(ty->type_of, false);
+            CONSUME_OR_RET(TOKEN_RPAREN, false);
+            continue;
+        }
+
+        if(kind == TOKEN_AUTO)
+        {
+            if(ty != NULL)
+                parser_error(l, "Auto cannot be specified along with other types.");
+            ambiguous = false;
+            ty = CALLOC_STRUCT(Type);
+            ty->kind = TYPE_AUTO;
+            ty->auto_loc = peek(l)->loc;
+            advance(l);
+            continue;
+        }
+        break;
     }
 
+    // If we didnt find a builtin type, and the token kind is not
+    // an identifier, this is not a type but maybe an expression.
     if(ty == NULL && !tok_equal(l, TOKEN_IDENT))
     {
         if(ambiguous && expr != NULL)
@@ -595,7 +645,7 @@ static ASTStmt* parse_stmt(Lexer* l)
         return stmt;
     case TOKEN_CASE:
     case TOKEN_DEFAULT:
-        sic_error_at(peek(l)->loc, "Case/Default statement in invalid location.");
+        parser_error(l, "Case/Default statement in invalid location.");
         stmt = BAD_STMT;
         break;
     case TOKEN_FOR:
@@ -841,6 +891,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
 
     decl_stmt->kind = STMT_MULTI_DECL;
     ASTDeclDA* decl_list = &decl_stmt->stmt.multi_decl;
+    memset(decl_list, 0, sizeof(ASTDeclDA));
     da_resize(decl_list, 1);
     decl_list->data[0].obj       = var;
     decl_list->data[0].init_expr = expr;
@@ -850,6 +901,7 @@ static ASTStmt* parse_declaration(Lexer* l, Type* type, ObjAttr attribs)
         da_resize(decl_list, decl_list->size + 1);
         var = new_obj(l, OBJ_VAR, VIS_DEFAULT, attribs);
         var->type = type;
+        var->var.kind = VAR_LOCAL;
         decl_list->data[decl_list->size - 1].obj = var;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))

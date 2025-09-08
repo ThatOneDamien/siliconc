@@ -28,7 +28,7 @@ static inline CastGroup type_to_group(Type* type);
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
     ASTExpr* inner = cast->expr.cast.inner;
-    if(!resolve_type(c, cast->type) || !analyze_expr(c, inner))
+    if(!resolve_type(c, &cast->type) || !analyze_expr(c, inner))
         return false;
     CastParams params;
     params.sema_context = c;
@@ -64,8 +64,9 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
 
 bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
 {
+    SIC_ASSERT(desired->status == STATUS_RESOLVED);
     ASTExpr* prev = *expr_to_cast;
-    if(!analyze_expr(c, prev) || !resolve_type(c, desired))
+    if(!analyze_expr(c, prev))
         return false;
     CastParams params;
     params.sema_context = c;
@@ -218,17 +219,17 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->expr.constant.val.i = inner->expr.constant.val.i;
-        uint32_t from_bit_width = type_size(inner->type) * 8;
-        uint32_t to_bit_width = type_size(cast->type) * 8;
+        uint32_t from_bit_width = inner->type->builtin.bit_size;
+        uint32_t to_bit_width = cast->type->builtin.bit_size;
         if(to_bit_width == 64)
             return;
 
         uint64_t val = cast->expr.constant.val.i;
-        int shift = 64 - to_bit_width; 
+        uint32_t shift = 64 - to_bit_width; 
         bool to_signed = type_is_signed(cast->type);
         if(from_bit_width < to_bit_width) // Extending
         {
-            if(to_signed || type_is_signed(inner->type) == to_signed)
+            if(to_signed || type_is_unsigned(inner->type))
                 return;
             cast->expr.constant.val.i = (val << shift) >> shift;
             return;

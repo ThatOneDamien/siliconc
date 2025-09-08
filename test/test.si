@@ -1,13 +1,9 @@
-priv fn other(int* a)
+pub fn main(int argc, ubyte** argv) -> int
 {
-    *a = 10;
-}
-
-pub fn main() -> int
-{
-    int a = 1;
-    printf("a = %d\n", a);
-    other(&a);
-    printf("a = %d\n", a);
+    typeof(argc)* a = nullptr;
+    for(int i = 0; i < argc; ++i)
+    {
+        printf("%s\n", argv[i]);
+    }
     return 0;
 }

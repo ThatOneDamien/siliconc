@@ -1,6 +1,9 @@
 #include "semantics.h"
 #include "utils/da.h"
 
+static void declare_function(SemaContext* c, Object* function);
+static void declare_global_var(SemaContext* c, Object* var);
+
 static void analyze_unit(SemaContext* c, CompilationUnit* unit);
 static void analyze_function(SemaContext* c, Object* function);
 static void analyze_global_var(SemaContext* c, Object* global_var);
@@ -35,10 +38,10 @@ void semantic_declaration(CompilationUnit* unit)
         declare_global_obj(&context, unit->types.data[i]);
 
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        declare_global_obj(&context, unit->funcs.data[i]);
+        declare_function(&context, unit->funcs.data[i]);
 
     for(uint32_t i = 0; i < unit->vars.size; ++i)
-        declare_global_obj(&context, unit->vars.data[i]);
+        declare_global_var(&context, unit->vars.data[i]);
 }
 
 void semantic_analysis(ModulePTRDA* modules)
@@ -89,6 +92,34 @@ bool expr_is_lvalue(ASTExpr* expr)
     }
 }
 
+static void declare_function(SemaContext* c, Object* function)
+{
+    declare_global_obj(c, function);
+    FuncSignature* sig = function->func.signature;
+    ObjectDA* params = &sig->params;
+
+    if(resolve_type(c, &sig->ret_type) && sig->ret_type->visibility < function->visibility)
+        sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
+
+    for(uint32_t i = 0; i < params->size; ++i)
+    {
+        Object* param = params->data[i];
+        if(!resolve_type(c, &param->type))
+            continue;
+        if(param->type->visibility < function->visibility)
+        {
+            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
+            continue;
+        }
+    }
+}
+
+static void declare_global_var(SemaContext* c, Object* var)
+{
+    declare_global_obj(c, var);
+    resolve_type(c, &var->type);
+}
+
 static void analyze_unit(SemaContext* c, CompilationUnit* unit)
 {
     c->unit = unit;
@@ -110,23 +141,8 @@ static void analyze_function(SemaContext* c, Object* function)
     uint32_t scope = push_scope();
     c->cur_func = function;
     ObjectDA* params = &function->func.signature->params;
-    Type* ret_type = function->func.signature->ret_type;
-
-    if(resolve_type(c, ret_type) && ret_type->visibility < function->visibility)
-        sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
-
     for(uint32_t i = 0; i < params->size; ++i)
-    {
-        Object* param = params->data[i];
-        if(!resolve_type(c, param->type))
-            continue;
-        push_obj(param);
-        if(param->type->visibility < function->visibility)
-        {
-            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
-            continue;
-        }
-    }
+        push_obj(params->data[i]);
 
     ASTStmt* stmt = function->func.body;
     while(stmt != NULL)
@@ -142,12 +158,15 @@ static void analyze_function(SemaContext* c, Object* function)
 static void analyze_global_var(SemaContext* c, Object* global_var)
 {
     ObjVar* var = &global_var->var;
-    if(var->global_initializer == NULL || 
+    if(var->global_initializer == NULL ||
        !implicit_cast(c, &var->global_initializer, global_var->type))
         return;
+    // TODO: Check that this is constant. Make a function that checks if an expression is constant,
+    // because something like &global_var, is technically a constant expression.
     if(global_var->type->visibility < global_var->visibility)
         // TODO: Make this error print the actual visibility of both.
         sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");
+
 }
 
 static bool analyze_main(Object* main)
@@ -229,9 +248,8 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         SIC_TODO();
     case STMT_MULTI_DECL: {
         ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        if(resolve_type(c, decl_list->data[0].obj->type))
-            for(uint32_t i = 0; i < decl_list->size; ++i)
-                analyze_declaration(c, decl_list->data + i);
+        for(uint32_t i = 0; i < decl_list->size; ++i)
+            analyze_declaration(c, decl_list->data + i);
         return;
     }
     case STMT_NOP:
@@ -239,12 +257,9 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
     case STMT_RETURN:
         analyze_return(c, stmt);
         return;
-    case STMT_SINGLE_DECL: {
-        ASTDeclaration* decl = &stmt->stmt.single_decl;
-        if(resolve_type(c, decl->obj->type))
-            analyze_declaration(c, decl);
+    case STMT_SINGLE_DECL:
+        analyze_declaration(c, &stmt->stmt.single_decl);
         return;
-    }
     case STMT_SWAP:
         analyze_swap(c, stmt);
         return;
@@ -378,10 +393,24 @@ static void analyze_while(SemaContext* c, ASTStmt* stmt)
 
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
-    Type* type = decl->obj->type;
+    Type** type_ref = &decl->obj->type;
     c->ident_mask = IDENT_VAR;
-    if(decl->init_expr != NULL)
-        implicit_cast(c, &decl->init_expr, type);
+    if((*type_ref)->kind == TYPE_AUTO)
+    {
+        if(decl->init_expr == NULL)
+        {
+            sic_error_at(decl->obj->loc, "Declaring a variable with auto requires "
+                                         "it to be initialized with an expression.");
+            return;
+        }
+        if(!analyze_expr(c, decl->init_expr))
+            return;
+        decl->obj->type = decl->init_expr->type;
+    }
+    else if(!resolve_type(c, type_ref))
+        return;
+    else if(decl->init_expr != NULL)
+        implicit_cast(c, &decl->init_expr, *type_ref);
     push_obj(decl->obj);
 }
 
@@ -459,7 +488,7 @@ static void analyze_enum_obj(SemaContext* c, Object* type_obj)
     enum_type->user_def = type_obj;
     if(enum_->underlying == NULL)
         enum_->underlying = g_type_int;
-    else if(!resolve_type(c, enum_->underlying) ||
+    else if(!resolve_type(c, &enum_->underlying) ||
             !type_is_integer(enum_->underlying))
     {
         sic_error_at(type_obj->loc, "Expected integral underlying type for enum.");
@@ -507,23 +536,22 @@ static void analyze_struct_obj(SemaContext* c, Object* type_obj)
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        Type* next_ty = member->type;
-        if(!resolve_type(c, next_ty))
+        if(!resolve_type(c, &member->type))
         {
             check_circular_def(c, type_obj, member->loc);
             type_obj->kind = OBJ_INVALID;
             continue;
         }
-        if(next_ty->visibility < type_obj->visibility)
+        if(member->type->visibility < type_obj->visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->loc, "Member has type with less visibility than parent.");
             type_obj->kind = OBJ_INVALID;
             continue;
         }
-        uint32_t align = type_alignment(next_ty);
+        uint32_t align = type_alignment(member->type);
         SIC_ASSERT(is_pow_of_2(align));
-        struct_->size = ALIGN_UP(struct_->size, align) + type_size(next_ty);
+        struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type);
         struct_->align = MAX(struct_->align, align);
 
     }
@@ -537,25 +565,24 @@ static void analyze_union_obj(SemaContext* c, Object* type_obj)
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        Type* next_ty = member->type;
-        if(!resolve_type(c, next_ty))
+        if(!resolve_type(c, &member->type))
         {
-            check_circular_def(c, next_ty->user_def, member->loc);
+            check_circular_def(c, member->type->user_def, member->loc);
             type_obj->kind = OBJ_INVALID;
             continue;
         }
-        if(next_ty->visibility < type_obj->visibility)
+        if(member->type->visibility < type_obj->visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->loc, "Member has type with less visibility than parent.");
             type_obj->kind = OBJ_INVALID;
             continue;
         }
-        uint32_t next_size = type_size(next_ty);
+        uint32_t next_size = type_size(member->type);
         if(largest_size < next_size)
         {
             largest_size = next_size;
-            struct_->largest_type = next_ty;
+            struct_->largest_type = member->type;
         }
     }
 }

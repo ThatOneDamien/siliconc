@@ -36,7 +36,7 @@ void     analyze_type_obj(SemaContext* c, Object* type_obj, bool is_pointer);
 bool     analyze_cast(SemaContext* c, ASTExpr* cast);
 bool     implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
 void     implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
-bool     resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer);
+bool     resolve_type_or_ptr(SemaContext* c, Type** type_ref, bool is_pointer);
 void     push_obj(Object* obj);
 Object*  find_obj(SemaContext* c, Symbol symbol);
 uint32_t push_scope();
@@ -53,11 +53,11 @@ static inline bool expr_ensure_lvalue(ASTExpr* expr)
     return true;
 }
 
-static inline bool resolve_type(SemaContext* c, Type* type)
+static inline bool resolve_type(SemaContext* c, Type** type_ref)
 {
-    if(!resolve_type_or_ptr(c, type, false))
+    if(!resolve_type_or_ptr(c, type_ref, false))
     {
-        type->kind = TYPE_INVALID;
+        (*type_ref)->kind = TYPE_INVALID;
         return false;
     }
     return true;

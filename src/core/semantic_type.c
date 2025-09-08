@@ -1,21 +1,27 @@
 #include "semantics.h"
 
 static bool resolve_array(SemaContext* c, Type* arr_ty);
+static bool resolve_typeof(SemaContext* c, Type** type_ref, Type* typeof);
 static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer);
 
-bool resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer)
+bool resolve_type_or_ptr(SemaContext* c, Type** type_ref, bool is_pointer)
 {
     SIC_ASSERT(c != NULL);
-    SIC_ASSERT(type != NULL);
+    SIC_ASSERT(type_ref != NULL);
+    SIC_ASSERT(*type_ref != NULL);
+    Type* type = *type_ref;
     if(type->status == STATUS_RESOLVED)
         return type->kind != TYPE_INVALID;
     if(type->status == STATUS_RESOLVING)
         SIC_UNREACHABLE();
     switch(type->kind)
     {
+    case TYPE_AUTO:
+        sic_error_at(type->auto_loc, "Type 'auto' not allowed in this context.");
+        return false;
     case TYPE_POINTER:
         type->status = STATUS_RESOLVED;
-        if(!resolve_type_or_ptr(c, type->pointer_base, true))
+        if(!resolve_type_or_ptr(c, &type->pointer_base, true))
             return false;
         type->visibility = type->pointer_base->visibility;
         return true;
@@ -23,9 +29,8 @@ bool resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer)
         return resolve_array(c, type);
     case TYPE_STRUCT:
         return resolve_user(c, type, is_pointer);
-    case TYPE_ENUM:
-    case TYPE_TYPEDEF:
-    case TYPE_UNION:
+    case TYPE_TYPEOF:
+        return resolve_typeof(c, type_ref, type);
     default:
         SIC_UNREACHABLE();
     }
@@ -34,28 +39,26 @@ bool resolve_type_or_ptr(SemaContext* c, Type* type, bool is_pointer)
 
 static bool resolve_array(SemaContext* c, Type* arr_ty)
 {
-    Type* elem_type = arr_ty->array.elem_type;
-    ASTExpr* size_expr = arr_ty->array.size_expr;
-    if(!resolve_type(c, elem_type))
+    TypeArray* arr = &arr_ty->array;
+    if(!resolve_type(c, &arr->elem_type))
         return false;
 
-    analyze_expr(c, size_expr);
     // TODO: Check for negative size expr, that is BAD.
     //       For now negative sizes are implicitly casted to ulong, which
     //       means ubyte[-1] tries to allocate quintillions of bytes!! :)
-    if(expr_is_bad(size_expr) || !type_is_integer(size_expr->type) ||
-       !implicit_cast(c, &arr_ty->array.size_expr, g_type_ulong))
+    if(!analyze_expr(c, arr->size_expr) || !type_is_integer(arr->size_expr->type) ||
+       !implicit_cast(c, &arr->size_expr, g_type_ulong))
         return false;
 
     arr_ty->status = STATUS_RESOLVED;
-    arr_ty->visibility = elem_type->visibility;
+    arr_ty->visibility = arr->elem_type->visibility;
 
-    if(size_expr->kind == EXPR_CONSTANT)
+    if(arr->size_expr->kind == EXPR_CONSTANT)
     {
-        SIC_ASSERT(size_expr->expr.constant.kind == CONSTANT_INTEGER &&
-                   size_expr->type->kind == TYPE_ULONG);
+        SIC_ASSERT(arr->size_expr->expr.constant.kind == CONSTANT_INTEGER &&
+                   arr->size_expr->type->kind == TYPE_ULONG);
         arr_ty->kind = TYPE_SS_ARRAY;
-        arr_ty->array.ss_size = size_expr->expr.constant.val.i;
+        arr_ty->array.ss_size = arr->size_expr->expr.constant.val.i;
         return true;
     }
 
@@ -63,7 +66,14 @@ static bool resolve_array(SemaContext* c, Type* arr_ty)
     return true;
 }
 
-
+static bool resolve_typeof(SemaContext* c, Type** type_ref, Type* typeof)
+{
+    ASTExpr* expr = typeof->type_of;
+    if(!analyze_expr(c, expr))
+        return false;
+    *type_ref = expr->type;
+    return true;
+}
 
 static bool resolve_user(SemaContext* c, Type* user_ty, bool is_pointer)
 {

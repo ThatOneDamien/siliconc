@@ -111,6 +111,28 @@ static inline bool type_is_integer(Type* ty)
     return ty->kind >= TYPE_INTEGER_START && ty->kind <= TYPE_INTEGER_END;
 }
 
+static inline Type* type_to_unsigned(Type* ty)
+{
+    SIC_ASSERT(type_is_integer(ty));
+    switch(ty->kind)
+    {
+    case TYPE_BYTE:
+    case TYPE_UBYTE:
+        return g_type_ubyte;
+    case TYPE_SHORT:
+    case TYPE_USHORT:
+        return g_type_ushort;
+    case TYPE_INT:
+    case TYPE_UINT:
+        return g_type_uint;
+    case TYPE_LONG:
+    case TYPE_ULONG:
+        return g_type_ulong;
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
 static inline bool type_is_signed(Type* ty)
 {
     static_assert((TYPE_BYTE & 1) == 1, "Adjust type methods.");

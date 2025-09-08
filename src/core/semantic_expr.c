@@ -70,7 +70,7 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(c, expr);
     case EXPR_CONSTANT:
-        return resolve_type(c, expr->type);
+        return resolve_type(c, &expr->type);
     case EXPR_INVALID:
         return false;
     case EXPR_TERNARY:
@@ -241,7 +241,7 @@ static bool analyze_ident(SemaContext* c, ASTExpr* expr)
 {
     // TODO: Add better handling of enum constants.
     Symbol sym = expr->expr.pre_sema_ident;
-    ASTExprIdent ident = find_obj(c, sym);
+    Object* ident = find_obj(c, sym);
     if(ident == NULL)
         ERROR_AND_RET(false, expr->loc, "Reference to undefined symbol \'%s\'.", sym);
 
@@ -277,10 +277,18 @@ static bool analyze_ident(SemaContext* c, ASTExpr* expr)
         if(BIT_IS_UNSET(c->ident_mask, IDENT_VAR))
             ERROR_AND_RET(false, expr->loc, "Variable not allowed in this context.");
         expr->type = ident->type;
-        expr->kind = EXPR_IDENT;
+        if(ident->attribs & ATTR_CONST)
+        {
+            expr->kind = EXPR_CONSTANT;
+            expr->expr.constant.val = ident->var.const_val;
+        }
+        else
+        {
+            expr->kind = EXPR_IDENT;
+        }
         break;
     case OBJ_INVALID:
-        SIC_UNREACHABLE();
+        return false;
     }
     expr->expr.ident = ident;
     return true;
@@ -345,12 +353,15 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static Object* resolve_member(Type* type, ASTExprUAccess* access)
+static Object* resolve_member(Type* type, ASTExprUAccess* access, uint32_t* index)
 {
     ObjectDA* members = &type->user_def->struct_.members;
     for(uint32_t i = 0; i < members->size; ++i)
         if(members->data[i]->symbol == access->member_sym)
+        {
+            *index = i;
             return members->data[i];
+        }
     sic_error_at(access->member_loc, "Type \'%s\' has no member \'%s\'.",
                type_to_string(type), access->member_sym);
     return NULL;
@@ -375,7 +386,7 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
     deref->expr.unary.inner = parent;
-    Object* member = resolve_member(deref->type, uaccess);
+    Object* member = resolve_member(deref->type, uaccess, &expr->expr.member_access.member_idx);
     if(member == NULL)
         return false;
 
@@ -430,7 +441,7 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
         return false;
     }
 
-    Object* member = resolve_member(parent->type, uaccess);
+    Object* member = resolve_member(parent->type, uaccess, &expr->expr.member_access.member_idx);
     
     if(member == NULL)
         return false;
@@ -590,10 +601,27 @@ static bool analyze_shift(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr*
         return false;
     }
 
-    if(type_size(left->type) != type_size(right->type) && !implicit_cast(c, rhs, left->type))
+    if(type_size(left->type) != type_size(right->type) && !implicit_cast(c, rhs, type_to_unsigned(left->type)))
         return false;
-
+    
     expr->type = left->type;
+    if(right->kind == EXPR_CONSTANT)
+    {
+        if(right->expr.constant.val.i >= left->type->builtin.bit_size)
+            sic_diagnostic_at(expr->loc, DIAG_WARNING, "Shift amount >= integer width.");
+
+        if(left->kind == EXPR_CONSTANT)
+        {
+            BinaryOpKind kind = expr->expr.binary.kind;
+            if(kind == BINARY_SHL)
+            {
+                // expr->
+            }
+        }
+
+    }
+
+
     return true;
 }
 
