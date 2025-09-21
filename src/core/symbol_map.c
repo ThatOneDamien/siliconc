@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 
 #define SYM_MAP_DEFAULT_CAP (1024ul * 256ul)
+#define SYM_ADD(s) str = s; len = sizeof(s) - 1; sym_map_internal_add(str, len, fnv_hash(str, len), &kind, true)
 
 typedef struct SymMapEntry SymMapEntry;
 typedef struct SymbolMap   SymbolMap;
@@ -28,18 +29,27 @@ static Symbol sym_map_internal_get(const char* str, uint32_t len, uint32_t hash,
 
 static SymbolMap s_sym_map;
 
+Symbol g_sym_len;
+
 void sym_map_init(void)
 {
     size_t capacity = SYM_MAP_DEFAULT_CAP * sizeof(SymMapEntry*);
     s_sym_map.buckets = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     s_sym_map.mask = capacity - 1;
     memset(s_sym_map.buckets, 0, capacity);
-    for(TokenKind kw = TOKEN_KEYWORD_START; kw <= TOKEN_KEYWORD_END; ++kw)
+
+    TokenKind kind;
+    const char* str;
+    size_t len;
+    for(kind = TOKEN_KEYWORD_START; kind <= TOKEN_KEYWORD_END; ++kind)
     {
-        const char* str = tok_kind_to_str(kw);
-        size_t len = strlen(str);
-        sym_map_internal_add(str, len, fnv_hash(str, len), &kw, true);
+        str = tok_kind_to_str(kind);
+        len = strlen(str);
+        sym_map_internal_add(str, len, fnv_hash(str, len), &kind, true);
     }
+
+    kind = TOKEN_IDENT;
+    g_sym_len = SYM_ADD("len");
 }
 
 Symbol sym_map_addn(const char* str, uint32_t len, TokenKind* kind)

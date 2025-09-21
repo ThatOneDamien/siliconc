@@ -9,7 +9,7 @@
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr);
 static bool analyze_binary(SemaContext* c, ASTExpr* expr);
 static bool analyze_call(SemaContext* c, ASTExpr* expr);
-static bool analyze_ident(SemaContext* c, ASTExpr* expr);
+static bool analyze_ident(SemaContext* c, ASTExpr** expr_ref);
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr);
 static bool analyze_unary(SemaContext* c, ASTExpr* expr);
 static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr);
@@ -38,8 +38,9 @@ static bool analyze_negate(SemaContext* c, ASTExpr* expr, ASTExpr* inner);
 static bool arith_type_conv(SemaContext* c, ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(SemaContext* c, ASTExpr** expr);
 
-bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
+bool analyze_expr_no_set(SemaContext* c, ASTExpr** expr_ref)
 {
+    ASTExpr* expr = *expr_ref;
     if(expr->evaluated)
         return expr->kind != EXPR_INVALID;
     expr->evaluated = true;
@@ -57,12 +58,11 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
         return analyze_call(c, expr);
     case EXPR_INITIALIZER_LIST:
         ERROR_AND_RET(false, expr->loc, "Initializer list not allowed in this context.");
-    case EXPR_POSTFIX: {
-        ASTExpr* inner = expr->expr.unary.inner;
-        return analyze_expr(c, inner) && analyze_incdec(c, expr, inner);
-    }
+    case EXPR_POSTFIX:
+        return analyze_expr(c, &expr->expr.unary.inner) && 
+               analyze_incdec(c, expr, expr->expr.unary.inner);
     case EXPR_PRE_SEMANTIC_IDENT:
-        return analyze_ident(c, expr);
+        return analyze_ident(c, expr_ref);
     case EXPR_UNARY:
         return analyze_unary(c, expr);
     case EXPR_UNRESOLVED_ARR:
@@ -70,14 +70,13 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(c, expr);
     case EXPR_CONSTANT:
-        return resolve_type(c, &expr->type);
+        return resolve_type(c, &expr->type, RES_NORMAL);
     case EXPR_INVALID:
         return false;
     case EXPR_TERNARY:
         return analyze_ternary(c, expr);
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
-    case EXPR_NOP:
     case EXPR_TYPE_IDENT:
         break;
     }
@@ -87,13 +86,13 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr* expr)
 static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
 {
     bool valid = true;
+    c->ident_mask = IDENT_VAR_ONLY;
+    ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.array_expr);
+    c->ident_mask = IDENT_VAR_ONLY;
+    ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.index_expr);
+    IF_INVALID_RET();
     ASTExpr* arr = expr->expr.array_access.array_expr;
     ASTExpr* index = expr->expr.array_access.index_expr;
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_SET_VALID(arr);
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_SET_VALID(index);
-    IF_INVALID_RET();
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
@@ -102,7 +101,7 @@ static bool analyze_array_access(SemaContext* c, ASTExpr* expr)
                       type_to_string(arr->type));
     }
 
-    if(arr->type->kind == TYPE_SS_ARRAY && index->kind == EXPR_CONSTANT && 
+    if(arr->type->kind == TYPE_STATIC_ARRAY && index->kind == EXPR_CONSTANT && 
        index->expr.constant.val.i >= arr->type->array.ss_size)
     {
         sic_diagnostic_at(expr->loc, DIAG_WARNING,
@@ -119,15 +118,13 @@ static inline bool analyze_binary(SemaContext* c, ASTExpr* expr)
     bool valid = true;
     ASTExpr** lhs = &expr->expr.binary.lhs;
     ASTExpr** rhs = &expr->expr.binary.rhs;
-    ASTExpr* left = expr->expr.binary.lhs;
-    ASTExpr* right = expr->expr.binary.rhs;
     BinaryOpKind kind = expr->expr.binary.kind;
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_SET_VALID(left);
-    if(kind != BINARY_ASSIGN || right->kind != EXPR_DEFAULT)
+    c->ident_mask = IDENT_VAR_ONLY;
+    ANALYZE_EXPR_SET_VALID(lhs);
+    if(kind != BINARY_ASSIGN || (*rhs)->kind != EXPR_DEFAULT)
     {
-        c->ident_mask = IDENT_VAR;
-        ANALYZE_EXPR_SET_VALID(right);
+        c->ident_mask = IDENT_VAR_ONLY;
+        ANALYZE_EXPR_SET_VALID(rhs);
     }
     IF_INVALID_RET();
     switch(expr->expr.binary.kind)
@@ -183,8 +180,8 @@ static inline bool analyze_binary(SemaContext* c, ASTExpr* expr)
 static bool analyze_call(SemaContext* c, ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
-    c->ident_mask = IDENT_VAR | IDENT_FUNC;
-    ANALYZE_EXPR_OR_RET(call->func_expr);
+    c->ident_mask = IDENT_VAR_ONLY | IDENT_FUNC;
+    ANALYZE_EXPR_OR_RET(&call->func_expr);
 
     Object* func = call->func_expr->expr.ident;
     FuncSignature* sig = func->func.signature;
@@ -205,30 +202,22 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         Object* param = sig->params.data[i];
-        ASTExpr* arg = call->args.data[i];
         if(!implicit_cast(c, call->args.data + i, param->type))
         {
             valid = false;
             continue;
         }
-        if((param->var.param_flags & PARAM_OUT) && !expr_is_lvalue(arg))
-        {
-            sic_error_at(arg->loc, "Argument passed as out parameter '%s' must be assignable.", 
-                         param->symbol);
-            valid = false;
-        }
     }
 
     for(uint32_t i = sig->params.size; i < call->args.size; ++i)
     {
-        ASTExpr* arg = call->args.data[i];
-        
+        ASTExpr** arg = call->args.data + i;
         if(!analyze_expr(c, arg))
         {
             valid = false;
             continue;
         }
-        implicit_cast_varargs(c, call->args.data + i);
+        implicit_cast_varargs(c, arg);
     }
 
 
@@ -237,9 +226,9 @@ static bool analyze_call(SemaContext* c, ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(SemaContext* c, ASTExpr* expr)
+static bool analyze_ident(SemaContext* c, ASTExpr** expr_ref)
 {
-    // TODO: Add better handling of enum constants.
+    ASTExpr* expr = *expr_ref;
     Symbol sym = expr->expr.pre_sema_ident;
     Object* ident = find_obj(c, sym);
     if(ident == NULL)
@@ -260,77 +249,84 @@ static bool analyze_ident(SemaContext* c, ASTExpr* expr)
             ERROR_AND_RET(false, expr->loc, "Function identifier not allowed in this context, expected expression.");
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
-        break;
+        expr->expr.ident = ident;
+        return true;
     case OBJ_BITFIELD:
     case OBJ_ENUM:
         if(BIT_IS_UNSET(c->ident_mask, IDENT_ENUM))
             ERROR_AND_RET(false, expr->loc, "Type identifier not allowed in this context, expected expression.");
-        expr->type = NULL;
+        expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
-        break;
+        expr->expr.ident = ident;
+        return true;
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
     case OBJ_TYPE_DISTINCT:
     case OBJ_UNION:
         ERROR_AND_RET(false, expr->loc, "Type identifier not an enum.");
     case OBJ_VAR:
-        if(BIT_IS_UNSET(c->ident_mask, IDENT_VAR))
-            ERROR_AND_RET(false, expr->loc, "Variable not allowed in this context.");
-        expr->type = ident->type;
+        if(ident->var.kind == VAR_GLOBAL)
+        {
+            analyze_global_var(c, ident);
+            if(ident->kind == OBJ_INVALID)
+                return false;
+        }
+
         if(ident->attribs & ATTR_CONST)
         {
-            expr->kind = EXPR_CONSTANT;
-            expr->expr.constant.val = ident->var.const_val;
+            *expr_ref = ident->var.initial_val;
+            return true;
         }
-        else
-        {
-            expr->kind = EXPR_IDENT;
-        }
-        break;
+
+        expr->type = ident->type;
+        expr->kind = EXPR_IDENT;
+        expr->expr.ident = ident;
+        return true;
     case OBJ_INVALID:
         return false;
     }
-    expr->expr.ident = ident;
-    return true;
+    SIC_UNREACHABLE();
 }
 
 static bool analyze_ternary(SemaContext* c, ASTExpr* expr)
 {
-    bool valid = true;
-    ASTExpr* cond = expr->expr.ternary.cond_expr;
-    ASTExpr* then = expr->expr.ternary.then_expr;
-    ASTExpr* elss = expr->expr.ternary.else_expr;
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_SET_VALID(cond);
-    if(then != NULL)
-    {
-        c->ident_mask = IDENT_VAR;
-        ANALYZE_EXPR_SET_VALID(then);
-    }
-    else
-        then = cond;
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_SET_VALID(elss);
-    IF_INVALID_RET();
-
-    if(type_equal(then->type, elss->type))
-        goto EXIT;
-
-    if(!arith_type_conv(c, expr, &expr->expr.ternary.then_expr, &expr->expr.ternary.else_expr))
-        return false;
-EXIT:
-    expr->type = elss->type;
-    return implicit_cast(c, &expr->expr.ternary.cond_expr, g_type_bool);
+    (void)c;
+    (void)expr;
+    SIC_TODO_MSG("Fix required");
+    return false;
+//     ASTExprTernary* tern = &expr->expr.ternary;
+//     bool valid = true;
+//     c->ident_mask = IDENT_VAR;
+//     ANALYZE_EXPR_SET_VALID(&tern->cond_expr);
+//     if(tern->then_expr != NULL)
+//     {
+//         c->ident_mask = IDENT_VAR;
+//         ANALYZE_EXPR_SET_VALID(&tern->then_expr);
+//     }
+//     else
+//         then = cond;
+//     c->ident_mask = IDENT_VAR;
+//     ANALYZE_EXPR_SET_VALID(elss);
+//     IF_INVALID_RET();
+//
+//     if(type_equal(then->type, elss->type))
+//         goto EXIT;
+//
+//     if(!arith_type_conv(c, expr, &expr->expr.ternary.then_expr, &expr->expr.ternary.else_expr))
+//         return false;
+// EXIT:
+//     expr->type = elss->type;
+//     return implicit_cast(c, &expr->expr.ternary.cond_expr, g_type_bool);
 }
 
 static bool analyze_unary(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUnary* unary = &expr->expr.unary;
-    ASTExpr* inner = unary->inner;
     c->ident_mask = unary->kind == UNARY_ADDR_OF ? 
-                        IDENT_VAR | IDENT_FUNC :
-                        IDENT_VAR;
-    ANALYZE_EXPR_OR_RET(inner);
+                        IDENT_FUNC :
+                        IDENT_VAR_ONLY;
+    ANALYZE_EXPR_OR_RET(&unary->inner);
+    ASTExpr* inner = unary->inner;
     
     switch(unary->kind)
     {
@@ -353,30 +349,80 @@ static bool analyze_unary(SemaContext* c, ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static Object* resolve_member(Type* type, ASTExprUAccess* access, uint32_t* index)
+static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
 {
-    ObjectDA* members = &type->user_def->struct_.members;
-    for(uint32_t i = 0; i < members->size; ++i)
-        if(members->data[i]->symbol == access->member_sym)
+    ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    Symbol member = uaccess->member_sym;
+    SIC_ASSERT(parent->type->status == STATUS_RESOLVED);
+    switch(parent->type->kind)
+    {
+    case TYPE_STATIC_ARRAY:
+        if(member == g_sym_len)
         {
-            *index = i;
-            return members->data[i];
+            expr->kind = EXPR_CONSTANT;
+            expr->expr.constant.kind = CONSTANT_INTEGER;
+            expr->expr.constant.val.i = parent->type->array.ss_size;
+            expr->type = g_type_ulong;
+            return true;
         }
-    sic_error_at(access->member_loc, "Type \'%s\' has no member \'%s\'.",
-               type_to_string(type), access->member_sym);
+        break;
+    case TYPE_RUNTIME_ARRAY:
+    case TYPE_ENUM:
+        SIC_TODO();
+    case TYPE_STRUCT:
+    case TYPE_UNION: {
+        ObjectDA* members = &parent->type->user_def->struct_.members;
+        for(uint32_t i = 0; i < members->size; ++i)
+            if(members->data[i]->symbol == member)
+            {
+                expr->kind = EXPR_MEMBER_ACCESS;
+                expr->expr.member_access.parent_expr = parent;
+                expr->expr.member_access.member = members->data[i];
+                expr->expr.member_access.member_idx = i;
+                expr->type = members->data[i]->type;
+                return true;
+            }
+        break;
+    }
+    case TYPE_VOID:
+    case TYPE_BOOL:
+    case TYPE_BYTE:
+    case TYPE_UBYTE:
+    case TYPE_SHORT:
+    case TYPE_USHORT:
+    case TYPE_INT:
+    case TYPE_UINT:
+    case TYPE_LONG:
+    case TYPE_ULONG:
+    case TYPE_FLOAT:
+    case TYPE_DOUBLE:
+    case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
+        break;
+    case TYPE_INVALID:
+    case TYPE_TYPEDEF:
+    case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
+    case __TYPE_COUNT:
+        SIC_UNREACHABLE();
+    }
+    sic_error_at(uaccess->member_loc, "Type \'%s\' has no member \'%s\'.",
+                 type_to_string(parent->type), member);
     return NULL;
 }
 
 static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    c->ident_mask = IDENT_VAR_ONLY;
+    ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
     ASTExpr* parent = uaccess->parent_expr;
-    c->ident_mask = IDENT_VAR;
-    ANALYZE_EXPR_OR_RET(parent);
 
-    if(parent->type->kind != TYPE_POINTER || !type_is_user_def(parent->type->pointer_base))
+    if(parent->type->kind != TYPE_POINTER)
     {
-        sic_error_at(expr->loc, "Arrow operator can only be used on pointers to structure-like types.");
+        sic_error_at(expr->loc, "Arrow operator can only be used on pointers.");
         return false;
     }
 
@@ -385,24 +431,16 @@ static bool analyze_unresolved_arrow(SemaContext* c, ASTExpr* expr)
     deref->loc = expr->loc;
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
-    deref->expr.unary.inner = parent;
-    Object* member = resolve_member(deref->type, uaccess, &expr->expr.member_access.member_idx);
-    if(member == NULL)
-        return false;
-
-    expr->kind = EXPR_MEMBER_ACCESS;
-    expr->expr.member_access.parent_expr = deref;
-    expr->expr.member_access.member = member;
-    expr->type = member->type;
-    return true;
+    deref->expr.unary.inner = uaccess->parent_expr;
+    return resolve_member(expr, deref);
 }
 
 static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    c->ident_mask = IDENT_ENUM;
+    ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
     ASTExpr* parent = uaccess->parent_expr;
-    c->ident_mask = IDENT_VAR | IDENT_ENUM;
-    ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
@@ -424,7 +462,7 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
         return false;
     }
 
-    if(parent->type->kind == TYPE_POINTER && type_is_user_def(parent->type->pointer_base))
+    if(parent->type->kind == TYPE_POINTER)
     {
         ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
         deref->type = parent->type->pointer_base;
@@ -434,31 +472,16 @@ static bool analyze_unresolved_dot(SemaContext* c, ASTExpr* expr)
         deref->expr.unary.inner = parent;
         parent = deref;
     }
-    else if(!type_is_user_def(parent->type))
-    {
-        sic_error_at(uaccess->member_loc, "Attempted to access member of non-structure type \'%s\'.",
-                   type_to_string(parent->type));
-        return false;
-    }
 
-    Object* member = resolve_member(parent->type, uaccess, &expr->expr.member_access.member_idx);
-    
-    if(member == NULL)
-        return false;
-
-    expr->kind = EXPR_MEMBER_ACCESS;
-    expr->expr.member_access.parent_expr = parent;
-    expr->expr.member_access.member = member;
-    expr->type = member->type;
-    return true;
+    return resolve_member(expr, parent);
 }
 
 static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
     ASTExpr* right = *rhs;
-    bool left_is_pointer = type_is_pointer(left->type) || left->type->kind == TYPE_SS_ARRAY;
-    bool right_is_pointer = type_is_pointer(right->type) || right->type->kind == TYPE_SS_ARRAY;
+    bool left_is_pointer = type_is_pointer(left->type) || left->type->kind == TYPE_STATIC_ARRAY;
+    bool right_is_pointer = type_is_pointer(right->type) || right->type->kind == TYPE_STATIC_ARRAY;
     if(right_is_pointer)
     {
         left_is_pointer = true;
@@ -480,7 +503,7 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** 
         // This checks if the constant indexing will overflow the size of the static
         // array. This check is not done for ds-arrays or when the index expression 
         // is calculated at runtime. 
-        if(left->type->kind == TYPE_SS_ARRAY && right->kind == EXPR_CONSTANT && 
+        if(left->type->kind == TYPE_STATIC_ARRAY && right->kind == EXPR_CONSTANT && 
            right->expr.constant.val.i >= left->type->array.ss_size)
         {
             sic_diagnostic_at(expr->loc, DIAG_WARNING,
@@ -497,12 +520,10 @@ static bool analyze_add(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTExpr** 
     left = *lhs;
     right = *rhs;
 
-    // if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
-    // {
-    //     expr->kind = EXPR_CONSTANT;
-    //     if(left->expr.constant.kind == CONSTANT_INTEGER)
-    //         expr->kind 
-    // }
+    if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
+    {
+        expr->kind = EXPR_CONSTANT;
+    }
 
     expr->type = left->type;
     return true;
@@ -685,13 +706,25 @@ static bool analyze_op_assign(SemaContext* c, ASTExpr* expr, ASTExpr** lhs, ASTE
 static bool analyze_addr_of(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
 {
     (void)c;
-    if(inner->kind != EXPR_IDENT)
+    if(inner->kind == EXPR_IDENT)
     {
-        sic_error_at(expr->loc, "Cannot take address of rvalue.");
-        return false;
+        Object* ident = inner->expr.ident;
+        switch(ident->kind)
+        {
+        case OBJ_FUNC:
+        case OBJ_VAR:
+        default:
+            goto ERR;
+        }
+    }
+    if(inner->kind != EXPR_IDENT && !expr_is_lvalue(inner))
+    {
     }
     expr->type = type_pointer_to(inner->type);
     return true;
+ERR:
+    sic_error_at(expr->loc, "Cannot take address of rvalue.");
+    return false;
 }
 
 static bool analyze_bit_not(SemaContext* c, ASTExpr* expr, ASTExpr** inner)
@@ -717,8 +750,8 @@ static bool analyze_deref(SemaContext* c, ASTExpr* expr, ASTExpr* inner)
     case TYPE_POINTER:
         expr->type = inner->type->pointer_base;
         return true;
-    case TYPE_SS_ARRAY:
-    case TYPE_DS_ARRAY:
+    case TYPE_STATIC_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         expr->type = inner->type->array.elem_type;
         return true;
     default:

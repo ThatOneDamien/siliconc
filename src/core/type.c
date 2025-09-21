@@ -1,42 +1,44 @@
 #include "internal.h"
 
-#define BUILTIN_DEF(TYPE, SIZE)     \
+#define BUILTIN_DEF(type, size)     \
 {                                   \
-    .kind = TYPE,                   \
+    .kind = type,                   \
     .status = STATUS_RESOLVED,      \
     .visibility = VIS_PUBLIC,       \
     .builtin = {                    \
-        .bit_size  = SIZE * 8,      \
-        .byte_size = SIZE           \
+        .bit_size  = size * 8,      \
+        .byte_size = size           \
     }                               \
 }
 
-static Type s_void   = BUILTIN_DEF(TYPE_VOID   ,  0);
-static Type s_bool   = BUILTIN_DEF(TYPE_BOOL   ,  1);
-static Type s_ubyte  = BUILTIN_DEF(TYPE_UBYTE  ,  1);
-static Type s_ushort = BUILTIN_DEF(TYPE_USHORT ,  2);
-static Type s_uint   = BUILTIN_DEF(TYPE_UINT   ,  4);
-static Type s_ulong  = BUILTIN_DEF(TYPE_ULONG  ,  8);
-static Type s_byte   = BUILTIN_DEF(TYPE_BYTE   ,  1);
-static Type s_short  = BUILTIN_DEF(TYPE_SHORT  ,  2);
-static Type s_int    = BUILTIN_DEF(TYPE_INT    ,  4);
-static Type s_long   = BUILTIN_DEF(TYPE_LONG   ,  8);
-static Type s_float  = BUILTIN_DEF(TYPE_FLOAT  ,  4);
-static Type s_double = BUILTIN_DEF(TYPE_DOUBLE ,  8);
+static Type s_invalid = { .kind = TYPE_INVALID, .status = STATUS_RESOLVED };
+static Type s_void    = BUILTIN_DEF(TYPE_VOID   ,  0);
+static Type s_bool    = BUILTIN_DEF(TYPE_BOOL   ,  1);
+static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE  ,  1);
+static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT ,  2);
+static Type s_uint    = BUILTIN_DEF(TYPE_UINT   ,  4);
+static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG  ,  8);
+static Type s_byte    = BUILTIN_DEF(TYPE_BYTE   ,  1);
+static Type s_short   = BUILTIN_DEF(TYPE_SHORT  ,  2);
+static Type s_int     = BUILTIN_DEF(TYPE_INT    ,  4);
+static Type s_long    = BUILTIN_DEF(TYPE_LONG   ,  8);
+static Type s_float   = BUILTIN_DEF(TYPE_FLOAT  ,  4);
+static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE ,  8);
 
 // Builtin-types
-Type* g_type_void   = &s_void;
-Type* g_type_bool   = &s_bool;
-Type* g_type_ubyte  = &s_ubyte;
-Type* g_type_ushort = &s_ushort;
-Type* g_type_uint   = &s_uint;
-Type* g_type_ulong  = &s_ulong;
-Type* g_type_byte   = &s_byte;
-Type* g_type_short  = &s_short;
-Type* g_type_int    = &s_int;
-Type* g_type_long   = &s_long;
-Type* g_type_float  = &s_float;
-Type* g_type_double = &s_double;
+Type* g_type_invalid = &s_invalid;
+Type* g_type_void    = &s_void;
+Type* g_type_bool    = &s_bool;
+Type* g_type_ubyte   = &s_ubyte;
+Type* g_type_ushort  = &s_ushort;
+Type* g_type_uint    = &s_uint;
+Type* g_type_ulong   = &s_ulong;
+Type* g_type_byte    = &s_byte;
+Type* g_type_short   = &s_short;
+Type* g_type_int     = &s_int;
+Type* g_type_long    = &s_long;
+Type* g_type_float   = &s_float;
+Type* g_type_double  = &s_double;
 
 static Type* builtin_type_lookup[] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
@@ -59,21 +61,16 @@ Type* type_from_token(TokenKind type_token)
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 
-Type* type_copy(const Type* orig)
-{
-    SIC_ASSERT(orig != NULL);
-    Type* new_type = MALLOC_STRUCT(Type);
-    memcpy(new_type, orig, sizeof(Type));
-    return new_type;
-}
-
 Type* type_pointer_to(Type* base)
 {
     SIC_ASSERT(base != NULL);
-    Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_POINTER;
-    new_type->pointer_base = base;
-    return new_type;
+    if(base->ptr_cache == NULL)
+    {
+        base->ptr_cache = CALLOC_STRUCT(Type);
+        base->ptr_cache->kind = TYPE_POINTER;
+        base->ptr_cache->pointer_base = base;
+    }
+    return base->ptr_cache;
 }
 
 Type* type_func_ptr(FuncSignature* signature)
@@ -131,11 +128,11 @@ bool type_equal(Type* t1, Type* t2)
                 return false;
         return true;
     }
-    case TYPE_DS_ARRAY:
-        return false;
-    case TYPE_SS_ARRAY:
+    case TYPE_STATIC_ARRAY:
         return t1->array.ss_size == t2->array.ss_size &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
+    case TYPE_RUNTIME_ARRAY:
+        return false;
     case TYPE_ENUM:
     case TYPE_STRUCT:
     case TYPE_TYPEDEF:
@@ -143,6 +140,7 @@ bool type_equal(Type* t1, Type* t2)
         return t1->user_def == t2->user_def;
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -171,7 +169,7 @@ ByteSize type_size(Type* ty)
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
         return 8;
-    case TYPE_SS_ARRAY:
+    case TYPE_STATIC_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.ss_size;
     case TYPE_ENUM:
         return type_size(ty->user_def->enum_.underlying);
@@ -183,8 +181,9 @@ ByteSize type_size(Type* ty)
         return type_size(ty->user_def->struct_.largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_DS_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -215,8 +214,8 @@ uint32_t type_alignment(Type* ty)
     case TYPE_FUNC_PTR:
         // TODO: Make this specific to build arch
         return 8;
-    case TYPE_SS_ARRAY:
-    case TYPE_DS_ARRAY:
+    case TYPE_STATIC_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         return type_alignment(ty->array.elem_type);
     case TYPE_ENUM:
         return type_alignment(ty->user_def->enum_.underlying);
@@ -229,6 +228,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -289,9 +289,9 @@ const char* type_to_string(Type* type)
         scratch_appendc(')');
         return str_dupn(scratch_string(), g_scratch.len);
     }
-    case TYPE_SS_ARRAY:
+    case TYPE_STATIC_ARRAY:
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
-    case TYPE_DS_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         return str_format("%s[]", type_to_string(type->array.elem_type));
     case TYPE_ENUM:
     case TYPE_STRUCT:
@@ -300,6 +300,7 @@ const char* type_to_string(Type* type)
         return str_format("%s", type->user_def->symbol);
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:

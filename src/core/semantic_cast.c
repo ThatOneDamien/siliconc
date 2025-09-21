@@ -27,9 +27,9 @@ static inline CastGroup type_to_group(Type* type);
 
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
-    ASTExpr* inner = cast->expr.cast.inner;
-    if(!resolve_type(c, &cast->type) || !analyze_expr(c, inner))
+    if(!resolve_type(c, &cast->type, RES_NORMAL) || !analyze_expr(c, &cast->expr.cast.inner))
         return false;
+    ASTExpr* inner = cast->expr.cast.inner;
     CastParams params;
     params.sema_context = c;
     params.expr  = cast;
@@ -65,9 +65,9 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
 bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
 {
     SIC_ASSERT(desired->status == STATUS_RESOLVED);
-    ASTExpr* prev = *expr_to_cast;
-    if(!analyze_expr(c, prev))
+    if(!analyze_expr(c, expr_to_cast) || type_is_bad(desired))
         return false;
+    ASTExpr* prev = *expr_to_cast;
     CastParams params;
     params.sema_context = c;
     params.from = prev->type;
@@ -345,6 +345,7 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
         return;
     }
 
+    // TODO: Maybe avoid a malloc here?
     ASTExpr* intermediate = MALLOC_STRUCT(ASTExpr);
     memcpy(intermediate, cast, sizeof(ASTExpr));
     intermediate->expr.cast.kind = CAST_PTR_TO_INT;
@@ -413,27 +414,27 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
-    [TYPE_INVALID]  = CAST_GROUP_INVALID,
-    [TYPE_VOID]     = CAST_GROUP_VOID,
-    [TYPE_BOOL]     = CAST_GROUP_BOOL,
-    [TYPE_BYTE]     = CAST_GROUP_INT,
-    [TYPE_UBYTE]    = CAST_GROUP_INT,
-    [TYPE_SHORT]    = CAST_GROUP_INT,
-    [TYPE_USHORT]   = CAST_GROUP_INT,
-    [TYPE_INT]      = CAST_GROUP_INT,
-    [TYPE_UINT]     = CAST_GROUP_INT,
-    [TYPE_LONG]     = CAST_GROUP_INT,
-    [TYPE_ULONG]    = CAST_GROUP_INT,
-    [TYPE_FLOAT]    = CAST_GROUP_FLOAT,
-    [TYPE_DOUBLE]   = CAST_GROUP_FLOAT,
-    [TYPE_POINTER]  = CAST_GROUP_PTR,
-    [TYPE_FUNC_PTR] = CAST_GROUP_PTR,
-    [TYPE_SS_ARRAY] = CAST_GROUP_ARRAY,
-    [TYPE_DS_ARRAY] = CAST_GROUP_ARRAY,
-    [TYPE_ENUM]     = CAST_GROUP_ENUM,
-    [TYPE_STRUCT]   = CAST_GROUP_STRUCT,
-    [TYPE_TYPEDEF]  = CAST_GROUP_INVALID,
-    [TYPE_UNION]    = CAST_GROUP_STRUCT,
+    [TYPE_INVALID]       = CAST_GROUP_INVALID,
+    [TYPE_VOID]          = CAST_GROUP_VOID,
+    [TYPE_BOOL]          = CAST_GROUP_BOOL,
+    [TYPE_BYTE]          = CAST_GROUP_INT,
+    [TYPE_UBYTE]         = CAST_GROUP_INT,
+    [TYPE_SHORT]         = CAST_GROUP_INT,
+    [TYPE_USHORT]        = CAST_GROUP_INT,
+    [TYPE_INT]           = CAST_GROUP_INT,
+    [TYPE_UINT]          = CAST_GROUP_INT,
+    [TYPE_LONG]          = CAST_GROUP_INT,
+    [TYPE_ULONG]         = CAST_GROUP_INT,
+    [TYPE_FLOAT]         = CAST_GROUP_FLOAT,
+    [TYPE_DOUBLE]        = CAST_GROUP_FLOAT,
+    [TYPE_POINTER]       = CAST_GROUP_PTR,
+    [TYPE_FUNC_PTR]      = CAST_GROUP_PTR,
+    [TYPE_STATIC_ARRAY]  = CAST_GROUP_ARRAY,
+    [TYPE_RUNTIME_ARRAY] = CAST_GROUP_ARRAY,
+    [TYPE_ENUM]          = CAST_GROUP_ENUM,
+    [TYPE_STRUCT]        = CAST_GROUP_STRUCT,
+    [TYPE_TYPEDEF]       = CAST_GROUP_INVALID,
+    [TYPE_UNION]         = CAST_GROUP_STRUCT,
 };
 
 static inline CastGroup type_to_group(Type* type)

@@ -9,6 +9,7 @@ extern Cmdline         g_args;
 extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
+extern Type* g_type_invalid;
 extern Type* g_type_void;
 extern Type* g_type_bool;
 extern Type* g_type_ubyte;
@@ -21,6 +22,8 @@ extern Type* g_type_ulong;
 extern Type* g_type_long;
 extern Type* g_type_float;
 extern Type* g_type_double;
+
+extern Symbol g_sym_len;
 
 void run_subprocess(const char** cmd);
 
@@ -64,15 +67,6 @@ static inline bool token_is_keyword(TokenKind kind)
 // Parser functions
 void     parser_init(void);
 void     parse_unit(CompilationUnit* unit);
-static inline bool expr_is_bad(ASTExpr* expr)
-{
-    return expr->kind == EXPR_INVALID;
-}
-
-static inline bool stmt_is_bad(ASTStmt* stmt)
-{
-    return stmt->kind == STMT_INVALID;
-}
 
 // Semantic analysis functions
 void semantic_declaration(CompilationUnit* unit);
@@ -93,7 +87,6 @@ static inline Symbol sym_map_get(const char* str, TokenKind* kind)
 
 // Type functions
 Type*       type_from_token(TokenKind type_token);
-Type*       type_copy(const Type* orig);
 Type*       type_pointer_to(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
@@ -163,7 +156,7 @@ static inline bool type_is_pointer(Type* ty)
 
 static inline bool type_is_array(Type* ty)
 {
-    return ty->kind == TYPE_SS_ARRAY || ty->kind == TYPE_DS_ARRAY;
+    return ty->kind == TYPE_STATIC_ARRAY || ty->kind == TYPE_RUNTIME_ARRAY;
 }
 
 static inline bool type_is_user_def(Type* ty)
@@ -173,7 +166,7 @@ static inline bool type_is_user_def(Type* ty)
 
 static inline bool type_is_trivially_copyable(Type* ty)
 {
-    return ty->kind != TYPE_DS_ARRAY && type_size(ty) <= 16;
+    return ty->kind != TYPE_RUNTIME_ARRAY && type_size(ty) <= 16;
 }
 
 static inline Type* type_pointer_base(Type* ptr_ty)
@@ -183,6 +176,22 @@ static inline Type* type_pointer_base(Type* ptr_ty)
     if(!type_is_pointer(ptr_ty))
         SIC_UNREACHABLE();
     return ptr_ty->pointer_base;
+}
+
+// Bad value checkers
+static inline bool expr_is_bad(ASTExpr* expr)
+{
+    return expr->kind == EXPR_INVALID;
+}
+
+static inline bool stmt_is_bad(ASTStmt* stmt)
+{
+    return stmt->kind == STMT_INVALID;
+}
+
+static inline bool type_is_bad(Type* type)
+{
+    return type->kind == TYPE_INVALID;
 }
 
 

@@ -24,5 +24,3 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
   codegen.
 - Add other user-defined types (namely typedefs, and bitfields)
 - Actually work on the import and module system
-- Update how the type struct works, possible adding a cache for useful variants
-  of types like a pointer.

@@ -44,12 +44,13 @@
             fprintf(stderr, "\033[0m\n");       \
             raise(SIGTRAP);                     \
         } while(0)
-    #define SIC_ASSERT(cond)                                        \
-        do                                                          \
-        {                                                           \
-            if(!(cond))                                             \
-                SIC_ERROR_DBG_ARGS("Assertion failed (%s:%d): %s",  \
-                                   __FILE__, __LINE__, #cond);      \
+    #define SIC_ASSERT(cond)                                            \
+        do                                                              \
+        {                                                               \
+            if(!(cond))                                                 \
+                SIC_ERROR_DBG_ARGS("Assertion failed %s:%d(%s): %s",    \
+                                   __FILE__, __LINE__, __FUNCTION__,    \
+                                   #cond);                              \
         } while(0)
     #define SIC_ASSERT_MSG(cond, msg)   \
         do                              \
@@ -66,9 +67,9 @@
 #else
     #define SIC_ERROR_DBG(msg)
     #define SIC_ERROR_DBG_ARGS(msg, ...)
-    #define SIC_ASSERT(cond)
-    #define SIC_ASSERT_MSG(cond, msg)
-    #define SIC_ASSERT_ARGS(cond, msg, ...)
+    #define SIC_ASSERT(cond)                ((void)(cond))
+    #define SIC_ASSERT_MSG(cond, msg)       ((void)(cond))
+    #define SIC_ASSERT_ARGS(cond, msg, ...) ((void)(cond))
 #endif
 
 struct ScratchBuffer

@@ -86,7 +86,7 @@ static void              llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *cont
 static bool stmt_not_empty(ASTStmt* stmt)
 {
     return stmt != NULL &&
-           (stmt->kind != STMT_EXPR_STMT || stmt->stmt.expr->kind != EXPR_NOP) &&
+           (stmt->kind != STMT_EXPR_STMT) &&
            (stmt->kind != STMT_BLOCK || stmt_not_empty(stmt->stmt.block.body));
 }
 
@@ -152,9 +152,9 @@ static void gen_unit(CodegenContext* c, CompilationUnit* unit)
     {
         Object* var = unit->vars.data[i];
         get_llvm_ref(c, var);
-        LLVMValueRef init_val = var->var.global_initializer == NULL ? 
+        LLVMValueRef init_val = var->var.initial_val == NULL ? 
                                     emit_const_zero(c, var->type) : 
-                                    emit_expr(c, var->var.global_initializer).value;
+                                    emit_expr(c, var->var.initial_val).value;
         LLVMSetInitializer(var->llvm_ref, init_val);
     }
 
@@ -219,7 +219,8 @@ static void emit_function_body(CodegenContext* c, Object* function)
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         Object* param = sig->params.data[i];
-        param->llvm_ref = LLVMGetParam(function->llvm_ref, i);
+        emit_var_alloca(c, param);
+        LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
     }
 
     emit_block_stmt(c, function->func.body);
@@ -523,53 +524,50 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     {
     case EXPR_ARRAY_ACCESS:
         emit_array_access(c, expr, &result);
-        break;
+        return result;
     case EXPR_BINARY:
         emit_binary(c, expr, &result);
-        break;
+        return result;
     case EXPR_CAST: {
         GenValue inner = emit_expr(c, expr->expr.cast.inner);
         emit_cast(c, expr, &inner, &result);
-        break;
+        return result;
     }
     case EXPR_CONSTANT:
         emit_constant(c, expr, &result);
-        break;
+        return result;
     case EXPR_DEFAULT:
         SIC_TODO();
     case EXPR_FUNC_CALL:
         emit_function_call(c, expr, &result);
-        break;
+        return result;
     case EXPR_IDENT:
         emit_ident(c, expr, &result);
-        break;
+        return result;
     case EXPR_INITIALIZER_LIST:
         SIC_TODO();
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
-        break;
-    case EXPR_NOP:
-        result.value = NULL;
-        break;
+        return result;
     case EXPR_POSTFIX: {
         GenValue inner = emit_expr(c, expr->expr.unary.inner);
         emit_incdec(c, expr, &inner, &result, true);
-        break;
+        return result;
     }
     case EXPR_TERNARY:
         emit_ternary(c, expr, &result);
-        break;
+        return result;
     case EXPR_UNARY:
         emit_unary(c, expr, &result);
-        break;
+        return result;
     case EXPR_INVALID:
     case EXPR_PRE_SEMANTIC_IDENT:
     case EXPR_TYPE_IDENT:
     case EXPR_UNRESOLVED_ARR:
     case EXPR_UNRESOLVED_DOT:
-        SIC_UNREACHABLE();
+        break;
     }
-    return result;
+    SIC_UNREACHABLE();
 }
 
 static void emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result)
@@ -584,7 +582,7 @@ static void emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result
     // TODO: Fix this with proper struct that holds SSA values and their
     //       corresponding type. As of right now this is just a hack to get this to
     //       work.
-    if(arr_type->kind == TYPE_SS_ARRAY)
+    if(arr_type->kind == TYPE_STATIC_ARRAY)
     {
         indices[0] = LLVMConstInt(LLVMInt64Type(), 0, false);
         result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, arr_type), array.value, indices, 2, "");
@@ -752,7 +750,8 @@ static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValu
         result->value = LLVMBuildPtrToInt(c->builder, inner->value, LLVMInt64Type(), "");
         return;
     case CAST_INT_TO_PTR:
-        SIC_TODO();
+        result->value = LLVMBuildIntToPtr(c->builder, inner->value, c->ptr_type, "");
+        return;
     case CAST_FLOAT_EXT_TRUNC: {
         bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
         result->value = is_widen ? LLVMBuildFPExt(c->builder, inner->value, to_llvm, "") :
@@ -834,7 +833,7 @@ static void emit_function_call(CodegenContext* c, ASTExpr* expr, GenValue* resul
     for(uint32_t i = 0; i < call->args.size; ++i)
     {
         GenValue temp = emit_expr(c, call->args.data[i]);
-        if(i >= params->size || BIT_IS_UNSET(params->data[i]->var.param_flags, PARAM_OUT))
+        if(i >= params->size)
             load_rvalue(c, &temp);
         args[i] = temp.value;
     }
@@ -856,10 +855,7 @@ static void emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result)
         result->kind = GEN_VAL_RVALUE;
         return;
     case OBJ_VAR:
-        result->kind = obj->var.kind == VAR_PARAM && 
-                       BIT_IS_UNSET(obj->var.param_flags, PARAM_OUT) ? 
-                            GEN_VAL_RVALUE : 
-                            GEN_VAL_ADDRESS;
+        result->kind = GEN_VAL_ADDRESS;
         return;
     default:
         SIC_UNREACHABLE();
@@ -1080,7 +1076,7 @@ static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef
 static void emit_var_alloca(CodegenContext* c, Object* obj)
 {
     SIC_ASSERT(obj->kind == OBJ_VAR);
-    if(obj->type->kind == TYPE_DS_ARRAY)
+    if(obj->type->kind == TYPE_RUNTIME_ARRAY)
     {
         GenValue size_val = emit_expr(c, obj->type->array.size_expr);
         load_rvalue(c, &size_val);
@@ -1114,8 +1110,8 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
         return LLVMConstPointerNull(c->ptr_type);
-    case TYPE_SS_ARRAY:
-    case TYPE_DS_ARRAY:
+    case TYPE_STATIC_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         SIC_TODO();
     case TYPE_ENUM:
         return LLVMConstInt(get_llvm_type(c, type->user_def->enum_.underlying), 0, false);
@@ -1125,6 +1121,7 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
         SIC_TODO();
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -1214,16 +1211,14 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         for(uint32_t i = 0; i < sig->params.size; ++i)
         {
             Object* param = sig->params.data[i];
-            param_types[i] = BIT_IS_SET(param->var.param_flags, PARAM_OUT) ? 
-                                c->ptr_type :
-                                get_llvm_type(c, sig->params.data[i]->type);
+            param_types[i] = get_llvm_type(c, param->type);
         }
 
         return type->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type), param_types, sig->params.size, sig->is_var_arg);
     }
-    case TYPE_SS_ARRAY:
+    case TYPE_STATIC_ARRAY:
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
-    case TYPE_DS_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_ENUM:
         return type->llvm_ref = get_llvm_type(c, type->user_def->enum_.underlying);
@@ -1252,6 +1247,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     }
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -1320,12 +1316,13 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_UNION:
         lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
         return;
-    case TYPE_SS_ARRAY:
-    case TYPE_DS_ARRAY:
+    case TYPE_STATIC_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         return;
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
+    case TYPE_PRE_SEMA_USER:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case TYPE_TYPEDEF:

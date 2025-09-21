@@ -157,8 +157,6 @@ static bool parse_top_level(Lexer* l)
         advance(l);
         type = parse_bitfield_decl(l, access);
         break;
-    case TOKEN_CONST:
-        SIC_TODO();
     case TOKEN_ENUM:
         advance(l);
         type = parse_enum_decl(l, access);
@@ -243,29 +241,12 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
         if(params->size > 0)
             CONSUME_OR_RET(TOKEN_COMMA, false);
 
-        ParamFlags flags;
-        switch(peek(l)->kind)
+        if(tok_equal(l, TOKEN_ELLIPSIS))
         {
-        case TOKEN_ELLIPSIS:
-            // TODO: Make a more robust variable argument system
             advance(l);
             CONSUME_OR_RET(TOKEN_RPAREN, false);
             *is_var_args = true;
             return true;
-        case TOKEN_IN:
-            advance(l);
-            FALLTHROUGH;
-        default:
-            flags = PARAM_IN;
-            break;
-        case TOKEN_INOUT:
-            advance(l);
-            flags = PARAM_INOUT;
-            break;
-        case TOKEN_OUT:
-            advance(l);
-            flags = PARAM_OUT;
-            break;
         }
 
         Type* type;
@@ -277,7 +258,6 @@ static bool parse_func_params(Lexer* l, ObjectDA* params, bool* is_var_args)
         Object* p = new_obj(l, OBJ_VAR, VIS_DEFAULT, ATTR_NONE);
         p->type = type;
         p->var.kind = VAR_PARAM;
-        p->var.param_flags = flags;
         da_append(params, p);
         advance(l);
     }
@@ -297,7 +277,7 @@ static bool global_var_declaration(Lexer* l, Visibility access, Type* type, ObjA
     advance(l);
 
     if(try_consume(l, TOKEN_ASSIGN))
-        ASSIGN_EXPR_OR_RET(comps->global_initializer, false);
+        ASSIGN_EXPR_OR_RET(comps->initial_val, false);
 
     CONSUME_OR_RET(TOKEN_SEMI, false);
     da_append(&l->unit->vars, var);
@@ -431,13 +411,13 @@ static Object* parse_bitfield_decl(Lexer* l, Visibility access)
 
 static Object* parse_typedef(Lexer* l, Visibility access)
 {
-    Object* type = new_obj(l, OBJ_TYPE_ALIAS, access, ATTR_NONE);
+    Object* type_def = new_obj(l, OBJ_TYPE_ALIAS, access, ATTR_NONE);
     advance(l);
     CONSUME_OR_RET(TOKEN_ASSIGN, NULL);
-    if(!parse_decl_type(l, &type->type_alias, NULL))
+    if(!parse_decl_type(l, &type_def->type, NULL))
         return NULL;
     CONSUME_OR_RET(TOKEN_SEMI, NULL);
-    return type;
+    return type_def;
 }
 
 static bool parse_attribute(Lexer* l, ObjAttr* attribs)
@@ -473,7 +453,7 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
     Type* ty = NULL;
     bool ambiguous = true; 
 
-    // First get attributes (e.g. extern)
+    // First get attributes
     while(parse_attribute(l, attribs))
         ambiguous = false;
 
@@ -551,12 +531,11 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             if(expr_is_bad(temp_buf[dims++]) || !consume(l, TOKEN_RBRACKET))
                 return false;
         }
-
+        
         if(tok_equal(l, TOKEN_IDENT) || tok_equal(l, TOKEN_ASTERISK)) // Treat it as a type
         {
             ty = CALLOC_STRUCT(Type);
-            ty->kind = TYPE_STRUCT;
-            ty->status = STATUS_UNRESOLVED;
+            ty->kind = TYPE_PRE_SEMA_USER;
             ty->unresolved.sym = ident_sym;
             ty->unresolved.loc = ident_loc;
             for(uint32_t i = 0; i < dims; ++i)
@@ -571,21 +550,19 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             for(uint32_t i = 0; i < dims; ++i)
             {
                 ASTExpr* next = CALLOC_STRUCT(ASTExpr);
-                cur->loc = temp_buf[i]->loc;
-                cur->kind = EXPR_ARRAY_ACCESS;
-                cur->expr.array_access.array_expr = cur;
-                cur->expr.array_access.index_expr = temp_buf[i];
+                next->loc = temp_buf[i]->loc;
+                next->kind = EXPR_ARRAY_ACCESS;
+                next->expr.array_access.array_expr = cur;
+                next->expr.array_access.index_expr = temp_buf[i];
                 cur = next;
             }
-            *expr = parse_expr_with_prec(l, PREC_ASSIGN, cur);
-            return true;
+            return !expr_is_bad(*expr = parse_expr_with_prec(l, PREC_ASSIGN, cur));
         }
     }
     else if(ty == NULL)
     {
         ty = CALLOC_STRUCT(Type);
-        ty->kind = TYPE_STRUCT;
-        ty->status = STATUS_UNRESOLVED;
+        ty->kind = TYPE_PRE_SEMA_USER;
         ty->unresolved.sym = peek(l)->sym;
         ty->unresolved.loc = peek(l)->loc;
         advance(l);
@@ -685,7 +662,7 @@ static ASTStmt* parse_stmt_block(Lexer* l)
         if(tok_equal(l, TOKEN_EOF))
             ERROR_AND_RET(BAD_STMT, "Encountered end of file, expected '}'.");
         cur_stmt->next = parse_stmt(l);
-        if(!stmt_is_bad(cur_stmt->next))
+        if(!stmt_is_bad(cur_stmt->next) && cur_stmt->next != NOP_STMT)
             cur_stmt = cur_stmt->next;
     }
 
@@ -799,7 +776,7 @@ static ASTStmt* parse_switch(Lexer* l)
             if(cases->size == 0)
                 ERROR_AND_RET(BAD_STMT, "Statement in switch must fall under a case.");
             cur->next = parse_stmt(l);
-            if(!stmt_is_bad(cur->next))
+            if(!stmt_is_bad(cur->next) && cur->next != NOP_STMT)
                 cur = cur->next;
             continue;
         }
@@ -933,14 +910,12 @@ static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr*
 
     while(!expr_is_bad(left))
     {
-        TokenKind kind = peek(l)->kind;
-        if(expr_rules[kind].precedence < precedence)
+        ExprParseRule* rule = expr_rules + peek(l)->kind;
+        if(rule->precedence < precedence)
             break;
 
-        ExprInfixFunc infix = expr_rules[kind].infix;
-        if(infix == NULL)
-            ERROR_AND_RET(BAD_EXPR, "Left side of operator is invalid.");
-        left = infix(l, left);
+        SIC_ASSERT(rule->infix != NULL);
+        left = rule->infix(l, left);
     }
     return left;
 }
@@ -1313,7 +1288,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
     //       side-by-side
     expr->expr.constant.val.s = peek(l)->str.val;
     expr->type = CALLOC_STRUCT(Type);
-    expr->type->kind = TYPE_SS_ARRAY;
+    expr->type->kind = TYPE_STATIC_ARRAY;
     expr->type->status = STATUS_RESOLVED;
     expr->type->array.elem_type = g_type_ubyte; // TODO: Add char type, make this the underlying type
     expr->type->array.ss_size = peek(l)->str.len + 1;
@@ -1395,6 +1370,7 @@ static inline bool consume(Lexer* l, TokenKind kind)
         return true;
 
     parser_error(l, "Expected \'%s\'.", tok_kind_to_str(kind));
+    SIC_ERROR_DBG("a");
     return false;
 }
 
@@ -1442,7 +1418,6 @@ static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t
 
 static inline void recover_top_level(Lexer* l)
 {
-    printf("here at recover\n");
     advance(l);
     Token* t = peek(l);
     while(t->kind != TOKEN_EOF && 

@@ -1,7 +1,7 @@
 CC       ?= clang
 CXX      ?= clang++
 CFLAGS   := -Wall -Wextra -Werror -std=c11 `llvm-config --cflags`
-LD_FLAGS := `llvm-config --cxxflags --ldflags --libs core --system-libs`
+LD_FLAGS := `llvm-config --cxxflags --ldflags --libs engine --system-libs`
 INC      = -Isrc
 
 BUILD_DIR ?= build

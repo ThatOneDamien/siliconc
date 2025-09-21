@@ -126,7 +126,6 @@ typedef enum : uint8_t
     EXPR_IDENT,
     EXPR_INITIALIZER_LIST,
     EXPR_MEMBER_ACCESS,
-    EXPR_NOP,
     EXPR_POSTFIX,
     EXPR_PRE_SEMANTIC_IDENT,
     EXPR_TERNARY,
@@ -209,13 +208,16 @@ typedef enum : uint8_t
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
-typedef enum : uint8_t
+typedef enum
 {
-    PARAM_NONE  = 0,
-    PARAM_IN    = (1 << 0),
-    PARAM_OUT   = (1 << 1),
-    PARAM_INOUT = PARAM_IN | PARAM_OUT,
-} ParamFlags;
+    RES_NORMAL           = 0,
+    RES_IN_PTR           = 1 << 0,
+    RES_IN_TYPEDEF       = 1 << 1,
+    RES_ALLOW_VOID       = 1 << 2,
+    RES_ALLOW_INFERRED   = 1 << 3,
+    RES_ALLOW_INCOMPLETE = RES_IN_PTR | RES_IN_TYPEDEF,
+    RES_PTR_FLAGS        = RES_IN_PTR | RES_ALLOW_VOID,
+} ResolutionFlags;
 
 typedef enum : uint8_t
 {
@@ -332,12 +334,9 @@ typedef enum : uint8_t
     TOKEN_FOR,
     TOKEN_GOTO,
     TOKEN_IF,
-    TOKEN_IN,
-    TOKEN_INOUT,
     TOKEN_LABEL,
     TOKEN_MODULE,
     TOKEN_NULLPTR,
-    TOKEN_OUT,
     TOKEN_PRIV,
     TOKEN_PROT,
     TOKEN_PUB,
@@ -372,12 +371,6 @@ typedef enum : uint8_t
     __TOKEN_COUNT
 } TokenKind;
 
-typedef enum
-{
-    TYPE_CACHE_POINTER = 0,
-    __TYPE_CACHE_CNT
-} TypeCacheSpot;
-
 typedef enum : uint8_t
 {
     TYPE_INVALID = 0,
@@ -406,12 +399,8 @@ typedef enum : uint8_t
 
     TYPE_POINTER,
     TYPE_FUNC_PTR,
-    TYPE_SS_ARRAY, // Statically sized array (i.e. an array whose size is known at compile-time)
-    TYPE_DS_ARRAY, // Dynamically sized array (i.e. an array whose size can only be determined at run-time)
-    TYPE_PRE_SEMA_ARRAY,
-    TYPE_AUTO,
-    TYPE_TYPEOF,
-
+    TYPE_STATIC_ARRAY,
+    TYPE_RUNTIME_ARRAY,
 
     TYPE_ENUM,
     TYPE_USER_DEF_START = TYPE_ENUM,
@@ -419,9 +408,13 @@ typedef enum : uint8_t
     TYPE_TYPEDEF,
     TYPE_UNION,
     TYPE_USER_DEF_END   = TYPE_UNION,
-    __TYPE_COUNT,
-    // TODO: Add structs, unions, arrays, pointers, etc
 
+    // Pre-semantic types.
+    TYPE_PRE_SEMA_ARRAY,
+    TYPE_PRE_SEMA_USER,
+    TYPE_AUTO,
+    TYPE_TYPEOF,
+    __TYPE_COUNT,
 } TypeKind;
 
 typedef enum : uint8_t

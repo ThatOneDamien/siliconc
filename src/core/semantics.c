@@ -1,12 +1,13 @@
 #include "semantics.h"
 #include "utils/da.h"
 
+static void declare_type(SemaContext* c, Object* type_obj);
 static void declare_function(SemaContext* c, Object* function);
 static void declare_global_var(SemaContext* c, Object* var);
+static void declare_global_obj(SemaContext* c, Object* global);
 
 static void analyze_unit(SemaContext* c, CompilationUnit* unit);
 static void analyze_function(SemaContext* c, Object* function);
-static void analyze_global_var(SemaContext* c, Object* global_var);
 static bool analyze_main(Object* main);
 static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope);
 static void analyze_stmt_block(SemaContext* c, ASTStmt* stmt);
@@ -20,12 +21,11 @@ static void analyze_while(SemaContext* c, ASTStmt* stmt);
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl);
 static void analyze_swap(SemaContext* c, ASTStmt* stmt);
 
-static void analyze_enum_obj(SemaContext* c, Object* type_obj);
-static void analyze_struct_obj(SemaContext* c, Object* type_obj);
-static void analyze_union_obj(SemaContext* c, Object* type_obj);
-static void check_circular_def(SemaContext* c, Object* other, SourceLoc loc);
+static bool analyze_enum_obj(SemaContext* c, Object* type_obj);
+static bool analyze_struct_obj(SemaContext* c, Object* type_obj);
+static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags);
+static bool analyze_union_obj(SemaContext* c, Object* type_obj);
 
-static void declare_global_obj(SemaContext* c, Object* global);
 
 void semantic_declaration(CompilationUnit* unit)
 {
@@ -35,7 +35,7 @@ void semantic_declaration(CompilationUnit* unit)
     context.priv_syms = &unit->priv_symbols;
     context.prot_syms = &unit->module->symbols;
     for(uint32_t i = 0; i < unit->types.size; ++i)
-        declare_global_obj(&context, unit->types.data[i]);
+        declare_type(&context, unit->types.data[i]);
 
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
         declare_function(&context, unit->funcs.data[i]);
@@ -77,9 +77,8 @@ bool expr_is_lvalue(ASTExpr* expr)
         {
         case VAR_LOCAL:
         case VAR_GLOBAL:
-            return true;
         case VAR_PARAM:
-            return o->var.param_flags & PARAM_OUT;
+            return true;
         case VAR_INVALID:
             break;
         }
@@ -92,19 +91,62 @@ bool expr_is_lvalue(ASTExpr* expr)
     }
 }
 
+bool expr_is_const_eval(ASTExpr* expr)
+{
+    (void)expr;
+    return true;
+    // switch(expr->kind)
+    // {
+    // case EXPR_IDENT
+    // }
+}
+
+static void declare_type(SemaContext* c, Object* type_obj)
+{
+    declare_global_obj(c, type_obj);
+    TypeKind typekind;
+    switch(type_obj->kind)
+    {
+    case OBJ_BITFIELD:
+        SIC_TODO();
+    case OBJ_ENUM:
+        typekind = TYPE_ENUM;
+        break;
+    case OBJ_STRUCT:
+        typekind = TYPE_STRUCT;
+        break;
+    case OBJ_TYPE_ALIAS:
+    case OBJ_TYPE_DISTINCT:
+        return;
+    case OBJ_UNION:
+        typekind = TYPE_UNION;
+        break;
+    case OBJ_INVALID:
+    case OBJ_ALIAS_EXPR:
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_VAR:
+        SIC_UNREACHABLE();
+    }
+    Type* type = type_obj->type = CALLOC_STRUCT(Type);
+    type->kind = typekind;
+    type->visibility = type_obj->visibility;
+    type->user_def = type_obj;
+}
+
 static void declare_function(SemaContext* c, Object* function)
 {
     declare_global_obj(c, function);
     FuncSignature* sig = function->func.signature;
     ObjectDA* params = &sig->params;
 
-    if(resolve_type(c, &sig->ret_type) && sig->ret_type->visibility < function->visibility)
+    if(resolve_type(c, &sig->ret_type, RES_NORMAL) && sig->ret_type->visibility < function->visibility)
         sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
 
     for(uint32_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
-        if(!resolve_type(c, &param->type))
+        if(!resolve_type(c, &param->type, RES_NORMAL))
             continue;
         if(param->type->visibility < function->visibility)
         {
@@ -117,7 +159,35 @@ static void declare_function(SemaContext* c, Object* function)
 static void declare_global_var(SemaContext* c, Object* var)
 {
     declare_global_obj(c, var);
-    resolve_type(c, &var->type);
+    resolve_type(c, &var->type, RES_NORMAL);
+}
+
+static void declare_global_obj(SemaContext* c, Object* global)
+{
+    if(memcmp(global->symbol, "main", 4) == 0 &&
+       !analyze_main(global))
+        return;
+    HashMap* pub  = &c->unit->module->public_symbols;
+    Object* other = hashmap_get(c->priv_syms, global->symbol);
+    if(other == NULL)
+        other = hashmap_get(c->prot_syms, global->symbol);
+
+    if(other != NULL)
+        sic_error_redef(global, other);
+
+
+    switch(global->visibility)
+    {
+    case VIS_PRIVATE:
+        hashmap_put(c->priv_syms, global->symbol, global);
+        return;
+    case VIS_PUBLIC:
+        hashmap_put(pub, global->symbol, global);
+        FALLTHROUGH;
+    case VIS_PROTECTED:
+        hashmap_put(c->prot_syms, global->symbol, global);
+        return;
+    }
 }
 
 static void analyze_unit(SemaContext* c, CompilationUnit* unit)
@@ -127,7 +197,7 @@ static void analyze_unit(SemaContext* c, CompilationUnit* unit)
     c->prot_syms = &unit->module->symbols;
 
     for(uint32_t i = 0; i < unit->types.size; ++i)
-        analyze_type_obj(c, unit->types.data[i], false);
+        analyze_type_obj(c, unit->types.data[i], NULL, RES_NORMAL);
 
     for(uint32_t i = 0; i < unit->vars.size; ++i)
         analyze_global_var(c, unit->vars.data[i]);
@@ -144,23 +214,28 @@ static void analyze_function(SemaContext* c, Object* function)
     for(uint32_t i = 0; i < params->size; ++i)
         push_obj(params->data[i]);
 
-    ASTStmt* stmt = function->func.body;
-    while(stmt != NULL)
-    {
-        analyze_stmt(c, stmt, true);
-        stmt = stmt->next;
-    }
+    analyze_stmt_block(c, function->func.body);
 
     c->cur_func = NULL;
     pop_scope(scope);
 }
 
-static void analyze_global_var(SemaContext* c, Object* global_var)
+void analyze_global_var(SemaContext* c, Object* global_var)
 {
-    ObjVar* var = &global_var->var;
-    if(var->global_initializer == NULL ||
-       !implicit_cast(c, &var->global_initializer, global_var->type))
+    SIC_ASSERT(global_var->kind == OBJ_VAR && global_var->var.kind == VAR_GLOBAL);
+    if(global_var->status == STATUS_RESOLVED)
         return;
+    else if(global_var->status == STATUS_RESOLVING)
+    {
+    }
+
+    global_var->status = STATUS_RESOLVING;
+    if(global_var->var.initial_val == NULL || 
+       !analyze_expr(c, &global_var->var.initial_val))
+    {
+        global_var->kind = OBJ_INVALID;
+        return;
+    }
     // TODO: Check that this is constant. Make a function that checks if an expression is constant,
     // because something like &global_var, is technically a constant expression.
     if(global_var->type->visibility < global_var->visibility)
@@ -184,7 +259,8 @@ static bool analyze_main(Object* main)
     }
 
     FuncSignature* sig = main->func.signature;
-    if(sig->ret_type->kind != TYPE_INT)
+    TypeKind rt_kind = sig->ret_type->kind;
+    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
         goto BAD_SIG;
 
     if(sig->params.size >= 1 && sig->params.data[0]->type->kind != TYPE_INT)
@@ -209,8 +285,8 @@ static bool analyze_main(Object* main)
 
 BAD_SIG:
     sic_error_at(main->loc, "The signature of the main function is invalid. "
-                            "The return type should be 'int', with optional "
-                            "parameters 'int, ubyte**'.");
+                            "The return type should be 'int' or 'void', with "
+                            "optional parameters 'int, ubyte**'.");
     return false;
 }
 
@@ -234,7 +310,7 @@ static void analyze_stmt(SemaContext* c, ASTStmt* stmt, bool add_scope)
         analyze_continue(c, stmt);
         return;
     case STMT_EXPR_STMT:
-        analyze_expr(c, stmt->stmt.expr);
+        analyze_expr(c, &stmt->stmt.expr);
         return;
     case STMT_FOR:
         analyze_for(c, stmt);
@@ -307,7 +383,7 @@ static void analyze_for(SemaContext* c, ASTStmt* stmt)
     if(for_stmt->cond_expr != NULL)
         implicit_cast(c, &for_stmt->cond_expr, g_type_bool);
     if(for_stmt->loop_expr != NULL)
-        analyze_expr(c, for_stmt->loop_expr);
+        analyze_expr(c, &for_stmt->loop_expr);
 
     BlockContext context = c->block_context;
     c->block_context = BLOCK_LOOP;
@@ -338,7 +414,7 @@ static void analyze_return(SemaContext* c, ASTStmt* stmt)
                             "Function returning void should not return a value.");
             return;
         }
-        c->ident_mask = IDENT_VAR;
+        c->ident_mask = IDENT_VAR_ONLY;
         implicit_cast(c, &ret->ret_expr, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
@@ -349,7 +425,7 @@ static void analyze_switch(SemaContext* c, ASTStmt* stmt)
 {
     ASTSwitch* swi = &stmt->stmt.switch_;
     bool has_default = false;
-    analyze_expr(c, swi->expr);
+    analyze_expr(c, &swi->expr);
     if(!type_is_integer(swi->expr->type))
     {
         sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
@@ -394,7 +470,7 @@ static void analyze_while(SemaContext* c, ASTStmt* stmt)
 static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 {
     Type** type_ref = &decl->obj->type;
-    c->ident_mask = IDENT_VAR;
+    c->ident_mask = IDENT_VAR_ONLY;
     if((*type_ref)->kind == TYPE_AUTO)
     {
         if(decl->init_expr == NULL)
@@ -403,12 +479,12 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
                                          "it to be initialized with an expression.");
             return;
         }
-        if(!analyze_expr(c, decl->init_expr))
+        if(!analyze_expr(c, &decl->init_expr))
             return;
         decl->obj->type = decl->init_expr->type;
     }
-    else if(!resolve_type(c, type_ref))
-        return;
+    else if(!resolve_type(c, type_ref, RES_NORMAL))
+        decl->obj->kind = OBJ_INVALID;
     else if(decl->init_expr != NULL)
         implicit_cast(c, &decl->init_expr, *type_ref);
     push_obj(decl->obj);
@@ -416,10 +492,10 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
 
 static void analyze_swap(SemaContext* c, ASTStmt* stmt)
 {
+    analyze_expr(c, &stmt->stmt.swap.left);
+    analyze_expr(c, &stmt->stmt.swap.right);
     ASTExpr* left = stmt->stmt.swap.left;
     ASTExpr* right = stmt->stmt.swap.right;
-    analyze_expr(c, left);
-    analyze_expr(c, right);
     if(expr_is_bad(left) || expr_is_bad(right) ||
        !expr_ensure_lvalue(left) || !expr_ensure_lvalue(right))
         return;
@@ -439,61 +515,60 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
     }
 }
 
-void analyze_type_obj(SemaContext* c, Object* type_obj, bool is_pointer)
+bool analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, ResolutionFlags flags)
 {
-    if(type_obj->status == STATUS_RESOLVED)
-        return;
-    if(type_obj->status == STATUS_RESOLVING)
-    {
-        if(is_pointer)
-            return;
-        sic_error_at(type_obj->loc, "Circular structure definition.");
-        c->circular_def = type_obj;
-        type_obj->kind = OBJ_INVALID;
-        return;
-    }
-    type_obj->status = STATUS_RESOLVING;
     switch(type_obj->kind)
     {
     case OBJ_BITFIELD:
         SIC_TODO();
     case OBJ_ENUM:
-        analyze_enum_obj(c, type_obj);
+        if(type_obj->status == STATUS_RESOLVED) break;
+        if(!analyze_enum_obj(c, type_obj)) goto ERR;
         break;
     case OBJ_STRUCT:
-        analyze_struct_obj(c, type_obj);
+        if(type_obj->status == STATUS_RESOLVED) break;
+        if(flags & RES_ALLOW_INCOMPLETE) break;
+        if(!analyze_struct_obj(c, type_obj)) goto ERR;
         break;
     case OBJ_TYPE_ALIAS:
+        if(!analyze_type_alias(c, type_obj, flags)) goto ERR;
+        break;
     case OBJ_TYPE_DISTINCT:
         SIC_TODO();
     case OBJ_UNION:
-        analyze_union_obj(c, type_obj);
+        if(type_obj->status == STATUS_RESOLVED) break;
+        if(flags & RES_ALLOW_INCOMPLETE) break;
+        if(!analyze_union_obj(c, type_obj)) goto ERR;
         break;
     case OBJ_INVALID:
+        return false;
     case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_VAR:
         SIC_UNREACHABLE();
     }
+    if(o_type != NULL)
+        *o_type = type_obj->type;
+    return true;
+ERR:
+    type_obj->kind = OBJ_INVALID;
     type_obj->status = STATUS_RESOLVED;
+    return false;
 }
 
-static void analyze_enum_obj(SemaContext* c, Object* type_obj)
+static bool analyze_enum_obj(SemaContext* c, Object* type_obj)
 {
     ObjEnum* enum_ = &type_obj->enum_;
-    Type* enum_type = type_obj->type = CALLOC_STRUCT(Type);
-    enum_type->kind = TYPE_ENUM;
-    enum_type->status = STATUS_RESOLVED;
-    enum_type->user_def = type_obj;
+    type_obj->type->status = STATUS_RESOLVED;
+    type_obj->status = STATUS_RESOLVED;
     if(enum_->underlying == NULL)
         enum_->underlying = g_type_int;
-    else if(!resolve_type(c, &enum_->underlying) ||
+    else if(!resolve_type(c, &enum_->underlying, RES_NORMAL) ||
             !type_is_integer(enum_->underlying))
     {
         sic_error_at(type_obj->loc, "Expected integral underlying type for enum.");
-        type_obj->kind = OBJ_INVALID;
-        return;
+        return false;
     }
 
     uint32_t scope = push_scope();
@@ -502,52 +577,47 @@ static void analyze_enum_obj(SemaContext* c, Object* type_obj)
     {
         Object* value = enum_->values.data[i];
         value->type = enum_->underlying;
-        ASTExpr* val_expr = value->enum_val.value;
-        if(val_expr == NULL)
-        {
+        if(value->enum_val.value == NULL)
             value->enum_val.const_val = ++last_value;
-        }
-        else if(!analyze_expr(c, val_expr))
-        {
-            type_obj->kind = OBJ_INVALID;
-            continue;
-        }
-        else if(val_expr->kind != EXPR_CONSTANT)
+        else if(!analyze_expr(c, &value->enum_val.value))
+            return false;
+        else if(value->enum_val.value->kind != EXPR_CONSTANT)
         {
             sic_error_at(value->loc, "Enum value must be assigned a constant integer expression.");
-            type_obj->kind = OBJ_INVALID;
-            continue;
+            return false;
         }
         else if(!implicit_cast(c, &value->enum_val.value, enum_->underlying))
-        {
-            type_obj->kind = OBJ_INVALID;
-            continue;
-        }
+            return false;
         else
-            last_value = value->enum_val.const_val = val_expr->expr.constant.val.i;
+            last_value = value->enum_val.const_val = value->enum_val.value->expr.constant.val.i;
         push_obj(value);
     }
     pop_scope(scope);
+    return true;
 }
 
-static void analyze_struct_obj(SemaContext* c, Object* type_obj)
+static bool analyze_struct_obj(SemaContext* c, Object* type_obj)
 {
+    if(type_obj->status == STATUS_RESOLVING)
+    {
+        set_circular_def(c, type_obj);
+        return false;
+    }
+    type_obj->status = STATUS_RESOLVING;
     ObjStruct* struct_ = &type_obj->struct_;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        if(!resolve_type(c, &member->type))
+        if(!resolve_type(c, &member->type, RES_NORMAL))
         {
-            check_circular_def(c, type_obj, member->loc);
-            type_obj->kind = OBJ_INVALID;
-            continue;
+            check_circular_def(c, member, member->loc);
+            return false;
         }
         if(member->type->visibility < type_obj->visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->loc, "Member has type with less visibility than parent.");
-            type_obj->kind = OBJ_INVALID;
-            continue;
+            return false;
         }
         uint32_t align = type_alignment(member->type);
         SIC_ASSERT(is_pow_of_2(align));
@@ -555,28 +625,66 @@ static void analyze_struct_obj(SemaContext* c, Object* type_obj)
         struct_->align = MAX(struct_->align, align);
 
     }
+    type_obj->type->status = STATUS_RESOLVED;
     type_obj->status = STATUS_RESOLVED;
+    return true;
 }
 
-static void analyze_union_obj(SemaContext* c, Object* type_obj)
+static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags)
 {
+    switch(type_obj->status)
+    {
+    case STATUS_RESOLVED:
+        if(!resolve_type(c, &type_obj->type, flags))
+        {
+            check_circular_def(c, type_obj, type_obj->loc);
+            return false;
+        }
+        return true;
+    case STATUS_RESOLVING:
+        if(flags & RES_IN_TYPEDEF)
+        {
+            set_circular_def(c, type_obj);
+            return false;
+        }
+        FALLTHROUGH;
+    case STATUS_UNRESOLVED:
+        type_obj->status = STATUS_RESOLVING;
+        if(!resolve_type(c, &type_obj->type, RES_IN_TYPEDEF))
+        {
+            check_circular_def(c, type_obj, type_obj->loc);
+            return false;
+        }
+        type_obj->status = STATUS_RESOLVED;
+        return resolve_type(c, &type_obj->type, flags);
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
+static bool analyze_union_obj(SemaContext* c, Object* type_obj)
+{
+    if(type_obj->status == STATUS_RESOLVING)
+    {
+        set_circular_def(c, type_obj);
+        return false;
+    }
+    type_obj->status = STATUS_RESOLVING;
     ObjStruct* struct_ = &type_obj->struct_;
     uint32_t largest_size = 0;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        if(!resolve_type(c, &member->type))
+        if(!resolve_type(c, &member->type, RES_NORMAL))
         {
             check_circular_def(c, member->type->user_def, member->loc);
-            type_obj->kind = OBJ_INVALID;
-            continue;
+            return false;
         }
         if(member->type->visibility < type_obj->visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->loc, "Member has type with less visibility than parent.");
-            type_obj->kind = OBJ_INVALID;
-            continue;
+            return false;
         }
         uint32_t next_size = type_size(member->type);
         if(largest_size < next_size)
@@ -585,40 +693,8 @@ static void analyze_union_obj(SemaContext* c, Object* type_obj)
             struct_->largest_type = member->type;
         }
     }
+    type_obj->type->status = STATUS_RESOLVED;
+    type_obj->status = STATUS_RESOLVED;
+    return true;
 }
 
-static void check_circular_def(SemaContext* c, Object* other, SourceLoc loc)
-{
-    if(c->circular_def == other)
-        c->circular_def = NULL;
-    else if(c->circular_def != NULL)
-        sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
-}
-
-static void declare_global_obj(SemaContext* c, Object* global)
-{
-    if(memcmp(global->symbol, "main", 4) == 0 &&
-       !analyze_main(global))
-        return;
-    HashMap* pub  = &c->unit->module->public_symbols;
-    Object* other = hashmap_get(c->priv_syms, global->symbol);
-    if(other == NULL)
-        other = hashmap_get(c->prot_syms, global->symbol);
-
-    if(other != NULL)
-        sic_error_redef(global, other);
-
-
-    switch(global->visibility)
-    {
-    case VIS_PRIVATE:
-        hashmap_put(c->priv_syms, global->symbol, global);
-        return;
-    case VIS_PUBLIC:
-        hashmap_put(pub, global->symbol, global);
-        FALLTHROUGH;
-    case VIS_PROTECTED:
-        hashmap_put(c->prot_syms, global->symbol, global);
-        return;
-    }
-}

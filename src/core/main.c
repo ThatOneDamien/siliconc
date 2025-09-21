@@ -19,9 +19,6 @@ static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", glob
 
 int main(int argc, char* argv[])
 {
-    if(argc < 1)
-        SIC_UNREACHABLE();
-
     global_arenas_init();
     process_cmdln_args(argc, argv);
     

@@ -35,7 +35,6 @@ typedef struct Type*            TypePointer;
 typedef struct TypeUnresolved   TypeUnresolved;
 typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
-typedef struct Type*            TypeCache[__TYPE_CACHE_CNT];
 
 // Dynamic Array Structs
 typedef struct StringDA         StringDA;
@@ -186,7 +185,7 @@ struct Type
     ResolveStatus status;
     Visibility    visibility;
     void*         llvm_ref;
-    TypeCache     cache;
+    Type*         ptr_cache;
 
     union
     {
@@ -485,13 +484,8 @@ struct ObjVar
 {
     union
     {
-        ASTExpr* global_initializer;
-        ConstantValue default_val;
-        ConstantValue const_val;
-    };
-    union
-    {
-        ParamFlags param_flags;
+        ASTExpr*      initial_val; // Initial value for global and const vars.
+        ConstantValue default_val; // Default value for parameters (TODO: struct members)
     };
     VarKind  kind;
 };
@@ -512,7 +506,6 @@ struct Object
         ObjEnumValue enum_val; // Components of value in enum
         ObjFunc      func;     // Components of function
         ObjStruct    struct_;  // Components of bitfield, struct, or union
-        Type*        type_alias;
         ObjVar       var;      // Components of variable
     };
 
