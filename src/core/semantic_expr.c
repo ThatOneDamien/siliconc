@@ -70,7 +70,7 @@ bool analyze_expr_no_set(SemaContext* c, ASTExpr** expr_ref)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(c, expr);
     case EXPR_CONSTANT:
-        return resolve_type(c, &expr->type, RES_NORMAL);
+        return resolve_type(c, &expr->type, RES_NORMAL, expr->loc, "Constant cannot be of type");
     case EXPR_INVALID:
         return false;
     case EXPR_TERNARY:

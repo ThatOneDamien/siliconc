@@ -27,7 +27,8 @@ static inline CastGroup type_to_group(Type* type);
 
 bool analyze_cast(SemaContext* c, ASTExpr* cast)
 {
-    if(!resolve_type(c, &cast->type, RES_NORMAL) || !analyze_expr(c, &cast->expr.cast.inner))
+    if(!resolve_type(c, &cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || 
+       !analyze_expr(c, &cast->expr.cast.inner))
         return false;
     ASTExpr* inner = cast->expr.cast.inner;
     CastParams params;

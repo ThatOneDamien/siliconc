@@ -23,7 +23,8 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt);
 
 static bool analyze_enum_obj(SemaContext* c, Object* type_obj);
 static bool analyze_struct_obj(SemaContext* c, Object* type_obj);
-static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags);
+static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags,
+                               SourceLoc err_loc, const char* err_str);
 static bool analyze_union_obj(SemaContext* c, Object* type_obj);
 
 
@@ -140,13 +141,14 @@ static void declare_function(SemaContext* c, Object* function)
     FuncSignature* sig = function->func.signature;
     ObjectDA* params = &sig->params;
 
-    if(resolve_type(c, &sig->ret_type, RES_NORMAL) && sig->ret_type->visibility < function->visibility)
+    if(resolve_type(c, &sig->ret_type, RES_ALLOW_VOID, function->loc, "Function cannot have return type") 
+       && sig->ret_type->visibility < function->visibility)
         sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
 
     for(uint32_t i = 0; i < params->size; ++i)
     {
         Object* param = params->data[i];
-        if(!resolve_type(c, &param->type, RES_NORMAL))
+        if(!resolve_type(c, &param->type, RES_NORMAL, param->loc, "Variable cannot be of type"))
             continue;
         if(param->type->visibility < function->visibility)
         {
@@ -159,7 +161,7 @@ static void declare_function(SemaContext* c, Object* function)
 static void declare_global_var(SemaContext* c, Object* var)
 {
     declare_global_obj(c, var);
-    resolve_type(c, &var->type, RES_NORMAL);
+    resolve_type(c, &var->type, RES_NORMAL, var->loc, "Variable cannot be of type");
 }
 
 static void declare_global_obj(SemaContext* c, Object* global)
@@ -197,7 +199,7 @@ static void analyze_unit(SemaContext* c, CompilationUnit* unit)
     c->prot_syms = &unit->module->symbols;
 
     for(uint32_t i = 0; i < unit->types.size; ++i)
-        analyze_type_obj(c, unit->types.data[i], NULL, RES_NORMAL);
+        analyze_type_obj(c, unit->types.data[i], NULL, RES_ALLOW_VOID, (SourceLoc){}, NULL);
 
     for(uint32_t i = 0; i < unit->vars.size; ++i)
         analyze_global_var(c, unit->vars.data[i]);
@@ -483,7 +485,7 @@ static void analyze_declaration(SemaContext* c, ASTDeclaration* decl)
             return;
         decl->obj->type = decl->init_expr->type;
     }
-    else if(!resolve_type(c, type_ref, RES_NORMAL))
+    else if(!resolve_type(c, type_ref, RES_NORMAL, decl->obj->loc, "Variable cannot be of type"))
         decl->obj->kind = OBJ_INVALID;
     else if(decl->init_expr != NULL)
         implicit_cast(c, &decl->init_expr, *type_ref);
@@ -515,7 +517,8 @@ static void analyze_swap(SemaContext* c, ASTStmt* stmt)
     }
 }
 
-bool analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, ResolutionFlags flags)
+bool analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, 
+                      ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
 {
     switch(type_obj->kind)
     {
@@ -527,17 +530,17 @@ bool analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, Resolutio
         break;
     case OBJ_STRUCT:
         if(type_obj->status == STATUS_RESOLVED) break;
-        if(flags & RES_ALLOW_INCOMPLETE) break;
+        if(c->in_ptr || c->in_typedef) break;
         if(!analyze_struct_obj(c, type_obj)) goto ERR;
         break;
     case OBJ_TYPE_ALIAS:
-        if(!analyze_type_alias(c, type_obj, flags)) goto ERR;
+        if(!analyze_type_alias(c, type_obj, flags, err_loc, err_str)) goto ERR;
         break;
     case OBJ_TYPE_DISTINCT:
         SIC_TODO();
     case OBJ_UNION:
         if(type_obj->status == STATUS_RESOLVED) break;
-        if(flags & RES_ALLOW_INCOMPLETE) break;
+        if(c->in_ptr || c->in_typedef) break;
         if(!analyze_union_obj(c, type_obj)) goto ERR;
         break;
     case OBJ_INVALID:
@@ -564,8 +567,9 @@ static bool analyze_enum_obj(SemaContext* c, Object* type_obj)
     type_obj->status = STATUS_RESOLVED;
     if(enum_->underlying == NULL)
         enum_->underlying = g_type_int;
-    else if(!resolve_type(c, &enum_->underlying, RES_NORMAL) ||
-            !type_is_integer(enum_->underlying))
+    else if(!resolve_type(c, &enum_->underlying, RES_NORMAL, type_obj->loc, "An enum's underlying type cannot be of type"))
+        return false;
+    else if(!type_is_integer(enum_->underlying))
     {
         sic_error_at(type_obj->loc, "Expected integral underlying type for enum.");
         return false;
@@ -608,7 +612,7 @@ static bool analyze_struct_obj(SemaContext* c, Object* type_obj)
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        if(!resolve_type(c, &member->type, RES_NORMAL))
+        if(!resolve_type(c, &member->type, RES_NORMAL, member->loc, "Struct member cannot be of type"))
         {
             check_circular_def(c, member, member->loc);
             return false;
@@ -630,33 +634,39 @@ static bool analyze_struct_obj(SemaContext* c, Object* type_obj)
     return true;
 }
 
-static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags)
+static bool analyze_type_alias(SemaContext* c, Object* type_obj, ResolutionFlags flags,
+                               SourceLoc err_loc, const char* err_str)
 {
     switch(type_obj->status)
     {
     case STATUS_RESOLVED:
-        if(!resolve_type(c, &type_obj->type, flags))
+        if(!resolve_type(c, &type_obj->type, flags, err_loc, err_str))
         {
             check_circular_def(c, type_obj, type_obj->loc);
             return false;
         }
         return true;
     case STATUS_RESOLVING:
-        if(flags & RES_IN_TYPEDEF)
+        if(c->in_typedef)
         {
             set_circular_def(c, type_obj);
             return false;
         }
         FALLTHROUGH;
-    case STATUS_UNRESOLVED:
+    case STATUS_UNRESOLVED: {
         type_obj->status = STATUS_RESOLVING;
-        if(!resolve_type(c, &type_obj->type, RES_IN_TYPEDEF))
+        bool prev = c->in_typedef;
+        c->in_typedef = true;
+        bool success = resolve_type(c, &type_obj->type, RES_ALLOW_VOID, type_obj->loc, "Typedef cannot be assigned to type");
+        c->in_typedef = prev;
+        if(!success)
         {
             check_circular_def(c, type_obj, type_obj->loc);
             return false;
         }
         type_obj->status = STATUS_RESOLVED;
-        return resolve_type(c, &type_obj->type, flags);
+        return resolve_type(c, &type_obj->type, flags, err_loc, err_str);
+    }
     default:
         SIC_UNREACHABLE();
     }
@@ -675,7 +685,7 @@ static bool analyze_union_obj(SemaContext* c, Object* type_obj)
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         Object* member = struct_->members.data[i];
-        if(!resolve_type(c, &member->type, RES_NORMAL))
+        if(!resolve_type(c, &member->type, RES_NORMAL, member->loc, "Union member cannot be of type"))
         {
             check_circular_def(c, member->type->user_def, member->loc);
             return false;

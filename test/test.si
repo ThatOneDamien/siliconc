@@ -30,7 +30,10 @@
 // typedef I = J;
 // typedef J = I*;
 
-pub fn main() -> int
+typedef babe = void;
+
+pub fn main()
 {
-    void[1] a;
+    int a = 1;
+    int[a][2] b;
 }

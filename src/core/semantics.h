@@ -27,20 +27,26 @@ struct SemaContext
 
     BlockContext     block_context;
     IdentMask        ident_mask;
+    bool             in_ptr : 1;
+    bool             in_typedef : 1;
     Object*          circular_def;
 };
 
 void     analyze_global_var(SemaContext* c, Object* global_var);
 bool     analyze_expr_no_set(SemaContext* c, ASTExpr** expr_ref);
-bool     analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, ResolutionFlags flags);
 bool     analyze_cast(SemaContext* c, ASTExpr* cast);
+bool     analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, 
+                          ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+
 bool     implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
 void     implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
-bool     resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags);
+bool     resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags, 
+                      SourceLoc err_loc, const char* err_str);
 void     push_obj(Object* obj);
 Object*  find_obj(SemaContext* c, Symbol symbol);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
+
 bool     expr_is_lvalue(ASTExpr* expr);
 bool     expr_is_const_eval(ASTExpr* expr);
 

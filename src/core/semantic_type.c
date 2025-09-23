@@ -1,10 +1,12 @@
 #include "semantics.h"
 
-static bool resolve_array(SemaContext* c, Type* arr_ty, ResolutionFlags flags);
+static bool resolve_array(SemaContext* c, Type* arr_ty, SourceLoc err_loc);
 static bool resolve_typeof(SemaContext* c, Type** type_ref, Type* typeof);
-static bool resolve_user(SemaContext* c, Type** type_ref, ResolutionFlags flags);
+static bool resolve_user(SemaContext* c, Type** type_ref, ResolutionFlags flags,
+                         SourceLoc err_loc, const char* err_str);
 
-bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags)
+bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags,
+                  SourceLoc err_loc, const char* err_str)
 {
     SIC_ASSERT(c != NULL);
     SIC_ASSERT(type_ref != NULL);
@@ -15,6 +17,14 @@ bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags)
     switch(type->kind)
     {
     case TYPE_VOID:
+        if(BIT_IS_UNSET(flags, RES_ALLOW_VOID))
+        {
+            sic_error_at(err_loc, "%s 'void'.", err_str);
+            // Return false here because this is g_void and we don't want
+            // to cascade errors by setting the type kind to TYPE_INVALID.
+            return false;
+        }
+        FALLTHROUGH;
     case TYPE_BOOL:
     case TYPE_BYTE:
     case TYPE_UBYTE:
@@ -26,21 +36,24 @@ bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags)
     case TYPE_ULONG:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
-        SIC_TODO_MSG("Fix RES_IS_PTR and make it part of sema context.");
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
-    case TYPE_POINTER:
+    case TYPE_POINTER: {
         if(type->status == STATUS_RESOLVED)
             return !type_is_bad(type);
         type->status = STATUS_RESOLVED;
-        if(!resolve_type(c, &type->pointer_base, flags | RES_PTR_FLAGS)) break;
+        bool prev = c->in_ptr;
+        c->in_ptr = true;
+        if(!resolve_type(c, &type->pointer_base, RES_ALLOW_VOID, err_loc, "Cannot have pointer to type")) break;
+        c->in_ptr = prev;
         type->visibility = type->pointer_base->visibility;
         return true;
+    }
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:
         if(type->status == STATUS_RESOLVED)
             return !type_is_bad(type);
-        if(!resolve_type(c, &type->array.elem_type, flags)) break;
+        if(!resolve_type(c, &type->array.elem_type, RES_NORMAL, err_loc, "")) break;
         type->status = type->array.elem_type->status;
         return true;
     case TYPE_ENUM:
@@ -49,19 +62,20 @@ bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags)
     case TYPE_UNION:
         if(type->status == STATUS_RESOLVED)
             return !type_is_bad(type);
-        if(!analyze_type_obj(c, type->user_def, type_ref, flags)) break;
+        if(!analyze_type_obj(c, type->user_def, type_ref, flags, err_loc, err_str)) break;
         return true;
     case TYPE_PRE_SEMA_ARRAY:
         if(type->status == STATUS_RESOLVED)
             return !type_is_bad(type);
-        if(!resolve_array(c, type, flags)) break;
+        if(!resolve_array(c, type, err_loc)) break;
         return true;
     case TYPE_PRE_SEMA_USER:
         if(type->status == STATUS_RESOLVED)
             return !type_is_bad(type);
-        if(!resolve_user(c, type_ref, flags)) break;
+        if(!resolve_user(c, type_ref, flags, err_loc, err_str)) break;
         return true;
     case TYPE_AUTO:
+        // TODO: Utilize less memory now that we take in the location and error string.
         sic_error_at(type->auto_loc, "Type 'auto' not allowed in this context.");
         break;
     case TYPE_TYPEOF:
@@ -79,10 +93,10 @@ bool resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags)
 }
 
 
-static bool resolve_array(SemaContext* c, Type* arr_ty, ResolutionFlags flags)
+static bool resolve_array(SemaContext* c, Type* arr_ty, SourceLoc err_loc)
 {
     TypeArray* arr = &arr_ty->array;
-    if(!resolve_type(c, &arr->elem_type, flags))
+    if(!resolve_type(c, &arr->elem_type, RES_NORMAL, err_loc, "Arrays cannot have elements of type"))
         return false;
 
     // TODO: Check for negative size expr, that is BAD.
@@ -115,7 +129,8 @@ static bool resolve_typeof(SemaContext* c, Type** type_ref, Type* typeof)
     return true;
 }
 
-static bool resolve_user(SemaContext* c, Type** type_ref, ResolutionFlags flags)
+static bool resolve_user(SemaContext* c, Type** type_ref, ResolutionFlags flags,
+                         SourceLoc err_loc, const char* err_str)
 {
     Type* user_ty = *type_ref;
     Object* type_obj = find_obj(c, user_ty->unresolved.sym);
@@ -130,6 +145,6 @@ static bool resolve_user(SemaContext* c, Type** type_ref, ResolutionFlags flags)
         return false;
     }
     user_ty->visibility = type_obj->visibility;
-    return analyze_type_obj(c, type_obj, type_ref, flags);
+    return analyze_type_obj(c, type_obj, type_ref, flags, err_loc, err_str);
 }
 

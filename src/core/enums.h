@@ -211,12 +211,8 @@ typedef enum : uint8_t
 typedef enum
 {
     RES_NORMAL           = 0,
-    RES_IN_PTR           = 1 << 0,
-    RES_IN_TYPEDEF       = 1 << 1,
-    RES_ALLOW_VOID       = 1 << 2,
-    RES_ALLOW_INFERRED   = 1 << 3,
-    RES_ALLOW_INCOMPLETE = RES_IN_PTR | RES_IN_TYPEDEF,
-    RES_PTR_FLAGS        = RES_IN_PTR | RES_ALLOW_VOID,
+    RES_ALLOW_VOID       = 1 << 0,
+    RES_ALLOW_INFERRED   = 1 << 1,
 } ResolutionFlags;
 
 typedef enum : uint8_t
