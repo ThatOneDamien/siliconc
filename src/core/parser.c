@@ -462,20 +462,52 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
     while(true)
     {
         TokenKind kind = peek(l)->kind;
-        if(token_is_typename(kind))
+        switch(kind)
         {
+        case TOKEN_VOID:
+        case TOKEN_BOOL:
+        case TOKEN_UBYTE:
+        case TOKEN_BYTE:
+        case TOKEN_USHORT:
+        case TOKEN_SHORT:
+        case TOKEN_UINT:
+        case TOKEN_INT:
+        case TOKEN_ULONG:
+        case TOKEN_LONG:
+        case TOKEN_FLOAT:
+        case TOKEN_DOUBLE:
             if(ty != NULL)
-                parser_error(l, "Two or more data types in type prefix");
+                ERROR_AND_RET(false, "Two or more data types in type prefix");
             ty = type_from_token(kind);
             ambiguous = false;
             advance(l);
             continue;
-        }
-
-        if(kind == TOKEN_TYPEOF)
-        {
+        case TOKEN_AUTO:
             if(ty != NULL)
-                parser_error(l, "Two or more data types in type prefix");
+                ERROR_AND_RET(false, "Cannot combine auto with previous type specifier.");
+            ambiguous = false;
+            ty = CALLOC_STRUCT(Type);
+            ty->kind = TYPE_AUTO;
+            ty->auto_loc = peek(l)->loc;
+            advance(l);
+            continue;
+        case TOKEN_FN:
+            if(ty != NULL)
+                ERROR_AND_RET(false, "Cannot combine fn with previous type specifier.");
+            advance(l);
+            CONSUME_OR_RET(TOKEN_LPAREN, false);
+            FuncSignature* sig = CALLOC_STRUCT(FuncSignature);
+            if(!parse_func_params(l, &sig->params, &sig->is_var_arg))
+                return false;
+            if(!try_consume(l, TOKEN_ARROW))
+                sig->ret_type = g_type_void;
+            else if(!parse_decl_type(l, &sig->ret_type, NULL))
+                return false;
+            ty = type_func_ptr(sig);
+            goto TYPE_SUFFIX;
+        case TOKEN_TYPEOF:
+            if(ty != NULL)
+                ERROR_AND_RET(false, "Cannot combine typeof with previous type specifier.");
             ambiguous = false;
             advance(l);
             CONSUME_OR_RET(TOKEN_LPAREN, false);
@@ -484,18 +516,8 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
             ASSIGN_EXPR_OR_RET(ty->type_of, false);
             CONSUME_OR_RET(TOKEN_RPAREN, false);
             continue;
-        }
-
-        if(kind == TOKEN_AUTO)
-        {
-            if(ty != NULL)
-                parser_error(l, "Auto cannot be specified along with other types.");
-            ambiguous = false;
-            ty = CALLOC_STRUCT(Type);
-            ty->kind = TYPE_AUTO;
-            ty->auto_loc = peek(l)->loc;
-            advance(l);
-            continue;
+        default:
+            break;
         }
         break;
     }
@@ -567,7 +589,8 @@ static bool parse_decl_type_or_expr(Lexer* l, Type** type, ASTExpr** expr, ObjAt
         ty->unresolved.loc = peek(l)->loc;
         advance(l);
     }
-    
+
+TYPE_SUFFIX:
     while(true)
     {
         if(try_consume(l, TOKEN_LBRACKET))
@@ -1307,7 +1330,7 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_BOOL;
-    expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE ? 1 : 0;
+    expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
     return expr;
@@ -1316,7 +1339,7 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 static ASTExpr* parse_nullptr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->type = type_pointer_to(g_type_void);
+    expr->type = g_type_voidptr;
     expr->expr.constant.val.i = 0;
     expr->expr.constant.kind = CONSTANT_POINTER;
     advance(l);

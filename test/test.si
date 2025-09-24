@@ -1,39 +1,8 @@
-// Case 1 - No connection.
-// typedef A = int;
-// struct B
-// {
-//     A  a1;
-//     A* a2;
-// }
-
-// Case 2 - Non-circular connected definitions.
-// typedef C1 = D;
-// typedef C2 = D*;
-// struct D
-// {
-//     C1* c1;
-//     C2  c2;
-// }
-
-// Case 3 - Circular connected definitions.
-// typedef E1 = F;
-// typedef E2 = F[4];
-// struct F
-// {
-//     E1 e1;
-//     E2 e2;
-// }
-
-// Case 4 - Circular definition among typedefs
-// typedef G = H;
-// typedef H = G;
-// typedef I = J;
-// typedef J = I*;
-
-typedef babe = void;
-
-pub fn main()
+fn some(int a) -> int
 {
-    int a = 1;
-    int[a][2] b;
+    return 69;
+}
+
+pub fn main() -> int
+{
 }

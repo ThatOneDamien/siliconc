@@ -21,29 +21,29 @@ typedef struct SemaContext SemaContext;
 struct SemaContext
 {
     CompilationUnit* unit;
-    HashMap*         priv_syms;
-    HashMap*         prot_syms;
     Object*          cur_func;
+    Object*          circular_def;
 
     BlockContext     block_context;
     IdentMask        ident_mask;
     bool             in_ptr : 1;
     bool             in_typedef : 1;
-    Object*          circular_def;
 };
 
-void     analyze_global_var(SemaContext* c, Object* global_var);
-bool     analyze_expr_no_set(SemaContext* c, ASTExpr** expr_ref);
-bool     analyze_cast(SemaContext* c, ASTExpr* cast);
-bool     analyze_type_obj(SemaContext* c, Object* type_obj, Type** o_type, 
+extern SemaContext g_sema;
+
+void     analyze_global_var(Object* global_var);
+bool     analyze_expr_no_set(ASTExpr** expr_ref);
+bool     analyze_cast(ASTExpr* cast);
+bool     analyze_type_obj(Object* type_obj, Type** o_type, 
                           ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 
-bool     implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired);
-void     implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast);
-bool     resolve_type(SemaContext* c, Type** type_ref, ResolutionFlags flags, 
+bool     implicit_cast(ASTExpr** expr_to_cast, Type* desired);
+void     implicit_cast_varargs(ASTExpr** expr_to_cast);
+bool     resolve_type(Type** type_ref, ResolutionFlags flags, 
                       SourceLoc err_loc, const char* err_str);
 void     push_obj(Object* obj);
-Object*  find_obj(SemaContext* c, Symbol symbol);
+Object*  find_obj(Symbol symbol);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
 
@@ -72,9 +72,9 @@ static inline bool expr_ensure_lvalue(ASTExpr* expr)
     return true;
 }
 
-static inline bool analyze_expr(SemaContext* c, ASTExpr** expr_ref)
+static inline bool analyze_expr(ASTExpr** expr_ref)
 {
-    if(!analyze_expr_no_set(c, expr_ref))
+    if(!analyze_expr_no_set(expr_ref))
     {
         (*expr_ref)->kind = EXPR_INVALID;
         return false;
@@ -103,19 +103,19 @@ static inline bool obj_is_type(Object* obj)
     SIC_UNREACHABLE();
 }
 
-static inline void set_circular_def(SemaContext* c, Object* obj)
+static inline void set_circular_def(Object* obj)
 {
     sic_error_at(obj->loc, "Circular type definition.");
-    c->circular_def = obj;
+    g_sema.circular_def = obj;
     obj->kind = OBJ_INVALID;
     obj->status = STATUS_RESOLVED;
 }
 
-static inline void check_circular_def(SemaContext* c, Object* other, SourceLoc loc)
+static inline void check_circular_def(Object* other, SourceLoc loc)
 {
-    if(c->circular_def == other)
-        c->circular_def = NULL;
-    else if(c->circular_def != NULL)
+    if(g_sema.circular_def == other)
+        g_sema.circular_def = NULL;
+    else if(g_sema.circular_def != NULL)
         sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
     other->kind = OBJ_INVALID;
 }

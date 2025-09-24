@@ -30,8 +30,6 @@ typedef struct Lexer            Lexer;
 // Type Structs
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
-typedef struct FuncSignature*   TypeFuncPtr;
-typedef struct Type*            TypePointer;
 typedef struct TypeUnresolved   TypeUnresolved;
 typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
@@ -192,8 +190,8 @@ struct Type
         TypeArray      array;
         SourceLoc      auto_loc;
         TypeBuiltin    builtin;
-        TypeFuncPtr    func_ptr;
-        TypePointer    pointer_base;
+        FuncSignature* func_ptr;
+        Type*          pointer_base;
         ASTExpr*       type_of;
         TypeUnresolved unresolved;
         TypeUserdef    user_def;

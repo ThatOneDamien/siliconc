@@ -25,14 +25,14 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
 static inline CastGroup type_to_group(Type* type);
 
-bool analyze_cast(SemaContext* c, ASTExpr* cast)
+bool analyze_cast(ASTExpr* cast)
 {
-    if(!resolve_type(c, &cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || 
-       !analyze_expr(c, &cast->expr.cast.inner))
+    if(!resolve_type(&cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || 
+       !analyze_expr(&cast->expr.cast.inner))
         return false;
     ASTExpr* inner = cast->expr.cast.inner;
     CastParams params;
-    params.sema_context = c;
+    params.sema_context = &g_sema;
     params.expr  = cast;
     params.inner = inner;
     params.from  = inner->type;
@@ -63,14 +63,14 @@ bool analyze_cast(SemaContext* c, ASTExpr* cast)
     return true;
 }
 
-bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
+bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
 {
     SIC_ASSERT(desired->status == STATUS_RESOLVED);
-    if(!analyze_expr(c, expr_to_cast) || type_is_bad(desired))
+    if(!analyze_expr(expr_to_cast) || type_is_bad(desired))
         return false;
     ASTExpr* prev = *expr_to_cast;
     CastParams params;
-    params.sema_context = c;
+    params.sema_context = &g_sema;
     params.from = prev->type;
     params.to   = desired;
     params.from_kind = params.from->kind;
@@ -104,7 +104,7 @@ bool implicit_cast(SemaContext* c, ASTExpr** expr_to_cast, Type* desired)
     return true;
 }
 
-void implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast)
+void implicit_cast_varargs(ASTExpr** expr_to_cast)
 {
     bool good = true;
     switch((*expr_to_cast)->type->kind)
@@ -116,10 +116,10 @@ void implicit_cast_varargs(SemaContext* c, ASTExpr** expr_to_cast)
     case TYPE_BYTE:
     case TYPE_SHORT:
     case TYPE_INT:
-        good = implicit_cast(c, expr_to_cast, g_type_ulong);
+        good = implicit_cast(expr_to_cast, g_type_ulong);
         break;
     case TYPE_FLOAT:
-        good = implicit_cast(c, expr_to_cast, g_type_double);
+        good = implicit_cast(expr_to_cast, g_type_double);
         break;
     default:
         return;

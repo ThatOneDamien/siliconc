@@ -56,9 +56,9 @@ static void     emit_while(CodegenContext* c, ASTStmt* stmt);
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr);
 static void     emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result);
 static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result);
-static void     emit_function_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -78,6 +78,7 @@ static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* l
 static void              append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
 static void              use_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
 static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
+static LLVMTypeRef       get_llvm_func_type(CodegenContext* c, Type* type);
 static LLVMValueRef      get_llvm_ref(CodegenContext* c, Object* obj);
 static LLVMTargetRef     get_llvm_target(const char* triple);
 static void              load_rvalue(CodegenContext* c, GenValue* lvalue);
@@ -202,8 +203,6 @@ static void gen_unit(CodegenContext* c, CompilationUnit* unit)
 static void emit_function_body(CodegenContext* c, Object* function)
 {
     SIC_ASSERT(function->llvm_ref);
-    if(function->func.body == NULL)
-        return;
     c->cur_func = function;
     append_old_basic_block(c, create_basic_block(""));
     c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32Type(), ".alloca_ptr");
@@ -539,7 +538,7 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_DEFAULT:
         SIC_TODO();
     case EXPR_FUNC_CALL:
-        emit_function_call(c, expr, &result);
+        emit_call(c, expr, &result);
         return result;
     case EXPR_IDENT:
         emit_ident(c, expr, &result);
@@ -723,6 +722,33 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     SIC_UNREACHABLE();
 }
 
+static void emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result)
+{
+    ASTExprCall* call = &expr->expr.call;
+    GenValue func_val = emit_expr(c, call->func_expr);
+    load_rvalue(c, &func_val);
+    Type* func_type = call->func_expr->type;
+
+    // TODO: Make a permanent solution. I want to limit the number of parameters
+    //       a function can have, but for now I just want to avoid MALLOCing
+    //       unnecessarily.
+    LLVMValueRef args[256];
+    SIC_ASSERT(call->args.size <= 256);
+    for(uint32_t i = 0; i < call->args.size; ++i)
+    {
+        GenValue temp = emit_expr(c, call->args.data[i]);
+        if(i >= func_type->func_ptr->params.size)
+            load_rvalue(c, &temp);
+        args[i] = temp.value;
+    }
+    result->value = LLVMBuildCall2(c->builder, 
+                                   get_llvm_func_type(c, func_type),
+                                   func_val.value,
+                                   args, call->args.size, 
+                                   "");
+    result->kind = GEN_VAL_RVALUE;
+}
+
 static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result)
 {
     ASTExprCast* cast = &expr->expr.cast;
@@ -815,34 +841,6 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         break;
     }
     SIC_UNREACHABLE();
-}
-
-static void emit_function_call(CodegenContext* c, ASTExpr* expr, GenValue* result)
-{
-    // TODO: Remove temporary
-    ASTExprCall* call = &expr->expr.call;
-    Object* function = call->func_expr->expr.ident;
-    ObjectDA* params = &function->func.signature->params;
-    SIC_ASSERT(call->func_expr->kind == EXPR_IDENT);
-
-    // TODO: Make a permanent solution. I want to limit the number of parameters
-    //       a function can have, but for now I just want to avoid MALLOCing
-    //       unnecessarily.
-    LLVMValueRef args[256];
-    SIC_ASSERT(call->args.size <= 256);
-    for(uint32_t i = 0; i < call->args.size; ++i)
-    {
-        GenValue temp = emit_expr(c, call->args.data[i]);
-        if(i >= params->size)
-            load_rvalue(c, &temp);
-        args[i] = temp.value;
-    }
-    result->value = LLVMBuildCall2(c->builder, 
-                                   get_llvm_type(c, function->type), 
-                                   get_llvm_ref(c, function), 
-                                   args, call->args.size, 
-                                   "");
-    result->kind = GEN_VAL_RVALUE;
 }
 
 static void emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result)
@@ -1202,20 +1200,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMDoubleType();
     case TYPE_POINTER:
         return type->llvm_ref = c->ptr_type;
-    case TYPE_FUNC_PTR: {
-        LLVMTypeRef* param_types = NULL;
-        FuncSignature* sig = type->func_ptr;
-        if(sig->params.size > 0)
-            param_types = MALLOC_STRUCTS(LLVMTypeRef, sig->params.size);
-
-        for(uint32_t i = 0; i < sig->params.size; ++i)
-        {
-            Object* param = sig->params.data[i];
-            param_types[i] = get_llvm_type(c, param->type);
-        }
-
-        return type->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type), param_types, sig->params.size, sig->is_var_arg);
-    }
+    case TYPE_FUNC_PTR:
+        return c->ptr_type;
     case TYPE_STATIC_ARRAY:
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
     case TYPE_RUNTIME_ARRAY:
@@ -1256,14 +1242,34 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     SIC_UNREACHABLE();
 }
 
+static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
+{
+    SIC_ASSERT(type->kind == TYPE_FUNC_PTR);
+    if(type->llvm_ref != NULL)
+        return type->llvm_ref;
+
+    LLVMTypeRef* param_types = NULL;
+    FuncSignature* sig = type->func_ptr;
+    if(sig->params.size > 0)
+        param_types = MALLOC_STRUCTS(LLVMTypeRef, sig->params.size);
+
+    for(uint32_t i = 0; i < sig->params.size; ++i)
+    {
+        Object* param = sig->params.data[i];
+        param_types[i] = get_llvm_type(c, param->type);
+    }
+    return type->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type), param_types, sig->params.size, sig->is_var_arg);
+}
+
 static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
 {
     if(obj->llvm_ref != NULL && LLVMGetGlobalParent(obj->llvm_ref) == c->module_ref)
         return obj->llvm_ref;
     switch(obj->kind)
     {
-    case OBJ_FUNC:
-        return obj->llvm_ref = LLVMAddFunction(c->module_ref, obj->symbol, get_llvm_type(c, obj->type));
+    case OBJ_FUNC: {
+        return obj->llvm_ref = LLVMAddFunction(c->module_ref, obj->symbol, get_llvm_func_type(c, obj->type));
+    }
     case OBJ_VAR:
         if(obj->var.kind != VAR_GLOBAL)
             return obj->llvm_ref;

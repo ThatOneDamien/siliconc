@@ -10,6 +10,7 @@ extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* g_type_invalid;
+extern Type* g_type_voidptr;
 extern Type* g_type_void;
 extern Type* g_type_bool;
 extern Type* g_type_ubyte;

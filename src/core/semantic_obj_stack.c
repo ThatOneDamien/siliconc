@@ -34,7 +34,7 @@ void push_obj(Object* obj)
     s_obj_stack.data[--s_obj_stack.stack_bottom] = obj;
 }
 
-Object* find_obj(SemaContext* c, Symbol symbol)
+Object* find_obj(Symbol symbol)
 {
     Object* o;
     for(uint32_t i = s_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
@@ -43,10 +43,10 @@ Object* find_obj(SemaContext* c, Symbol symbol)
         if(o->symbol == symbol)
             return o;
     }
-    o = hashmap_get(c->priv_syms, symbol);
+    o = hashmap_get(&g_sema.unit->priv_symbols, symbol);
     if(o != NULL)
         return o;
-    return hashmap_get(c->prot_syms, symbol);
+    return hashmap_get(&g_sema.unit->module->symbols, symbol);
 }
 
 uint32_t push_scope()
