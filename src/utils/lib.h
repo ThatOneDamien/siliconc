@@ -120,7 +120,6 @@ static inline void sic_fatal_error(const char* restrict message, ...)
     va_start(va, message);
     sic_diagnosticv(DIAG_FATAL, message, va);
     va_end(va);
-    SIC_ERROR_DBG("Fatal Error Triggered Debug Break.");
     exit(EXIT_FAILURE);
 }
 

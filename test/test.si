@@ -1,8 +1,0 @@
-fn some(int a) -> int
-{
-    return 69;
-}
-
-pub fn main() -> int
-{
-}

@@ -109,7 +109,7 @@ static bool analyze_array_access(ASTExpr* expr)
         return false;
     }
 
-    expr->type = type_pointer_base(expr->expr.array_access.array_expr->type);
+    expr->type = type_pointer_base(arr->type);
     return true;
 }
 
@@ -275,11 +275,11 @@ static bool analyze_ident(ASTExpr** expr_ref)
                 return false;
         }
 
-        if(ident->attribs & ATTR_CONST)
-        {
-            *expr_ref = ident->var.initial_val;
-            return true;
-        }
+        // if(ident->attribs & ATTR_CONST)
+        // {
+        //     *expr_ref = ident->var.initial_val;
+        //     return true;
+        // }
 
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
@@ -715,6 +715,14 @@ static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr* inner)
             expr->type = ident->type;
             return true;
         case OBJ_VAR:
+            switch(ident->var.kind)
+            {
+            case VAR_GLOBAL:
+            case VAR_LOCAL:
+            case VAR_PARAM:
+            default:
+                SIC_UNREACHABLE();
+            }
             break;
         default:
             sic_error_at(expr->loc, "Cannot take address of type object '%s'.", ident->symbol);

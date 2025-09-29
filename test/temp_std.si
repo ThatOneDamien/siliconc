@@ -1,4 +1,0 @@
-pub fn printf(ubyte* fmt, ...);
-pub fn puts(ubyte* msg);
-pub fn memcpy(void* dst, void* src, ulong size);
-pub fn memset(void* dst, int n, ulong size);

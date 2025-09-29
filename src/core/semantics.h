@@ -22,12 +22,13 @@ struct SemaContext
 {
     CompilationUnit* unit;
     Object*          cur_func;
-    Object*          circular_def;
+    Object*          cyclic_def;
 
     BlockContext     block_context;
     IdentMask        ident_mask;
     bool             in_ptr : 1;
     bool             in_typedef : 1;
+    bool             in_global_init : 1;
 };
 
 extern SemaContext g_sema;
@@ -103,19 +104,20 @@ static inline bool obj_is_type(Object* obj)
     SIC_UNREACHABLE();
 }
 
-static inline void set_circular_def(Object* obj)
+static inline void set_cyclic_def(Object* obj)
 {
-    sic_error_at(obj->loc, "Circular type definition.");
-    g_sema.circular_def = obj;
+    sic_error_at(obj->loc, "Cyclic definition.");
+    g_sema.cyclic_def = obj;
     obj->kind = OBJ_INVALID;
     obj->status = STATUS_RESOLVED;
 }
 
-static inline void check_circular_def(Object* other, SourceLoc loc)
+static inline void check_cyclic_def(Object* other, SourceLoc loc)
 {
-    if(g_sema.circular_def == other)
-        g_sema.circular_def = NULL;
-    else if(g_sema.circular_def != NULL)
+    if(g_sema.cyclic_def == other)
+        g_sema.cyclic_def = NULL;
+    else if(g_sema.cyclic_def != NULL)
         sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
     other->kind = OBJ_INVALID;
+    other->status = STATUS_RESOLVED;
 }

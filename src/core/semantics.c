@@ -244,20 +244,24 @@ static void analyze_function(Object* function)
 
 void analyze_global_var(Object* global_var)
 {
-    SIC_ASSERT(global_var->kind == OBJ_VAR && global_var->var.kind == VAR_GLOBAL);
     if(global_var->status == STATUS_RESOLVED)
         return;
     else if(global_var->status == STATUS_RESOLVING)
     {
+        set_cyclic_def(global_var);
+        return;
     }
 
     global_var->status = STATUS_RESOLVING;
+    bool prev = g_sema.in_global_init;
+    g_sema.in_global_init = true;
     if(global_var->var.initial_val == NULL || 
        !analyze_expr(&global_var->var.initial_val))
     {
-        global_var->kind = OBJ_INVALID;
+        check_cyclic_def(global_var, global_var->loc);
         return;
     }
+    g_sema.in_global_init = prev;
     // TODO: Check that this is constant. Make a function that checks if an expression is constant,
     // because something like &global_var, is technically a constant expression.
     if(global_var->type->visibility < global_var->visibility)
@@ -624,7 +628,7 @@ static bool analyze_struct_obj(Object* type_obj)
 {
     if(type_obj->status == STATUS_RESOLVING)
     {
-        set_circular_def(type_obj);
+        set_cyclic_def(type_obj);
         return false;
     }
     type_obj->status = STATUS_RESOLVING;
@@ -634,7 +638,7 @@ static bool analyze_struct_obj(Object* type_obj)
         Object* member = struct_->members.data[i];
         if(!resolve_type(&member->type, RES_NORMAL, member->loc, "Struct member cannot be of type"))
         {
-            check_circular_def(member, member->loc);
+            check_cyclic_def(member, member->loc);
             return false;
         }
         if(member->type->visibility < type_obj->visibility)
@@ -665,7 +669,7 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
             *o_type = type_obj->type;
             if(!resolve_type(o_type, flags, err_loc, err_str))
             {
-                check_circular_def(type_obj, type_obj->loc);
+                check_cyclic_def(type_obj, type_obj->loc);
                 return false;
             }
         }
@@ -673,7 +677,7 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
     case STATUS_RESOLVING:
         if(g_sema.in_typedef)
         {
-            set_circular_def(type_obj);
+            set_cyclic_def(type_obj);
             return false;
         }
         FALLTHROUGH;
@@ -685,7 +689,7 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
         g_sema.in_typedef = prev;
         if(!success)
         {
-            check_circular_def(type_obj, type_obj->loc);
+            check_cyclic_def(type_obj, type_obj->loc);
             return false;
         }
         type_obj->status = STATUS_RESOLVED;
@@ -705,7 +709,7 @@ static bool analyze_union_obj(Object* type_obj)
 {
     if(type_obj->status == STATUS_RESOLVING)
     {
-        set_circular_def(type_obj);
+        set_cyclic_def(type_obj);
         return false;
     }
     type_obj->status = STATUS_RESOLVING;
@@ -716,7 +720,7 @@ static bool analyze_union_obj(Object* type_obj)
         Object* member = struct_->members.data[i];
         if(!resolve_type(&member->type, RES_NORMAL, member->loc, "Union member cannot be of type"))
         {
-            check_circular_def(member->type->user_def, member->loc);
+            check_cyclic_def(member->type->user_def, member->loc);
             return false;
         }
         if(member->type->visibility < type_obj->visibility)
