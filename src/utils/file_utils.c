@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,95 +17,88 @@
 
 typedef struct
 {
-    char   ext[3];
-    size_t len;
+    char ext[4];
+    int  len;
 } FTStorage;
 
 static FTStorage s_ft_to_ext[] = {
-    [FT_UNKNOWN] = { "\0", 0 },
-    [FT_SI]      = { "si", 2 },
-    [FT_LLVM_IR] = { "ll", 2 },
-    [FT_ASM]     = { "s" , 1 }, 
-    [FT_OBJ]     = { "o" , 1 }, 
-    [FT_STATIC]  = { "a" , 1 }, 
-    [FT_SHARED]  = { "so", 2 }, 
+    [FT_UNKNOWN] = { "\0" , 0 },
+    [FT_SI]      = { ".si", 3 },
+    [FT_LLVM_IR] = { ".ll", 3 },
+    [FT_ASM]     = { ".s" , 2 }, 
+    [FT_OBJ]     = { ".o" , 2 }, 
+    [FT_STATIC]  = { ".a" , 2 }, 
+    [FT_SHARED]  = { ".so", 3 }, 
 };
 
 static StringDA s_tempfiles = {0};
 
-static FileType get_filetype(const char* extension);
 static inline const char* ft_to_extension(FileType ft, size_t* len);
 static void get_name_and_ext(const char* path, const char** name, 
                                  const char** ext, const char** end);
 
-void input_file_new(const char* path)
+SourceFile* source_file_add_or_get(const char* path)
 {
     SIC_ASSERT(path != NULL);
-    da_reserve(&g_args.input_files, g_args.input_files.size + 1);
-    InputFile* file = g_args.input_files.data + g_args.input_files.size;
-    file->path = path;
+
+    char abs_path[PATH_MAX];
+    if(realpath(path, abs_path) == NULL)
+        sic_fatal_error("Failed to resolve path '%s'. (Errno %d: %s)", path, errno, strerror(errno));
+
+    for(uint32_t i = 0; i < g_compiler.sources.size; ++i)
+    {
+        SourceFile* file = g_compiler.sources.data + i;
+        if(strcmp(abs_path, file->path) == 0)
+            return file;
+    }
+
+    da_reserve(&g_compiler.sources, g_compiler.sources.size + 1);
+    SourceFile* file = g_compiler.sources.data + g_compiler.sources.size;
+    file->path = str_dup(abs_path);
     file->src  = NULL;
-    if(*path == '\0')
-        sic_fatal_error("Tried to use file with empty path.");
-    
-    const char* file_name;
-    const char* file_ext;
-    get_name_and_ext(path, &file_name, &file_ext, NULL);
-    file->type = file_ext <= file_name ? FT_UNKNOWN : get_filetype(file_ext + 1);
-    file->id = g_args.input_files.size;
-    g_args.input_files.size++;
-}
+    file->id   = g_compiler.sources.size;
+    g_compiler.sources.size++;
 
-void input_file_read(InputFile* file)
-{
-    SIC_ASSERT(file != NULL);
-    SIC_ASSERT(file->path != NULL);
-
-    char* res = NULL;
-    int fd = open(file->path, O_RDONLY);
+    int fd = open(abs_path, O_RDONLY);
 
     if(fd == -1)
         goto ERR;
 
     long size = lseek(fd, 0, SEEK_END);
-    if(size < 0)
+
+    if(size < 0 || lseek(fd, 0, SEEK_SET) < 0)
         goto ERR;
 
-    if(lseek(fd, 0, SEEK_SET) < 0)
-        goto ERR;
-
-    res = cmalloc(sizeof(char) * size + 2);
-
-    long orig_size = size;
-    char* ptr = res;
-    while(size > 0)
+    char* buf = MALLOC(size + 2, sizeof(char));
+    file->src = buf;
+    long total_read = 0;
+    while(total_read < size)
     {
-        ssize_t bytes_read = read(fd, ptr, size); 
+        long bytes_read = read(fd, buf + total_read, size); 
         if(bytes_read <= 0)
             goto ERR;
-        size -= bytes_read;
-        ptr += bytes_read;
+        total_read += bytes_read;
     }
 
-    if(res[orig_size - 1] == '\n')
-        res[orig_size] = '\0';
+    if(buf[size - 1] == '\n')
+        buf[size] = '\0';
     else
     {
-        res[orig_size] = '\n';
-        res[orig_size + 1] = '\0';
+        buf[size] = '\n';
+        buf[size + 1] = '\0';
     }
 
-    file->src = res;
-    return;
+    return file;
 ERR:
     if(fd != -1)
         close(fd);
-    sic_fatal_error("Failed to open file \'%s\'", file->path);
+    sic_fatal_error("Failed to read source file \'%s\'", path);
 }
 
 const char* convert_ext_to(const char* path, FileType desired)
 {
     SIC_ASSERT(path != NULL);
+    SIC_ASSERT(desired <= FT_SHARED);
     size_t ext_len;
     const char* new_ext = ft_to_extension(desired, &ext_len);
     const char* file_name;
@@ -114,12 +109,11 @@ const char* convert_ext_to(const char* path, FileType desired)
         file_ext = file_end;
 
     size_t path_len = (uintptr_t)file_ext - (uintptr_t)path;
-    char* new_name = cmalloc(path_len + ext_len + 2);
+    char* new_name = cmalloc(path_len + ext_len + 1);
 
     memcpy(new_name, path, path_len);
-    new_name[path_len] = '.';
-    strncpy(new_name + path_len + 1, new_ext, ext_len);
-    new_name[path_len + ext_len + 1] = '\0';
+    strncpy(new_name + path_len, new_ext, ext_len);
+    new_name[path_len + ext_len] = '\0';
     return new_name;
 }
 
@@ -155,18 +149,26 @@ void close_tempfiles(void)
         unlink(s_tempfiles.data[i]);
 }
 
-static FileType get_filetype(const char* extension)
+FileType get_filetype(const char* path)
 {
-    SIC_ASSERT(extension != NULL);
-    for(size_t i = 1; i < sizeof(s_ft_to_ext) / sizeof(s_ft_to_ext[0]); ++i)
-        if(memcmp(extension, s_ft_to_ext[i].ext, s_ft_to_ext[i].len) == 0)
-            return (FileType)i;
+    SIC_ASSERT(path != NULL);
+    const char* name;
+    const char* ext;
+    const char* end;
+    get_name_and_ext(path, &name, &ext, &end); 
+    int ext_len = (uintptr_t)end - (uintptr_t)ext;
+    for(FileType type = FT_UNKNOWN; type <= FT_SHARED; type++)
+    {
+        FTStorage* e = s_ft_to_ext + type;
+        if(ext_len == e->len && memcmp(ext, e->ext, e->len) == 0)
+            return type;
+    }
     return FT_UNKNOWN;
 }
 
 static inline const char* ft_to_extension(FileType ft, size_t* len)
 {
-    SIC_ASSERT(ft > FT_UNKNOWN && ft <= FT_SHARED);
+    SIC_ASSERT(ft <= FT_SHARED);
     *len = s_ft_to_ext[ft].len;
     return s_ft_to_ext[ft].ext;
 }

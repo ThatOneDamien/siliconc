@@ -41,7 +41,7 @@ typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTCaseDA        ASTCaseDA;
 typedef struct ASTDeclDA        ASTDeclDA;
 typedef struct CompUnitDA       CompUnitDA;
-typedef struct InputFileDA      InputFileDA;
+typedef struct SourceFileDA     SourceFileDA;
 typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
@@ -79,10 +79,10 @@ typedef struct ObjVar           ObjVar;
 typedef struct Object           Object;
 
 // Compiler-wide important structs
-typedef struct InputFile        InputFile;
+typedef struct SourceFile       SourceFile;
 typedef struct CompilationUnit  CompilationUnit;
 typedef struct Module           Module;
-typedef struct Cmdline          Cmdline;
+typedef struct CLIArgs          CLIArgs;
 typedef struct CompilerContext  CompilerContext;
 
 struct HashEntry
@@ -240,11 +240,11 @@ struct CompUnitDA
     uint32_t          size;
 };
 
-struct InputFileDA
+struct SourceFileDA
 {
-    InputFile* data;
-    uint32_t   capacity;
-    uint32_t   size;
+    SourceFile* data;
+    uint32_t    capacity;
+    uint32_t    size;
 };
 
 struct ModulePTRDA
@@ -338,7 +338,7 @@ struct ASTExpr
     Type*     type;
     SourceLoc loc;
     ExprKind  kind;
-    bool      evaluated;
+    bool      evaluated : 1;
 
     union
     {
@@ -354,6 +354,8 @@ struct ASTExpr
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
+
+        Type*           ct_sizeof_type;
     } expr;
 };
 
@@ -445,6 +447,8 @@ struct ObjEnum
 {
     ObjectDA values;
     Type*    underlying;
+    uint32_t min_idx;
+    uint32_t max_idx;
 };
 
 struct ObjEnumValue
@@ -509,12 +513,11 @@ struct Object
 
 };
 
-struct InputFile
+struct SourceFile
 {
     const char* path;
     const char* src;
     FileId      id;
-    FileType    type;
 };
 
 struct CompilationUnit
@@ -539,9 +542,9 @@ struct Module
     bool        used;
 };
 
-struct Cmdline
+struct CLIArgs
 {
-    InputFileDA   input_files;
+    StringDA      input_files;
     char*         output_file;
 
     CompileMode   mode;
@@ -559,8 +562,9 @@ struct Cmdline
 
 struct CompilerContext
 {
-    StringDA    linker_inputs;
-    Module      top_module;
-    ModulePTRDA modules_to_compile;
-    Object*     main_function;
+    SourceFileDA sources;
+    StringDA     linker_inputs;
+    Module       top_module;
+    ModulePTRDA  modules_to_compile;
+    Object*      main_function;
 };

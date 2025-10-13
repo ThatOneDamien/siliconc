@@ -26,6 +26,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_SUB]             = "-",
     [TOKEN_MODULO]          = "%",
     [TOKEN_QUESTION]        = "?",
+    [TOKEN_UNDERSCORE]      = "_",
     [TOKEN_ARROW]           = "->",
     [TOKEN_LSHR]            = ">>",
     [TOKEN_ASHR]            = ">>>",
@@ -47,6 +48,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_MOD_ASSIGN]      = "%=",
     [TOKEN_INCREM]          = "++",
     [TOKEN_DECREM]          = "--",
+    [TOKEN_RANGE]           = "..",
     [TOKEN_ELLIPSIS]        = "...", 
     [TOKEN_SWAP]            = "<->",
     [TOKEN_LSHR_ASSIGN]     = ">>=",
@@ -77,12 +79,10 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_PROT]            = "prot",
     [TOKEN_PUB]             = "pub",
     [TOKEN_RETURN]          = "return",
-    [TOKEN_SIZEOF]          = "sizeof",
     [TOKEN_STRUCT]          = "struct",
     [TOKEN_SWITCH]          = "switch",
     [TOKEN_TRUE]            = "true",
     [TOKEN_TYPEDEF]         = "typedef",
-    [TOKEN_TYPEOF]          = "typeof",
     [TOKEN_UNION]           = "union",
     [TOKEN_WHILE]           = "while",
     [TOKEN_VOID]            = "void",
@@ -97,6 +97,14 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_LONG]            = "long",
     [TOKEN_FLOAT]           = "float",
     [TOKEN_DOUBLE]          = "double",
+
+	[TOKEN_CT_ALIGNOF]      = "#alignof",
+	[TOKEN_CT_ASSERT]       = "#assert",
+	[TOKEN_CT_ENDIF]        = "#endif",
+	[TOKEN_CT_IF]           = "#if",
+	[TOKEN_CT_OFFSETOF]     = "#offsetof",
+	[TOKEN_CT_SIZEOF]       = "#sizeof",
+	[TOKEN_CT_TYPEOF]       = "#typeof",
 };
 
 static BinaryOpKind s_tok_to_bin_op[] = {

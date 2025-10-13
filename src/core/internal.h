@@ -5,7 +5,7 @@
 #include "utils/lib.h"
 
 // Compiler globals
-extern Cmdline         g_args;
+extern CLIArgs         g_args;
 extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
@@ -29,7 +29,7 @@ extern Symbol g_sym_len;
 void run_subprocess(const char** cmd);
 
 // Command line arguments
-void process_cmdln_args(int argc, char* argv[]);
+void process_args(int argc, char* argv[]);
 
 // Token functions
 const char*  tok_kind_to_str(TokenKind kind);

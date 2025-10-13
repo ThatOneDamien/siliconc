@@ -133,6 +133,8 @@ typedef enum : uint8_t
     EXPR_UNARY,
     EXPR_UNRESOLVED_ARR,
     EXPR_UNRESOLVED_DOT,
+
+    EXPR_CT_SIZEOF,
 } ExprKind;
 
 typedef enum : uint8_t
@@ -242,6 +244,8 @@ typedef enum : uint8_t
     STMT_SWITCH,
     STMT_TYPE_DECL,
     STMT_WHILE,
+
+    // STMT_CT_IF,
 } StmtKind;
 
 typedef enum : uint8_t
@@ -282,6 +286,7 @@ typedef enum : uint8_t
     TOKEN_SUB,              // -
     TOKEN_MODULO,           // %
     TOKEN_QUESTION,         // ?
+    TOKEN_UNDERSCORE,       // _
 
     TOKEN_ARROW,            // ->
     TOKEN_LSHR,             // >>
@@ -304,6 +309,7 @@ typedef enum : uint8_t
     TOKEN_MOD_ASSIGN,       // %=
     TOKEN_INCREM,           // ++
     TOKEN_DECREM,           // --
+    TOKEN_RANGE,            // ..
     TOKEN_ELLIPSIS,         // ...
     
     TOKEN_SWAP,             // <->
@@ -337,12 +343,10 @@ typedef enum : uint8_t
     TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
-    TOKEN_SIZEOF,
     TOKEN_STRUCT,
     TOKEN_SWITCH,
     TOKEN_TRUE,
     TOKEN_TYPEDEF,
-    TOKEN_TYPEOF,
     TOKEN_UNION,
     TOKEN_WHILE,
 
@@ -361,7 +365,16 @@ typedef enum : uint8_t
     TOKEN_FLOAT,
     TOKEN_DOUBLE,
     TOKEN_TYPENAME_END = TOKEN_DOUBLE,
-    TOKEN_KEYWORD_END = TOKEN_DOUBLE,
+
+    // Compile time tokens (start with #)
+	TOKEN_CT_ALIGNOF,
+	TOKEN_CT_ASSERT,
+	TOKEN_CT_ENDIF,
+    TOKEN_CT_IF,
+	TOKEN_CT_OFFSETOF,
+	TOKEN_CT_SIZEOF,
+	TOKEN_CT_TYPEOF,
+    TOKEN_KEYWORD_END = TOKEN_CT_TYPEOF,
 
     TOKEN_EOF,               // End Of File Token
     __TOKEN_COUNT

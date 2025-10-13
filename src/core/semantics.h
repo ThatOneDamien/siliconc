@@ -17,6 +17,12 @@ typedef enum : uint8_t
     IDENT_ENUM     = 1 << 1,
 } IdentMask;
 
+// typedef struct BlockInfo BlockInfo;
+// struct BlockInfo
+// {
+//     bool is_dead;
+// };
+
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
@@ -24,6 +30,7 @@ struct SemaContext
     Object*          cur_func;
     Object*          cyclic_def;
 
+    
     BlockContext     block_context;
     IdentMask        ident_mask;
     bool             in_ptr : 1;

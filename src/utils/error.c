@@ -57,7 +57,7 @@ void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict
     SIC_ASSERT(message != NULL);
     if(g_args.werror && diag == DIAG_WARNING)
         diag = DIAG_ERROR;
-    InputFile* file = file_from_id(loc.file);
+    SourceFile* file = file_from_id(loc.file);
     const char* line_start = file->src;
     const char* loc_start;
     const char* after_loc;

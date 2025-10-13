@@ -14,6 +14,7 @@ static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr** expr_ref);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
 static bool analyze_unresolved_dot(ASTExpr* expr);
+static bool analyze_ct_sizeof(ASTExpr* expr);
 
 // Binary functions
 static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
@@ -75,6 +76,8 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
         return false;
     case EXPR_TERNARY:
         return analyze_ternary(expr);
+    case EXPR_CT_SIZEOF:
+        return analyze_ct_sizeof(expr);
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
     case EXPR_TYPE_IDENT:
@@ -121,7 +124,7 @@ static inline bool analyze_binary(ASTExpr* expr)
     BinaryOpKind kind = expr->expr.binary.kind;
     g_sema.ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(lhs);
-    if(kind != BINARY_ASSIGN || (*rhs)->kind != EXPR_DEFAULT)
+    if(kind != BINARY_ASSIGN)
     {
         g_sema.ident_mask = IDENT_VAR_ONLY;
         ANALYZE_EXPR_SET_VALID(rhs);
@@ -249,7 +252,7 @@ static bool analyze_ident(ASTExpr** expr_ref)
         return true;
     case OBJ_FUNC:
         if(BIT_IS_UNSET(g_sema.ident_mask, IDENT_FUNC))
-            ERROR_AND_RET(false, expr->loc, "Function identifier not allowed in this context, expected expression.");
+            ERROR_AND_RET(false, expr->loc, "Function identifier not allowed here, if you want the pointer use '&' before.");
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
@@ -476,6 +479,18 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     return resolve_member(expr, parent);
 }
 
+static bool analyze_ct_sizeof(ASTExpr* expr)
+{
+    if(!resolve_type(&expr->expr.ct_sizeof_type, RES_NORMAL, expr->loc, "Cannot take get size of type"))
+        return false;
+    
+    uint32_t size = type_size(expr->expr.ct_sizeof_type);
+    expr->kind = EXPR_CONSTANT;
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    expr->expr.constant.val.i = size;
+    return true;
+}
+
 static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
@@ -670,6 +685,7 @@ static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     if(!expr_ensure_lvalue(left))
         return false;
     expr->type = left->type;
+    g_sema.ident_mask = IDENT_VAR_ONLY;
     return implicit_cast(rhs, left->type);
 }
 
@@ -712,7 +728,9 @@ static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr* inner)
         switch(ident->kind)
         {
         case OBJ_FUNC:
-            expr->type = ident->type;
+            *expr_ref = inner;
+            // expr->type = ident->type;
+            // printf("here\n");
             return true;
         case OBJ_VAR:
             switch(ident->var.kind)

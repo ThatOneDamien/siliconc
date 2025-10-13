@@ -106,7 +106,6 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
 
 void implicit_cast_varargs(ASTExpr** expr_to_cast)
 {
-    bool good = true;
     switch((*expr_to_cast)->type->kind)
     {
     case TYPE_BOOL:
@@ -116,16 +115,14 @@ void implicit_cast_varargs(ASTExpr** expr_to_cast)
     case TYPE_BYTE:
     case TYPE_SHORT:
     case TYPE_INT:
-        good = implicit_cast(expr_to_cast, g_type_ulong);
+        implicit_cast(expr_to_cast, g_type_ulong);
         break;
     case TYPE_FLOAT:
-        good = implicit_cast(expr_to_cast, g_type_double);
+        implicit_cast(expr_to_cast, g_type_double);
         break;
     default:
         return;
     }
-    if(!good)
-        SIC_UNREACHABLE();
 }
 
 static bool rule_not_defined(UNUSED CastParams* params, UNUSED bool explicit) { SIC_UNREACHABLE(); }
@@ -144,9 +141,7 @@ static bool rule_size_change(CastParams* params, bool explicit)
     if(explicit)
         return true;
 
-    TypeKind from_kind = params->from->kind;
-    TypeKind to_kind   = params->to->kind;
-    if(from_kind < to_kind)
+    if(type_size(params->from) <= type_size(params->to))
         return true;
 
     // TODO: Add bounds checking for warning/error if constant goes out of bounds.

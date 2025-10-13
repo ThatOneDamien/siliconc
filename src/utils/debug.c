@@ -260,6 +260,8 @@ UNRESOLVED_ARR:
         PRINT_DEPTH(depth + 1);
         printf("member: ( %s )\n", expr->expr.unresolved_access.member_sym);
         return;
+    case EXPR_CT_SIZEOF:
+        SIC_TODO();
     }
     SIC_UNREACHABLE();
 }

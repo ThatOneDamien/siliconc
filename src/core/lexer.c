@@ -9,11 +9,11 @@
 #define peek_prev(lex)      ((lex)->cur_pos[-1])
 #define advance(lex, count) ((lex)->cur_pos += count)
 #define next(lex)           (++(lex)->cur_pos)
-#define nextr(lex)          (*(++(lex)->cur_pos))
 #define backtrack(lex)      (--(lex)->cur_pos)
 
 static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
+static inline void     extract_ct_identifier(Lexer* l, Token* t);
 static inline void     extract_char_literal(Lexer* l, Token* t);
 static inline void     extract_string_literal(Lexer* l, Token* t);
 static inline void     extract_base_2(Lexer* l, Token* t);
@@ -37,8 +37,7 @@ void lexer_init_unit(Lexer* l, CompilationUnit* unit)
 {
     SIC_ASSERT(l != NULL);
     SIC_ASSERT(unit != NULL);
-    InputFile* file = file_from_id(unit->file);
-    input_file_read(file);
+    SourceFile* file = file_from_id(unit->file);
     l->unit       = unit;
     l->cur_pos    = file->src;
     l->cur_line   = 1;
@@ -110,8 +109,10 @@ void lexer_advance(Lexer* l)
         t->kind = TOKEN_QUESTION;
         break;
     case '.':
-        t->kind = (consume(l, '.') && consume(l, '.')) ? 
-                    TOKEN_ELLIPSIS : TOKEN_DOT;
+        if(consume(l, '.'))
+            t->kind = consume(l, '.') ? TOKEN_ELLIPSIS : TOKEN_RANGE;
+        else
+            t->kind = TOKEN_DOT;
         break;
     case ':':
         t->kind = consume(l, ':') ? TOKEN_SCOPE_RES : TOKEN_COLON;
@@ -234,6 +235,13 @@ void lexer_advance(Lexer* l)
     case '9':
         extract_base_10(l, t);
         break;
+    case '_':
+        if(!c_is_undalphanum(peek(l)))
+        {
+            t->kind = TOKEN_UNDERSCORE;
+            break;
+        }
+        FALLTHROUGH;
     case 'A':
     case 'B':
     case 'C':
@@ -286,12 +294,14 @@ void lexer_advance(Lexer* l)
     case 'x':
     case 'y':
     case 'z':
-    case '_':
         extract_identifier(l, t);
+        return;
+    case '#':
+        extract_ct_identifier(l, t);
         return;
     default:
         t->loc.len = 1;
-        sic_error_at(t->loc, "Unknown character.");
+        sic_error_at(t->loc, "Invalid/unknown character.");
         t->kind = TOKEN_INVALID;
         return;
     }
@@ -353,6 +363,20 @@ static inline void extract_identifier(Lexer* l, Token* t)
     t->loc.len = get_col(l) - t->loc.col_num;
     t->kind = TOKEN_IDENT;
     t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
+}
+
+static inline void extract_ct_identifier(Lexer* l, Token* t)
+{
+    while(c_is_undalphanum(peek(l)))
+        next(l);
+
+    t->loc.len = get_col(l) - t->loc.col_num;
+    t->sym = sym_map_getn(t->start, t->loc.len, &t->kind);
+    if(t->sym == NULL)
+    {
+        sic_error_at(t->loc, "Unknown compile-time identifier.");
+        t->kind = TOKEN_INVALID;
+    }
 }
 
 static inline void extract_char_literal(Lexer* l, Token* t)
@@ -668,12 +692,14 @@ static inline bool consume(Lexer* l, char c)
 
 static inline char next_nl(Lexer* l)
 {
-    if(peek(l) == '\n')
+    char c = peek(l); 
+    if(c == '\n')
     {
         l->cur_line++;
         l->line_start = l->cur_pos + 1;
     }
-    return nextr(l);
+    next(l);
+    return c;
 }
 
 static inline Token* next_token_loc(Lexer* l)

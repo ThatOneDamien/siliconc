@@ -139,7 +139,7 @@ static void gen_unit(CodegenContext* c, CompilationUnit* unit)
     if(c->target_machine == NULL)
         sic_fatal_error("LLVM failed to create target machine, maybe check target triple?");
 
-    InputFile* file = file_from_id(unit->file);
+    SourceFile* file = file_from_id(unit->file);
     c->module_ref = LLVMModuleCreateWithNameInContext(file->path, s_context);
     LLVMSetSourceFileName(c->module_ref, file->path, strlen(file->path));
     LLVMSetModuleDataLayout(c->module_ref, LLVMCreateTargetDataLayout(c->target_machine));
@@ -203,6 +203,8 @@ static void gen_unit(CodegenContext* c, CompilationUnit* unit)
 static void emit_function_body(CodegenContext* c, Object* function)
 {
     SIC_ASSERT(function->llvm_ref);
+    if(function->func.body == NULL)
+        return;
     c->cur_func = function;
     append_old_basic_block(c, create_basic_block(""));
     c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32Type(), ".alloca_ptr");
@@ -218,8 +220,11 @@ static void emit_function_body(CodegenContext* c, Object* function)
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         Object* param = sig->params.data[i];
-        emit_var_alloca(c, param);
-        LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
+        if(param->symbol)
+        {
+            emit_var_alloca(c, param);
+            LLVMBuildStore(c->builder, LLVMGetParam(function->llvm_ref, i), param->llvm_ref);
+        }
     }
 
     emit_block_stmt(c, function->func.body);
@@ -564,6 +569,7 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_TYPE_IDENT:
     case EXPR_UNRESOLVED_ARR:
     case EXPR_UNRESOLVED_DOT:
+    case EXPR_CT_SIZEOF:
         break;
     }
     SIC_UNREACHABLE();
@@ -1175,8 +1181,6 @@ static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileTy
 
 static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
 {
-    if(type->llvm_ref != NULL)
-        return type->llvm_ref;
     switch(type->kind)
     {
     case TYPE_VOID:
@@ -1203,12 +1207,16 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_FUNC_PTR:
         return c->ptr_type;
     case TYPE_STATIC_ARRAY:
+        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
     case TYPE_RUNTIME_ARRAY:
+        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_ENUM:
+        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->user_def->enum_.underlying);
     case TYPE_STRUCT: {
+        if(type->llvm_ref != NULL) return type->llvm_ref;
         Object* user = type->user_def;
         if(user->llvm_ref)
             return type->llvm_ref = user->llvm_ref;
@@ -1225,6 +1233,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_TYPEDEF:
         SIC_TODO();
     case TYPE_UNION: {
+        if(type->llvm_ref != NULL) return type->llvm_ref;
         Object* user = type->user_def;
         if(user->llvm_ref)
             return type->llvm_ref = user->llvm_ref;

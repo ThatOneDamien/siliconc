@@ -9,13 +9,6 @@ import shutil
 import configparser
 
 TEST_ROOT = pathlib.Path(__file__).parent
-test_count = 0
-
-
-def run(cmd, timeout=10, input_text=None):
-    p = subprocess.run(cmd, input=input_text, check=False, stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE, timeout=timeout, text=True)
-    return p.returncode, p.stdout, p.stderr
 
 def print_fail(test_name, message):
     print(f'\033[31m[FAIL]\033[0m {test_name}: {message}')
@@ -23,17 +16,21 @@ def print_fail(test_name, message):
 def print_pass(test_name, message):
     print(f'\033[32m[PASS]\033[0m {test_name}: {message}')
 
-def check_test_result(test_name, should_pass, kind, exit_code, err):
+def check_test_result(test_name, should_pass, kind, proc_res):
     result = True
-    if should_pass:
-        if exit_code == 0:
+    rc = proc_res.returncode
+    if rc != 0 and rc != 1: # Unknown exit 
+        print_fail(test_name, f'{kind} encountered an unknown error/signal (Code: {rc})')
+        result = False
+    elif should_pass:
+        if proc_res.returncode == 0:
             print_pass(test_name, f'{kind} finished successfully.')
         else:
-            print_fail(test_name, f'{kind} unexpectedly fialed (Exit Code: {exit_code}).\n{err}')
+            print_fail(test_name, f'{kind} unexpectedly failed.')
             result = False
     else:
-        if exit_code != 0:
-            print_pass(test_name, f'{kind} failed as expected (Exit Code: {exit_code}).')
+        if proc_res.returncode == 1:
+            print_pass(test_name, f'{kind} failed as expected.')
         else:
             print_fail(test_name, f'{kind} unexpectedly finished.')
             result = False
@@ -41,8 +38,6 @@ def check_test_result(test_name, should_pass, kind, exit_code, err):
 
 
 def run_test(test_path, compiler_path, tmpdir):
-    global test_count
-    test_count = test_count + 1
     test_name = test_path[test_path.rfind('/') + 1:]
     cfg_parser = configparser.ConfigParser()
     cfg_parser.read(test_path)
@@ -50,24 +45,24 @@ def run_test(test_path, compiler_path, tmpdir):
     should_pass = cfg_parser['meta'].get('behavior', 'success') == 'success'
     timeout = cfg_parser['meta'].getint('timeout', 10)
     source = test_path + '.si'
-    exit_code = None
-    out = None
-    err = None
     if action == 'compile':
         cmd = [compiler_path, '-s', source, '-o', tmpdir + 'a.o']
-        exit_code, out, err = run(cmd, timeout)
+        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=timeout, text=True)
         return check_test_result(test_name=test_name, should_pass=should_pass,
-                                 kind='compiler', exit_code=exit_code, err=err)
+                                 kind='compiler', proc_res=result)
 
     cmd = [compiler_path, source, '-o', tmpdir + 'a.out']
-    exit_code, out, err = run(cmd, timeout)
-    if exit_code != 0:
-        print_fail(test_name, f'unable to run because of compiler failure (Exit Code {exit_code}).\n{err}')
+    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, timeout=timeout, text=True)
+    if not check_test_result(test_name, True, 'compiler', result):
         return False
     cmd = [tmpdir + 'a.out']
-    exit_code, out, err = run(cmd, timeout)
+    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, timeout=timeout, text=True)
     return check_test_result(test_name=test_name, should_pass=should_pass,
-                             kind='runtime', exit_code=exit_code, err=err)
+                             kind='runtime', proc_res=result)
+
 
 def main():
     compiler_path = ''
@@ -86,31 +81,50 @@ def main():
         print(f'Failed to find compiler binary \'{compiler_path}\', try performing a make.')
         sys.exit(1)
 
+    print('******** Tests **********')
     tmpdir = tempfile.mkdtemp()
+    test_count = 0
+    tests_passed = 0
     try:
         if args.test:
             if not args.test.endswith('.test'):
                 args.test = args.test + '.test'
 
-            test_path = TEST_ROOT.rglob(args.test)
-            has = False
-            for test in test_path:
-                has = True
-                run_test(str(test), str(compiler_path), tmpdir)
-            if not has:
-                print(f'Test \'{args.test}\' does not exist')
+            for test in TEST_ROOT.rglob(args.test):
+                test_count += 1
+                if run_test(str(test), str(compiler_path), tmpdir):
+                    tests_passed += 1
         elif args.group:
             group_path = (TEST_ROOT/args.group).resolve()
             if not group_path.exists():
-                print(f'Test group/directory \'{args.test}\' does not exist.')
+                print(f'Test group/directory \'{args.group}\' does not exist.')
                 sys.exit(1)
             if not group_path.is_dir():
-                print(f'Test group path \'{args.test}\' is not a directory.')
+                print(f'Test group path \'{args.group}\' is not a directory.')
                 sys.exit(1)
+            for test in group_path.rglob('*.test'):
+                test_count += 1
+                if run_test(str(test), str(compiler_path), tmpdir):
+                    tests_passed += 1
+        else:
+            for test in TEST_ROOT.rglob('*.test'):
+                test_count += 1
+                if run_test(str(test), str(compiler_path), tmpdir):
+                    tests_passed += 1
 
     finally:
         shutil.rmtree(tmpdir)
-    print(f'Completed {test_count} tests.')
+
+    if test_count == 0:
+        print('No tests found.')
+        return
+    print('\n******** Result *********')
+    completion_str = f'Completed {test_count} test(s)'
+    pass_fail_str = f'\033[31m{test_count - tests_passed}\033[0m failed, \033[32m{tests_passed}\033[0m passed.'
+    if test_count == tests_passed:
+        print_pass(completion_str, pass_fail_str)
+    else:
+        print_fail(completion_str, pass_fail_str)
 
 if __name__ == '__main__':
     main()

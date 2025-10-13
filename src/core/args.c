@@ -3,18 +3,17 @@
 
 #include <string.h>
 
-Cmdline g_args;
+CLIArgs g_args = {0};
 
 static void print_help(void);
 
-void process_cmdln_args(int argc, char* argv[])
+void process_args(int argc, char* argv[])
 {
-    memset(&g_args, 0, sizeof(Cmdline));
     for(int i = 1; i < argc; i++)
     {
         if(argv[i][0] != '-') // Not an argument, only an input file.
         {
-            input_file_new(argv[i]);
+            da_append(&g_args.input_files, argv[i]);
             continue;
         }
 

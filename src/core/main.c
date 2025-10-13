@@ -10,7 +10,7 @@
 
 CompilerContext g_compiler = {.top_module = {.name = "default"}};
 
-static void compile(const InputFile* input);
+static void compile(const SourceFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
@@ -20,12 +20,8 @@ static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", glob
 int main(int argc, char* argv[])
 {
     global_arenas_init();
-    process_cmdln_args(argc, argv);
+    process_args(argc, argv);
     
-    for(uint32_t i = 0; i < g_args.input_files.size; ++i)
-        if(!file_exists(g_args.input_files.data[i].path))
-            sic_fatal_error("File named '%s' not found.", g_args.input_files.data[i].path);
-
     sym_map_init();
     parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
@@ -38,12 +34,12 @@ int main(int argc, char* argv[])
 
     for(uint32_t i = 0; i < g_args.input_files.size; ++i)
     {
-        InputFile* cur_input = g_args.input_files.data + i; 
+        const char* input_path = g_args.input_files.data[i]; 
         
-        switch(cur_input->type)
+        switch(get_filetype(input_path))
         {
         case FT_SI:
-            compile(cur_input);
+            compile(source_file_add_or_get(input_path));
             continue;
         case FT_LLVM_IR:
         case FT_ASM:
@@ -51,14 +47,14 @@ int main(int argc, char* argv[])
             continue;
         case FT_OBJ:
             if(g_args.mode == MODE_LINK)
-                da_append(&g_compiler.linker_inputs, cur_input->path);
+                da_append(&g_compiler.linker_inputs, input_path);
             else
-                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", cur_input->path);
+                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", input_path);
             continue;
         case FT_UNKNOWN:
         case FT_SHARED:
         case FT_STATIC:
-            sic_fatal_error("Input file \'%s\' has invalid extension.", cur_input->path);
+            sic_fatal_error("Input file \'%s\' has invalid extension.", input_path);
         }
         SIC_UNREACHABLE();
     }
@@ -151,7 +147,7 @@ void run_subprocess(const char** cmd)
         exit(status);
 }
 
-static void compile(const InputFile* input)
+static void compile(const SourceFile* input)
 {
     CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
     unit->file = input->id;
