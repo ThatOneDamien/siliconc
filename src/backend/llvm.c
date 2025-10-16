@@ -84,11 +84,11 @@ static LLVMTargetRef     get_llvm_target(const char* triple);
 static void              load_rvalue(CodegenContext* c, GenValue* lvalue);
 static void              llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *context);
 
-static bool stmt_not_empty(ASTStmt* stmt)
+static bool stmt_empty(ASTStmt* stmt)
 {
-    return stmt != NULL &&
-           (stmt->kind != STMT_EXPR_STMT) &&
-           (stmt->kind != STMT_BLOCK || stmt_not_empty(stmt->stmt.block.body));
+    return (stmt == NULL) ||
+           (stmt->kind == STMT_NOP && stmt->next == NULL) ||
+           (stmt->kind == STMT_BLOCK && stmt_empty(stmt->stmt.block.body));
 }
 
 static bool s_initialized = false;
@@ -231,8 +231,10 @@ static void emit_function_body(CodegenContext* c, Object* function)
 
     if(c->cur_bb != NULL)
     {
-        SIC_ASSERT(sig->ret_type->kind == TYPE_VOID);
-        LLVMBuildRetVoid(c->builder);
+        if(sig->ret_type->kind == TYPE_VOID)
+            LLVMBuildRetVoid(c->builder);
+        else
+            LLVMRemoveBasicBlockFromParent(c->cur_bb);
     }
 
     if(LLVMGetInstructionParent(c->alloca_ref))
@@ -350,7 +352,7 @@ static void emit_for(CodegenContext* c, ASTStmt* stmt)
     LLVMBasicBlockRef body_block = create_basic_block(".for_body");
     LLVMBasicBlockRef cond_block = body_block;
     LLVMBasicBlockRef loop_block;
-    if(stmt_not_empty(for_stmt->init_stmt))
+    if(!stmt_empty(for_stmt->init_stmt))
         emit_stmt(c, for_stmt->init_stmt);
 
     if(for_stmt->cond_expr != NULL)
@@ -394,12 +396,12 @@ static void emit_if(CodegenContext* c, ASTStmt* stmt)
     LLVMBasicBlockRef else_block = exit_block;
 
     GenValue cond = emit_expr(c, if_stmt->cond);
-    load_rvalue(c, &cond);
 
-    if(stmt_not_empty(if_stmt->then_stmt))
+    load_rvalue(c, &cond);
+    if(!stmt_empty(if_stmt->then_stmt))
         then_block = create_basic_block(".if_then");
     
-    if(stmt_not_empty(if_stmt->else_stmt))
+    if(!stmt_empty(if_stmt->else_stmt))
         else_block = create_basic_block(".if_else");
 
     if(then_block == exit_block && else_block == exit_block)
@@ -497,7 +499,7 @@ static void emit_while(CodegenContext* c, ASTStmt* stmt)
     LLVMBasicBlockRef exit_block = create_basic_block(".while_exit");
     LLVMBasicBlockRef body_block = cond_block;
 
-    if(stmt_not_empty(while_stmt->body))
+    if(!stmt_empty(while_stmt->body))
         body_block = create_basic_block(".while_body");
 
     GenValue cond = emit_expr(c, while_stmt->cond);
@@ -1314,6 +1316,9 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     switch(lvalue->type->kind)
     {
     case TYPE_BOOL:
+        lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
+        lvalue->value = LLVMBuildTrunc(c->builder, lvalue->value, LLVMInt1Type(), "");
+        return;
     case TYPE_UBYTE:
     case TYPE_USHORT:
     case TYPE_UINT:

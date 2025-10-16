@@ -418,6 +418,7 @@ struct ASTWhile
 struct ASTStmt
 {
     StmtKind  kind;
+    bool      always_returns : 1;
     ASTStmt*  next;
     SourceLoc loc;
 

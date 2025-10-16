@@ -24,7 +24,9 @@ extern Type* g_type_long;
 extern Type* g_type_float;
 extern Type* g_type_double;
 
-extern Symbol g_sym_len;
+extern ASTExpr* g_bad_expr;
+extern ASTStmt* g_bad_stmt;
+extern Symbol   g_sym_len;
 
 void run_subprocess(const char** cmd);
 

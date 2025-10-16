@@ -6,7 +6,6 @@ typedef struct CastRule   CastRule;
 struct CastParams
 {
     SemaContext* sema_context;
-    ASTExpr*     expr;
     ASTExpr*     inner;
     Type*        from;
     Type*        to;
@@ -33,7 +32,6 @@ bool analyze_cast(ASTExpr* cast)
     ASTExpr* inner = cast->expr.cast.inner;
     CastParams params;
     params.sema_context = &g_sema;
-    params.expr  = cast;
     params.inner = inner;
     params.from  = inner->type;
     params.to    = cast->type;
@@ -55,7 +53,10 @@ bool analyze_cast(ASTExpr* cast)
     }
 
     if(!rule.able(&params, true))
+    {
+        cast->kind = EXPR_INVALID;
         return false;
+    }
 
     if(rule.convert != NULL)
         rule.convert(cast, inner);
@@ -71,10 +72,11 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     ASTExpr* prev = *expr_to_cast;
     CastParams params;
     params.sema_context = &g_sema;
-    params.from = prev->type;
-    params.to   = desired;
-    params.from_kind = params.from->kind;
-    params.to_kind   = params.to->kind;
+    params.inner        = prev;
+    params.from         = prev->type;
+    params.to           = desired;
+    params.from_kind    = params.from->kind;
+    params.to_kind      = params.to->kind;
     if(type_equal(params.from, params.to))
         return true;
 
@@ -86,17 +88,20 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
         return false;
     }
 
-    ASTExpr* new_cast = CALLOC_STRUCT(ASTExpr);
-    new_cast->kind = EXPR_CAST;
-    new_cast->expr.cast.inner = prev;
-    new_cast->evaluated = true;
-    params.expr = new_cast;
-    params.inner = prev;
 
     if(!rule.able(&params, false))
+    {
+        *expr_to_cast = g_bad_expr;
         return false;
+    }
 
+    ASTExpr* new_cast = CALLOC_STRUCT(ASTExpr);
+    new_cast->kind = EXPR_CAST;
+    new_cast->loc = prev->loc;
+    new_cast->expr.cast.inner = prev;
+    new_cast->evaluated = true;
     new_cast->type = desired;
+
     if(rule.convert != NULL)
         rule.convert(new_cast, prev);
 

@@ -17,19 +17,12 @@ typedef enum : uint8_t
     IDENT_ENUM     = 1 << 1,
 } IdentMask;
 
-// typedef struct BlockInfo BlockInfo;
-// struct BlockInfo
-// {
-//     bool is_dead;
-// };
-
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
     CompilationUnit* unit;
     Object*          cur_func;
     Object*          cyclic_def;
-
     
     BlockContext     block_context;
     IdentMask        ident_mask;

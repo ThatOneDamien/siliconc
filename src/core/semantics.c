@@ -10,7 +10,7 @@ static void analyze_unit(CompilationUnit* unit);
 static void analyze_function(Object* function);
 static bool analyze_main(Object* main);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
-static void analyze_stmt_block(ASTStmt* stmt);
+static bool analyze_stmt_block(ASTStmt* stmt);
 static void analyze_break(ASTStmt* stmt);
 static void analyze_continue(ASTStmt* stmt);
 static void analyze_for(ASTStmt* stmt);
@@ -236,7 +236,8 @@ static void analyze_function(Object* function)
     for(uint32_t i = 0; i < params->size; ++i)
         push_obj(params->data[i]);
 
-    analyze_stmt_block(function->func.body);
+    if(!analyze_stmt_block(function->func.body) && function->func.signature->ret_type->kind != TYPE_VOID)
+        sic_error_at(function->loc, "Function does not return from all control paths.");
 
     g_sema.cur_func = NULL;
     pop_scope(scope);
@@ -324,7 +325,7 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
         uint32_t scope;
         if(add_scope)
             scope = push_scope();
-        analyze_stmt_block(stmt->stmt.block.body);
+        stmt->always_returns = analyze_stmt_block(stmt->stmt.block.body);
         if(add_scope)
             pop_scope(scope);
         return;
@@ -379,13 +380,16 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     SIC_UNREACHABLE();
 }
 
-static void analyze_stmt_block(ASTStmt* stmt)
+static bool analyze_stmt_block(ASTStmt* stmt)
 {
+    bool always_returns = false;
     while(stmt != NULL)
     {
         analyze_stmt(stmt, true);
+        always_returns |= stmt->always_returns;
         stmt = stmt->next;
     }
+    return always_returns;
 }
 
 static void analyze_break(ASTStmt* stmt)
@@ -412,9 +416,11 @@ static void analyze_for(ASTStmt* stmt)
         analyze_expr(&for_stmt->loop_expr);
 
     BlockContext context = g_sema.block_context;
-    g_sema.block_context = BLOCK_LOOP;
+    g_sema.block_context |= BLOCK_LOOP;
     analyze_stmt(for_stmt->body, false);
     g_sema.block_context = context;
+
+    stmt->always_returns = for_stmt->body->always_returns;
 
     pop_scope(scope);
 }
@@ -425,7 +431,30 @@ static void analyze_if(ASTStmt* stmt)
     implicit_cast(&if_stmt->cond, g_type_bool);
     analyze_stmt(if_stmt->then_stmt, true);
     if(if_stmt->else_stmt != NULL)
+    {
         analyze_stmt(if_stmt->else_stmt, true);
+        stmt->always_returns = if_stmt->then_stmt->always_returns & if_stmt->else_stmt->always_returns;
+    }
+    if(if_stmt->cond->kind == EXPR_CONSTANT)
+    {
+        if(if_stmt->cond->expr.constant.val.i)
+        {
+            sic_diagnostic_at(if_stmt->cond->loc, DIAG_WARNING, 
+                              "Condition always evaluates to true, consider "
+                              "changing this to a #if statement or removing it.");
+            memcpy(stmt, if_stmt->then_stmt, sizeof(ASTStmt));
+        }
+        else
+        {
+            sic_diagnostic_at(if_stmt->cond->loc, DIAG_WARNING, 
+                              "Condition always evaluates to false, consider "
+                              "changing this to a #if statement or removing it.");
+            if(if_stmt->else_stmt != NULL)
+                memcpy(stmt, if_stmt->else_stmt, sizeof(ASTStmt));
+            else
+                stmt->kind = STMT_NOP;
+        }
+    }
 }
 
 static void analyze_return(ASTStmt* stmt)
@@ -445,11 +474,14 @@ static void analyze_return(ASTStmt* stmt)
     }
     else if(ret_type->kind != TYPE_VOID)
         sic_error_at(stmt->loc, "Function returning non-void should return a value.");
+
+    stmt->always_returns = true;
 }
 
 static void analyze_switch(ASTStmt* stmt)
 {
     ASTSwitch* swi = &stmt->stmt.switch_;
+    uint32_t scope;
     bool has_default = false;
     analyze_expr(&swi->expr);
     if(!type_is_integer(swi->expr->type))
@@ -461,25 +493,44 @@ static void analyze_switch(ASTStmt* stmt)
         implicit_cast(&swi->expr, g_type_int);
 
     BlockContext context = g_sema.block_context;
-    g_sema.block_context = BLOCK_SWITCH;
+    g_sema.block_context |= BLOCK_SWITCH;
+    bool always_returns = true;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
         ASTCase* cas = swi->cases.data + i;
         if(cas->expr != NULL)
-            implicit_cast(&cas->expr, swi->expr->type);
+        {
+            if(!implicit_cast(&cas->expr, swi->expr->type)) goto CASE_BODY;
+            if(cas->expr->kind != EXPR_CONSTANT)
+            {
+                sic_error_at(cas->expr->loc, "Case expression must be a compile-time evaluable constant.");
+                goto CASE_BODY;
+            }
+            for(uint32_t j = 0; j < i; ++j)
+            {
+                ASTCase* other = swi->cases.data + j;
+                if(other->expr->expr.constant.val.i == cas->expr->expr.constant.val.i)
+                {
+                    sic_error_at(cas->expr->loc, "Duplicate case for value %lu.", cas->expr->expr.constant.val.i);
+                    sic_diagnostic_at(other->expr->loc, DIAG_NOTE, "Previous case statement here.");
+                    goto CASE_BODY;
+                }
+            }
+        }
         else if(has_default)
         {
             // TODO: Improve this error message, Im just too fucking lazy right now.
             sic_error_at(swi->expr->loc, "Switch statement contains duplicate default cases.");
-            continue;
         }
         else
             has_default = true;
 
-        uint32_t scope = push_scope();
-        analyze_stmt_block(cas->body);
+    CASE_BODY:
+        scope = push_scope();
+        always_returns &= analyze_stmt_block(cas->body);
         pop_scope(scope);
     }
+    stmt->always_returns = always_returns & has_default;
     g_sema.block_context = context;
 }
 
@@ -488,9 +539,10 @@ static void analyze_while(ASTStmt* stmt)
     ASTWhile* while_stmt = &stmt->stmt.while_;
     implicit_cast(&while_stmt->cond, g_type_bool);
     BlockContext context = g_sema.block_context;
-    g_sema.block_context = BLOCK_LOOP; 
+    g_sema.block_context |= BLOCK_LOOP; 
     analyze_stmt(while_stmt->body, true);
     g_sema.block_context = context;
+    stmt->always_returns = while_stmt->body->always_returns;
 }
 
 static void analyze_declaration(ASTDeclaration* decl)

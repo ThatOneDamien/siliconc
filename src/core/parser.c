@@ -94,6 +94,8 @@ static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 
 static ASTStmt s_bad_stmt = {0};
 static ASTExpr s_bad_expr = {0};
+ASTStmt* g_bad_stmt = &s_bad_stmt;
+ASTExpr* g_bad_expr = &s_bad_expr;
 static ASTStmt s_nop_stmt = { .kind = STMT_NOP };
 static ExprParseRule expr_rules[__TOKEN_COUNT];
 
@@ -796,6 +798,7 @@ static ASTStmt* parse_switch(Lexer* l)
         switch(peek(l)->kind)
         {
         case TOKEN_CASE: 
+            advance(l);
             da_resize(cases, cases->size + 1);
             ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, BAD_STMT);
             break;
