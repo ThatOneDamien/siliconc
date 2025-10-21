@@ -20,15 +20,15 @@ typedef enum : uint8_t
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
-    CompilationUnit* unit;
-    Object*          cur_func;
-    Object*          cyclic_def;
+    CompUnit*    unit;
+    Object*      cur_func;
+    Object*      cyclic_def;
     
-    BlockContext     block_context;
-    IdentMask        ident_mask;
-    bool             in_ptr : 1;
-    bool             in_typedef : 1;
-    bool             in_global_init : 1;
+    BlockContext block_context;
+    IdentMask    ident_mask;
+    bool         in_ptr : 1;
+    bool         in_typedef : 1;
+    bool         in_global_init : 1;
 };
 
 extern SemaContext g_sema;

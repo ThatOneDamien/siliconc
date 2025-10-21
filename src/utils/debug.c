@@ -35,7 +35,7 @@ void print_token(Token* tok)
            tok->loc.col_num);
 }
 
-void print_unit(const CompilationUnit* unit)
+void print_unit(const CompUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
     printf("Compilation Unit: \'%s\' (%u Funcs, %u Global Vars)\n", 
@@ -366,7 +366,6 @@ static const char* s_unary_op_strs[] = {
 
 static const char* s_vis_strs[] = {
     [VIS_PUBLIC]     = "public",
-    [VIS_PROTECTED]  = "protected",
     [VIS_PRIVATE]    = "private",
 };
 

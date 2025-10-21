@@ -165,18 +165,10 @@ typedef enum : uint8_t
 typedef enum : uint8_t
 {
     VIS_PRIVATE,     // Accessible only to compilation unit
-    VIS_PROTECTED,   // Accessible only to module and submodules(default behavior)
     VIS_PUBLIC,      // Accessible to all modules that import this module
 
-    VIS_DEFAULT = VIS_PROTECTED,
+    VIS_DEFAULT = VIS_PRIVATE,
 } Visibility;
-
-typedef enum : uint8_t
-{
-    ATTR_NONE   = 0,
-    ATTR_EXTERN = (1 << 0),
-    ATTR_CONST  = (1 << 1),
-} ObjAttr;
 
 typedef enum : uint8_t
 {
@@ -298,7 +290,7 @@ typedef enum : uint8_t
     TOKEN_NE,               // !=
     TOKEN_LE,               // <=
     TOKEN_GE,               // >=
-    TOKEN_SCOPE_RES,        // ::
+    TOKEN_NAMESPACE,        // ::
     TOKEN_BIT_AND_ASSIGN,   // &=
     TOKEN_BIT_OR_ASSIGN,    // |=
     TOKEN_BIT_XOR_ASSIGN,   // ^=
@@ -336,11 +328,11 @@ typedef enum : uint8_t
     TOKEN_FOR,
     TOKEN_GOTO,
     TOKEN_IF,
+    TOKEN_IMPORT,
     TOKEN_LABEL,
     TOKEN_MODULE,
     TOKEN_NULLPTR,
     TOKEN_PRIV,
-    TOKEN_PROT,
     TOKEN_PUB,
     TOKEN_RETURN,
     TOKEN_STRUCT,
@@ -445,4 +437,5 @@ typedef enum : uint8_t
     VAR_GLOBAL,
     VAR_LOCAL,
     VAR_PARAM,
+    VAR_MEMBER,
 } VarKind;

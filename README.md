@@ -17,10 +17,10 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Short Term Implementation Plans
-- Sizeof, Alignof, etc.
 - Constant folding and compile-time constants.
 - Function pointer arithmetic.
 - Add proper dead-code checking and only add function declarations as needed to the
   codegen.
 - Add other user-defined types (namely typedefs, and bitfields)
 - Actually work on the import and module system
+- Alignof, etc.

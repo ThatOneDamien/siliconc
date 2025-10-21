@@ -9,23 +9,23 @@ typedef struct CodegenContext CodegenContext;
 typedef struct GenValue       GenValue;
 struct CodegenContext
 {
-    const CompilationUnit* unit;
-    const char*            llvm_filename;
-    const char*            asm_filename;
-    const char*            obj_filename;
-    Object*                cur_func;
+    const CompUnit*      unit;
+    const char*          llvm_filename;
+    const char*          asm_filename;
+    const char*          obj_filename;
+    Object*              cur_func;
 
 
-    LLVMTargetMachineRef   target_machine;
-    LLVMModuleRef          module_ref;
-    LLVMBuilderRef         builder;
-    LLVMValueRef           alloca_ref;
-    LLVMValueRef           swap_ref;
-    LLVMBasicBlockRef      cur_bb;
-    LLVMBasicBlockRef      break_bb;
-    LLVMBasicBlockRef      continue_bb;
+    LLVMTargetMachineRef target_machine;
+    LLVMModuleRef        module_ref;
+    LLVMBuilderRef       builder;
+    LLVMValueRef         alloca_ref;
+    LLVMValueRef         swap_ref;
+    LLVMBasicBlockRef    cur_bb;
+    LLVMBasicBlockRef    break_bb;
+    LLVMBasicBlockRef    continue_bb;
 
-    LLVMTypeRef            ptr_type;
+    LLVMTypeRef          ptr_type;
 };
 
 typedef enum
@@ -41,7 +41,7 @@ struct GenValue
     GenValueKind kind;
 };
 
-static void     gen_unit(CodegenContext* c, CompilationUnit* unit);
+static void     gen_unit(CodegenContext* c, CompUnit* unit);
 static void     emit_llvm_ir(CodegenContext* c);
 static void     emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
 static void     emit_function_body(CodegenContext* c, Object* function);
@@ -69,6 +69,7 @@ static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
 static void     emit_assign(CodegenContext* c, GenValue* ptr, GenValue* value, GenValue* result);
 static void     emit_br(CodegenContext* c, LLVMBasicBlockRef block);
+static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
 
 static LLVMValueRef      emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
 static void              emit_var_alloca(CodegenContext* c, Object* obj);
@@ -119,16 +120,12 @@ void llvm_codegen()
     c.builder = LLVMCreateBuilder();
 
     for(uint32_t i = 0; i < modules->size; ++i)
-    {
-        Module* m = modules->data[i];
-        for(uint32_t j = 0; j < m->units.size; ++j)
-            gen_unit(&c, m->units.data[j]);
-    }
+        gen_unit(&c, modules->data[i]->unit);
 
     LLVMDisposeBuilder(c.builder);
 }
 
-static void gen_unit(CodegenContext* c, CompilationUnit* unit)
+static void gen_unit(CodegenContext* c, CompUnit* unit)
 {
     // TODO: Change this from being hardcoded.
     const char* target_triple = "x86_64-pc-linux-gnu";
@@ -584,21 +581,8 @@ static void emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result
     GenValue index = emit_expr(c, aa->index_expr);
     load_rvalue(c, &array);
     load_rvalue(c, &index);
-    LLVMValueRef indices[2] = { NULL, index.value };
     Type* arr_type = aa->array_expr->type;
-    // TODO: Fix this with proper struct that holds SSA values and their
-    //       corresponding type. As of right now this is just a hack to get this to
-    //       work.
-    if(arr_type->kind == TYPE_STATIC_ARRAY)
-    {
-        indices[0] = LLVMConstInt(LLVMInt64Type(), 0, false);
-        result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, arr_type), array.value, indices, 2, "");
-    }
-    else
-    {
-        result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, type_pointer_base(arr_type)), array.value, indices + 1, 1, "");
-    }
-
+    result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, type_pointer_base(arr_type)), array.value, &index.value, 1, "");
     result->kind = GEN_VAL_ADDRESS;
 }
 
@@ -620,11 +604,11 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     {
     case BINARY_ADD:
         load_rvalue(c, &lhs);
-        result->value = LLVMBuildAdd(c->builder, lhs.value, rhs.value, "");
+        emit_add(c, &lhs, &rhs, result);
         return;
     case BINARY_SUB:
         load_rvalue(c, &lhs);
-        result->value = LLVMBuildSub(c->builder, lhs.value, rhs.value, "");
+        emit_sub(c, &lhs, &rhs, result);
         return;
     case BINARY_MUL:
         load_rvalue(c, &lhs);
@@ -870,13 +854,15 @@ static void emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result)
 
 static void emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post)
 {
-    (void)expr;
     GenValue inner_rval = *inner;
     load_rvalue(c, &inner_rval);
-    // TODO: Change this 
+
     GenValue temp;
     temp.value = LLVMConstInt(get_llvm_type(c, inner->type), 1, false);
-    emit_add(c, &inner_rval, &temp, result);
+    if(expr->expr.unary.kind == UNARY_INC)
+        emit_add(c, &inner_rval, &temp, result);
+    else
+        emit_sub(c, &inner_rval, &temp, result);
     LLVMBuildStore(c->builder, result->value, inner->value);
     result->kind = GEN_VAL_RVALUE;
     if(is_post)
@@ -998,8 +984,6 @@ static void emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 static void emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
     ASTExprUnary* unary = &expr->expr.unary;
-    // TODO: Make emit_expr always emit l-value, then make a function that
-    //       gets the r-value of an l-value for certain emissions.
     GenValue inner = emit_expr(c, unary->inner);
     switch(unary->kind)
     {
@@ -1067,6 +1051,19 @@ static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
     if(c->cur_bb != NULL)
         LLVMBuildBr(c->builder, block);
     c->cur_bb = NULL;
+}
+
+static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result)
+{
+    if(type_is_pointer(left->type))
+    {
+        right->value = LLVMBuildNeg(c->builder, right->value, "");
+        result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, left->type->pointer_base), left->value, &right->value, 1, "");
+    }
+    else if(type_is_float(left->type))
+        result->value = LLVMBuildFSub(c->builder, left->value, right->value, "");
+    else
+        result->value = LLVMBuildSub(c->builder, left->value, right->value, "");
 }
 
 static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align)

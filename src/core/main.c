@@ -23,7 +23,6 @@ int main(int argc, char* argv[])
     process_args(argc, argv);
     
     sym_map_init();
-    parser_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
 #ifdef SI_DEBUG
     atexit(print_debug_stats);
@@ -149,7 +148,7 @@ void run_subprocess(const char** cmd)
 
 static void compile(const SourceFile* input)
 {
-    CompilationUnit* unit = CALLOC_STRUCT(CompilationUnit);
+    CompUnit* unit = CALLOC_STRUCT(CompUnit);
     unit->file = input->id;
 
     parse_unit(unit);

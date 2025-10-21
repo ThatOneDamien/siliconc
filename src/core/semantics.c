@@ -6,7 +6,7 @@ static void declare_function(Object* function);
 static void declare_global_var(Object* var);
 static void declare_global_obj(Object* global);
 
-static void analyze_unit(CompilationUnit* unit);
+static void analyze_unit(CompUnit* unit);
 static void analyze_function(Object* function);
 static bool analyze_main(Object* main);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
@@ -29,7 +29,7 @@ static bool analyze_union_obj(Object* type_obj);
 
 SemaContext g_sema;
 
-void semantic_declaration(CompilationUnit* unit)
+void semantic_declaration(CompUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
     memset(&g_sema, 0, sizeof(SemaContext));
@@ -50,14 +50,11 @@ void semantic_analysis(ModulePTRDA* modules)
     for(uint32_t i = 0; i < modules->size; ++i)
     {
         Module* mod = modules->data[i];
-        for(size_t j = 0; j < mod->units.size; ++j)
-        {
-            analyze_unit(mod->units.data[j]);
+        analyze_unit(mod->unit);
 #ifdef SI_DEBUG
-            if(g_args.debug_output & DEBUG_SEMA)
-                print_unit(mod->units.data[j]);
+        if(g_args.debug_output & DEBUG_SEMA)
+            print_unit(mod->unit);
 #endif
-        }
     }
 }
 
@@ -77,6 +74,7 @@ bool expr_is_lvalue(ASTExpr* expr)
         case VAR_LOCAL:
         case VAR_GLOBAL:
         case VAR_PARAM:
+        case VAR_MEMBER:
             return true;
         case VAR_INVALID:
             break;
@@ -189,31 +187,21 @@ static void declare_global_obj(Object* global)
         return;
 
     HashMap* priv = &g_sema.unit->priv_symbols;
-    HashMap* prot = &g_sema.unit->module->symbols;
     HashMap* pub  = &g_sema.unit->module->public_symbols;
     Object* other = hashmap_get(priv, global->symbol);
     if(other == NULL)
-        other = hashmap_get(prot, global->symbol);
+        other = hashmap_get(pub, global->symbol);
 
     if(other != NULL)
         sic_error_redef(global, other);
 
-
-    switch(global->visibility)
-    {
-    case VIS_PRIVATE:
+    if(global->visibility == VIS_PRIVATE)
         hashmap_put(priv, global->symbol, global);
-        return;
-    case VIS_PUBLIC:
+    else
         hashmap_put(pub, global->symbol, global);
-        FALLTHROUGH;
-    case VIS_PROTECTED:
-        hashmap_put(prot, global->symbol, global);
-        return;
-    }
 }
 
-static void analyze_unit(CompilationUnit* unit)
+static void analyze_unit(CompUnit* unit)
 {
     memset(&g_sema, 0, sizeof(SemaContext));
     g_sema.unit = unit;
@@ -420,8 +408,6 @@ static void analyze_for(ASTStmt* stmt)
     analyze_stmt(for_stmt->body, false);
     g_sema.block_context = context;
 
-    stmt->always_returns = for_stmt->body->always_returns;
-
     pop_scope(scope);
 }
 
@@ -542,7 +528,14 @@ static void analyze_while(ASTStmt* stmt)
     g_sema.block_context |= BLOCK_LOOP; 
     analyze_stmt(while_stmt->body, true);
     g_sema.block_context = context;
-    stmt->always_returns = while_stmt->body->always_returns;
+    if(while_stmt->cond->kind == EXPR_CONSTANT &&
+       !while_stmt->cond->expr.constant.val.i)
+    {
+        sic_diagnostic_at(while_stmt->cond->loc, DIAG_WARNING, 
+                          "Condition always evaluates to false, consider "
+                          "removing this.");
+        stmt->kind = STMT_NOP;
+    }
 }
 
 static void analyze_declaration(ASTDeclaration* decl)

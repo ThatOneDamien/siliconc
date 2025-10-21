@@ -39,7 +39,7 @@ BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
 
 // Lexer functions
-void lexer_init_unit(Lexer* l, CompilationUnit* unit);
+void lexer_init_unit(Lexer* l, CompUnit* unit);
 void lexer_advance(Lexer* l);
 static inline Token* lexer_peek(Lexer* l)
 {
@@ -68,11 +68,10 @@ static inline bool token_is_keyword(TokenKind kind)
 }
 
 // Parser functions
-void     parser_init(void);
-void     parse_unit(CompilationUnit* unit);
+void parse_unit(CompUnit* unit);
 
 // Semantic analysis functions
-void semantic_declaration(CompilationUnit* unit);
+void semantic_declaration(CompUnit* unit);
 void semantic_analysis(ModulePTRDA* modules);
 
 // Symbol map functions
@@ -204,7 +203,7 @@ static inline bool type_is_bad(Type* type)
 #ifdef SI_DEBUG
 
 void print_token(Token* tok);
-void print_unit(const CompilationUnit* unit);
+void print_unit(const CompUnit* unit);
 void print_func(const Object* func);
 void print_stmt(const ASTStmt* stmt);
 void print_expr(const ASTExpr* expr);

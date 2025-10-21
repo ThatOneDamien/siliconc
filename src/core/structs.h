@@ -80,7 +80,8 @@ typedef struct Object           Object;
 
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
-typedef struct CompilationUnit  CompilationUnit;
+typedef struct CompUnit         CompUnit;
+typedef struct Namespace        Namespace;
 typedef struct Module           Module;
 typedef struct CLIArgs          CLIArgs;
 typedef struct CompilerContext  CompilerContext;
@@ -148,11 +149,11 @@ struct LookAhead
 
 struct Lexer
 {
-    CompilationUnit* unit;
-    const char*      line_start;
-    const char*      cur_pos;
-    uint32_t         cur_line;
-    LookAhead        la_buf;
+    CompUnit*   unit;
+    const char* line_start;
+    const char* cur_pos;
+    uint32_t    cur_line;
+    LookAhead   la_buf;
 };
 
 struct TypeArray
@@ -235,9 +236,9 @@ struct ASTDeclDA
 
 struct CompUnitDA
 {
-    CompilationUnit** data;
-    uint32_t          capacity;
-    uint32_t          size;
+    CompUnit** data;
+    uint32_t   capacity;
+    uint32_t   size;
 };
 
 struct SourceFileDA
@@ -499,7 +500,6 @@ struct Object
     SourceLoc     loc;
     ObjKind       kind;
     Visibility    visibility;
-    ObjAttr       attribs;
     ResolveStatus status;
     void*         llvm_ref;
     Type*         type;
@@ -521,7 +521,7 @@ struct SourceFile
     FileId      id;
 };
 
-struct CompilationUnit
+struct CompUnit
 {
     FileId   file;
     Module*  module;
@@ -529,16 +529,19 @@ struct CompilationUnit
     ObjectDA funcs;
     ObjectDA types;
     ObjectDA vars;
-    ObjectDA aliases;
 };
 
+struct Namespace
+{
+    Symbol   module;
+    uint32_t len;
+};
 
 struct Module
 {
     Symbol      name;
-    CompUnitDA  units;
+    CompUnit*   unit;
     ModulePTRDA submodules;
-    HashMap     symbols;
     HashMap     public_symbols;
     bool        used;
 };

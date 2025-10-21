@@ -33,7 +33,7 @@ static inline void lexer_error_at_current(Lexer* l, Token* t, const char* msg, .
 PRINTF_FMT(3, 4)
 static inline void lexer_error(Lexer* l, Token* t, const char* msg, ...);
 
-void lexer_init_unit(Lexer* l, CompilationUnit* unit)
+void lexer_init_unit(Lexer* l, CompUnit* unit)
 {
     SIC_ASSERT(l != NULL);
     SIC_ASSERT(unit != NULL);
@@ -115,7 +115,7 @@ void lexer_advance(Lexer* l)
             t->kind = TOKEN_DOT;
         break;
     case ':':
-        t->kind = consume(l, ':') ? TOKEN_SCOPE_RES : TOKEN_COLON;
+        t->kind = consume(l, ':') ? TOKEN_NAMESPACE : TOKEN_COLON;
         break;
     case '*':
         t->kind = consume(l, '=') ? TOKEN_MUL_ASSIGN : TOKEN_ASTERISK;

@@ -48,7 +48,7 @@ Object* find_obj(Symbol symbol)
     o = hashmap_get(&g_sema.unit->priv_symbols, symbol);
     if(o != NULL)
         return o;
-    return hashmap_get(&g_sema.unit->module->symbols, symbol);
+    return hashmap_get(&g_sema.unit->module->public_symbols, symbol);
 }
 
 uint32_t push_scope()
