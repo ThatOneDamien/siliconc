@@ -31,7 +31,7 @@ struct SemaContext
     bool         in_global_init : 1;
 };
 
-extern SemaContext g_sema;
+extern SemaContext* g_sema;
 
 void     analyze_global_var(Object* global_var);
 bool     analyze_expr_no_set(ASTExpr** expr_ref);
@@ -47,9 +47,7 @@ void     push_obj(Object* obj);
 Object*  find_obj(Symbol symbol);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
-
 bool     expr_is_lvalue(ASTExpr* expr);
-bool     expr_is_const_eval(ASTExpr* expr);
 
 static inline void const_int_correct(ASTExpr* expr)
 {
@@ -107,16 +105,16 @@ static inline bool obj_is_type(Object* obj)
 static inline void set_cyclic_def(Object* obj)
 {
     sic_error_at(obj->loc, "Cyclic definition.");
-    g_sema.cyclic_def = obj;
+    g_sema->cyclic_def = obj;
     obj->kind = OBJ_INVALID;
     obj->status = STATUS_RESOLVED;
 }
 
 static inline void check_cyclic_def(Object* other, SourceLoc loc)
 {
-    if(g_sema.cyclic_def == other)
-        g_sema.cyclic_def = NULL;
-    else if(g_sema.cyclic_def != NULL)
+    if(g_sema->cyclic_def == other)
+        g_sema->cyclic_def = NULL;
+    else if(g_sema->cyclic_def != NULL)
         sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
     other->kind = OBJ_INVALID;
     other->status = STATUS_RESOLVED;

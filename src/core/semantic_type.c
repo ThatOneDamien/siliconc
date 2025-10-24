@@ -25,26 +25,18 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
             break;
         }
         FALLTHROUGH;
-    case TYPE_BOOL:
-    case TYPE_BYTE:
-    case TYPE_UBYTE:
-    case TYPE_SHORT:
-    case TYPE_USHORT:
-    case TYPE_INT:
-    case TYPE_UINT:
-    case TYPE_LONG:
-    case TYPE_ULONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case INT_TYPES:
+    case FLOAT_TYPES:
+    case TYPE_STRING_LITERAL:
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
     case TYPE_POINTER: {
         if(type->status == STATUS_RESOLVED) return true;
         type->status = STATUS_RESOLVED;
-        bool prev = g_sema.in_ptr;
-        g_sema.in_ptr = true;
+        bool prev = g_sema->in_ptr;
+        g_sema->in_ptr = true;
         if(!resolve_type(&type->pointer_base, RES_ALLOW_VOID, err_loc, "Cannot have pointer to type")) break;
-        g_sema.in_ptr = prev;
+        g_sema->in_ptr = prev;
         type->visibility = type->pointer_base->visibility;
         return true;
     }

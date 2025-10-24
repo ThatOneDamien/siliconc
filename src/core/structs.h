@@ -45,6 +45,7 @@ typedef struct SourceFileDA     SourceFileDA;
 typedef struct ModulePTRDA      ModulePTRDA;
 
 // AST Structs
+typedef struct Namespace        Namespace;
 typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
@@ -54,6 +55,7 @@ typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct InitListEntry    InitListEntry;
 typedef struct ASTExprInitList  ASTExprInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
@@ -81,7 +83,6 @@ typedef struct Object           Object;
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
 typedef struct CompUnit         CompUnit;
-typedef struct Namespace        Namespace;
 typedef struct Module           Module;
 typedef struct CLIArgs          CLIArgs;
 typedef struct CompilerContext  CompilerContext;
@@ -255,6 +256,12 @@ struct ModulePTRDA
     uint32_t size;
 };
 
+struct Namespace
+{
+    Symbol   module;
+    uint32_t len;
+};
+
 struct ASTExprAAccess
 {
     ASTExpr* array_expr;
@@ -297,7 +304,11 @@ union ConstantValue
 {
     uint64_t        i;
     double          f;
-    char*           s;
+    struct
+    {
+        char*       str;
+        size_t      str_len;
+    };
     ASTExprInitList list;
 };
 
@@ -312,6 +323,12 @@ struct ASTExprMAccess
     ASTExpr* parent_expr;
     Object*  member;
     uint32_t member_idx;
+};
+
+struct ASTExprPreIdent
+{
+    Namespace ns;
+    Symbol    sym;
 };
 
 struct ASTExprTernary
@@ -351,7 +368,7 @@ struct ASTExpr
         Object*         ident;
         ASTExprInitList init_list;
         ASTExprMAccess  member_access;
-        Symbol          pre_sema_ident;
+        ASTExprPreIdent pre_sema_ident;
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
@@ -529,12 +546,6 @@ struct CompUnit
     ObjectDA funcs;
     ObjectDA types;
     ObjectDA vars;
-};
-
-struct Namespace
-{
-    Symbol   module;
-    uint32_t len;
 };
 
 struct Module

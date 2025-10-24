@@ -24,49 +24,81 @@ static Type s_invalid = TYPE_DEF(TYPE_INVALID);
 static Type s_voidptr;
 static Type s_void    = BUILTIN_DEF(TYPE_VOID  , 0, &s_voidptr);
 static Type s_bool    = BUILTIN_DEF(TYPE_BOOL  , 1, NULL);
-static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE , 1, NULL);
-static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT, 2, NULL);
-static Type s_uint    = BUILTIN_DEF(TYPE_UINT  , 4, NULL);
-static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG , 8, NULL);
+static Type s_char    = BUILTIN_DEF(TYPE_CHAR  , 1, NULL);
 static Type s_byte    = BUILTIN_DEF(TYPE_BYTE  , 1, NULL);
+static Type s_ubyte   = BUILTIN_DEF(TYPE_UBYTE , 1, NULL);
 static Type s_short   = BUILTIN_DEF(TYPE_SHORT , 2, NULL);
+static Type s_ushort  = BUILTIN_DEF(TYPE_USHORT, 2, NULL);
 static Type s_int     = BUILTIN_DEF(TYPE_INT   , 4, NULL);
+static Type s_uint    = BUILTIN_DEF(TYPE_UINT  , 4, NULL);
 static Type s_long    = BUILTIN_DEF(TYPE_LONG  , 8, NULL);
+static Type s_ulong   = BUILTIN_DEF(TYPE_ULONG , 8, NULL);
+static Type s_iptr    = BUILTIN_DEF(TYPE_IPTR  , 0, NULL);
+static Type s_uptr    = BUILTIN_DEF(TYPE_UPTR  , 0, NULL);
+static Type s_isz     = BUILTIN_DEF(TYPE_ISZ   , 0, NULL);
+static Type s_usz     = BUILTIN_DEF(TYPE_USZ   , 0, NULL);
 static Type s_float   = BUILTIN_DEF(TYPE_FLOAT , 4, NULL);
 static Type s_double  = BUILTIN_DEF(TYPE_DOUBLE, 8, NULL);
 static Type s_voidptr = TYPE_DEF(TYPE_POINTER, .pointer_base = &s_void);
+static Type s_strlit  = TYPE_DEF(TYPE_STRING_LITERAL);
 
 // Builtin-types
-Type* g_type_invalid = &s_invalid;
-Type* g_type_voidptr = &s_voidptr;
-Type* g_type_void    = &s_void;
-Type* g_type_bool    = &s_bool;
-Type* g_type_ubyte   = &s_ubyte;
-Type* g_type_ushort  = &s_ushort;
-Type* g_type_uint    = &s_uint;
-Type* g_type_ulong   = &s_ulong;
-Type* g_type_byte    = &s_byte;
-Type* g_type_short   = &s_short;
-Type* g_type_int     = &s_int;
-Type* g_type_long    = &s_long;
-Type* g_type_float   = &s_float;
-Type* g_type_double  = &s_double;
+Type* const g_type_invalid = &s_invalid;
+Type* const g_type_voidptr = &s_voidptr;
+Type* const g_type_void    = &s_void;
+Type* const g_type_bool    = &s_bool;
+Type* const g_type_char    = &s_char;
+Type* const g_type_byte    = &s_byte;
+Type* const g_type_ubyte   = &s_ubyte;
+Type* const g_type_short   = &s_short;
+Type* const g_type_ushort  = &s_ushort;
+Type* const g_type_int     = &s_int;
+Type* const g_type_uint    = &s_uint;
+Type* const g_type_long    = &s_long;
+Type* const g_type_ulong   = &s_ulong;
+Type* const g_type_iptr    = &s_iptr;
+Type* const g_type_uptr    = &s_uptr;
+Type* const g_type_isz     = &s_isz;
+Type* const g_type_usz     = &s_usz;
+Type* const g_type_float   = &s_float;
+Type* const g_type_double  = &s_double;
+Type* const g_type_strlit  = &s_strlit;
 
 
 static Type* builtin_type_lookup[] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
     [TOKEN_BOOL    - TOKEN_TYPENAME_START] = &s_bool,
-    [TOKEN_UBYTE   - TOKEN_TYPENAME_START] = &s_ubyte,
-    [TOKEN_USHORT  - TOKEN_TYPENAME_START] = &s_ushort,
-    [TOKEN_UINT    - TOKEN_TYPENAME_START] = &s_uint,
-    [TOKEN_ULONG   - TOKEN_TYPENAME_START] = &s_ulong,
+    [TOKEN_CHAR    - TOKEN_TYPENAME_START] = &s_char,
     [TOKEN_BYTE    - TOKEN_TYPENAME_START] = &s_byte,
+    [TOKEN_UBYTE   - TOKEN_TYPENAME_START] = &s_ubyte,
     [TOKEN_SHORT   - TOKEN_TYPENAME_START] = &s_short,
+    [TOKEN_USHORT  - TOKEN_TYPENAME_START] = &s_ushort,
     [TOKEN_INT     - TOKEN_TYPENAME_START] = &s_int,
+    [TOKEN_UINT    - TOKEN_TYPENAME_START] = &s_uint,
     [TOKEN_LONG    - TOKEN_TYPENAME_START] = &s_long,
+    [TOKEN_ULONG   - TOKEN_TYPENAME_START] = &s_ulong,
+    [TOKEN_IPTR    - TOKEN_TYPENAME_START] = &s_iptr,
+    [TOKEN_UPTR    - TOKEN_TYPENAME_START] = &s_uptr,
+    [TOKEN_ISZ     - TOKEN_TYPENAME_START] = &s_isz,
+    [TOKEN_USZ     - TOKEN_TYPENAME_START] = &s_usz,
     [TOKEN_FLOAT   - TOKEN_TYPENAME_START] = &s_float,
     [TOKEN_DOUBLE  - TOKEN_TYPENAME_START] = &s_double,
 };
+
+void builtin_type_init()
+{
+    // TODO: Make this platform dependent, as that is the whole point of these types.
+    //       For right now I am not doing proper platform detection, so they will always
+    //       be the same size.
+    s_iptr.builtin.bit_size = 64;
+    s_iptr.builtin.byte_size = 8;
+    s_uptr.builtin.bit_size = 64;
+    s_uptr.builtin.byte_size = 8;
+    s_isz.builtin.bit_size = 64;
+    s_isz.builtin.byte_size = 8;
+    s_usz.builtin.bit_size = 64;
+    s_usz.builtin.byte_size = 8;
+}
 
 Type* type_from_token(TokenKind type_token)
 {
@@ -115,17 +147,8 @@ bool type_equal(Type* t1, Type* t2)
     switch(t1->kind)
     {
     case TYPE_VOID:
-    case TYPE_BOOL:
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
-    case TYPE_BYTE:
-    case TYPE_SHORT:
-    case TYPE_INT:
-    case TYPE_LONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case INT_TYPES:
+    case FLOAT_TYPES:
         return true;
     case TYPE_POINTER:
         return type_equal(t1->pointer_base, t2->pointer_base);
@@ -154,6 +177,7 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -167,17 +191,8 @@ ByteSize type_size(Type* ty)
     SIC_ASSERT(ty != NULL);
     switch(ty->kind)
     {
-    case TYPE_BOOL:
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
-    case TYPE_BYTE:
-    case TYPE_SHORT:
-    case TYPE_INT:
-    case TYPE_LONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case INT_TYPES:
+    case FLOAT_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
@@ -197,6 +212,7 @@ ByteSize type_size(Type* ty)
     case TYPE_RUNTIME_ARRAY:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -211,17 +227,8 @@ uint32_t type_alignment(Type* ty)
     SIC_ASSERT(ty->status == STATUS_RESOLVED);
     switch(ty->kind)
     {
-    case TYPE_BOOL:
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
-    case TYPE_BYTE:
-    case TYPE_SHORT:
-    case TYPE_INT:
-    case TYPE_LONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case INT_TYPES:
+    case FLOAT_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
@@ -242,6 +249,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -255,35 +263,13 @@ const char* type_to_string(Type* type)
 {
     SIC_ASSERT(type != NULL);
     SIC_ASSERT(type->status == STATUS_RESOLVED);
-    static const char* type_names[] = {
-        [TYPE_VOID]    = "void",
-        [TYPE_BOOL]    = "bool",
-        [TYPE_UBYTE]   = "ubyte",
-        [TYPE_USHORT]  = "ushort",
-        [TYPE_UINT]    = "uint",
-        [TYPE_ULONG]   = "ulong",
-        [TYPE_BYTE]    = "byte",
-        [TYPE_SHORT]   = "short",
-        [TYPE_INT]     = "int",
-        [TYPE_LONG]    = "long",
-        [TYPE_FLOAT]   = "float",
-        [TYPE_DOUBLE]  = "double",
-    };
     switch(type->kind)
     {
     case TYPE_VOID:
-    case TYPE_BOOL:
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
-    case TYPE_BYTE:
-    case TYPE_SHORT:
-    case TYPE_INT:
-    case TYPE_LONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
-        return type_names[type->kind];
+    case INT_TYPES:
+    case FLOAT_TYPES:
+        static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
+        return tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
     case TYPE_POINTER:
         return str_format("%s*", type_to_string(type->pointer_base));
     case TYPE_FUNC_PTR: {
@@ -314,6 +300,7 @@ const char* type_to_string(Type* type)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:

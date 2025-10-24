@@ -234,7 +234,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         return;
     case EXPR_PRE_SEMANTIC_IDENT: {
         printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
-               expr->expr.pre_sema_ident, debug_type_to_str(expr->type));
+               expr->expr.pre_sema_ident.sym, debug_type_to_str(expr->type));
         return;
     }
     case EXPR_TERNARY:

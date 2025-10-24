@@ -473,6 +473,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         {
         case TOKEN_VOID:
         case TOKEN_BOOL:
+        case TOKEN_CHAR:
         case TOKEN_UBYTE:
         case TOKEN_BYTE:
         case TOKEN_USHORT:
@@ -481,6 +482,10 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         case TOKEN_INT:
         case TOKEN_ULONG:
         case TOKEN_LONG:
+        case TOKEN_IPTR:
+        case TOKEN_UPTR:
+        case TOKEN_ISZ:
+        case TOKEN_USZ:
         case TOKEN_FLOAT:
         case TOKEN_DOUBLE:
             if(ty != NULL)
@@ -578,7 +583,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
             ASTExpr* cur = CALLOC_STRUCT(ASTExpr);
             cur->kind = EXPR_PRE_SEMANTIC_IDENT;
             cur->loc = ident_loc;
-            cur->expr.pre_sema_ident = ident_sym;
+            cur->expr.pre_sema_ident.sym = ident_sym;
             for(uint32_t i = 0; i < dims; ++i)
             {
                 ASTExpr* next = CALLOC_STRUCT(ASTExpr);
@@ -1058,18 +1063,20 @@ static ASTExpr* parse_initializer_list(Lexer* l)
     advance(l);
     while(true)
     {
+        da_reserve(list, list->size + 1);
+        InitListEntry* entry = list->data + list->size;
         switch(peek(l)->kind)
         {
         case TOKEN_IDENT:
             if(peek_next(l)->kind != TOKEN_ASSIGN)
                 break;
-            da_resize(list, list->size + 1);
-            list->data[list->size - 1].arr_index = parse_identifier_expr(l);
+            entry->arr_index = parse_identifier_expr(l);
+            list->size++;
             advance(l);
             break;
         case TOKEN_LBRACKET:
-            da_resize(list, list->size + 1);
-            list->data[list->size - 1].arr_index = parse_expr_with_prec(l, PREC_TERNARY, NULL);
+            entry->arr_index = parse_expr_with_prec(l, PREC_TERNARY, NULL);
+            list->size++;
             CONSUME_OR_RET(TOKEN_RBRACKET, BAD_EXPR);
             CONSUME_OR_RET(TOKEN_ASSIGN, BAD_EXPR);
             break;
@@ -1078,10 +1085,10 @@ static ASTExpr* parse_initializer_list(Lexer* l)
         case TOKEN_EOF:
             ERROR_AND_RET(BAD_EXPR, "Encountered end of file, expected '}'.");
         default:
-            da_resize(list, list->size + 1);
+            list->size++;
             break;
         }
-        ASSIGN_EXPR_OR_RET(list->data[list->size - 1].init_value, BAD_EXPR);
+        ASSIGN_EXPR_OR_RET(entry->init_value, BAD_EXPR);
 
         if(!try_consume(l, TOKEN_COMMA))
             break;
@@ -1100,7 +1107,9 @@ static ASTExpr* parse_invalid(UNUSED Lexer* l)
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
-    expr->expr.pre_sema_ident = peek(l)->sym;
+    if(!parse_namespace(l, &expr->expr.pre_sema_ident.ns, true))
+        return BAD_EXPR;
+    expr->expr.pre_sema_ident.sym = peek(l)->sym;
     advance(l);
     return expr;
 }
@@ -1248,7 +1257,7 @@ static ASTExpr* parse_char_literal(Lexer* l)
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_INTEGER;
     expr->expr.constant.val.i = peek(l)->chr.val;
-    expr->type = g_type_ubyte;
+    expr->type = g_type_char;
     advance(l);
     return expr;
 }
@@ -1303,15 +1312,9 @@ static ASTExpr* parse_string_literal(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
     expr->expr.constant.kind = CONSTANT_STRING;
-
-    // TODO: Add capability to concat multiple string literals if they are
-    //       side-by-side
-    expr->expr.constant.val.s = peek(l)->str.val;
-    expr->type = CALLOC_STRUCT(Type);
-    expr->type->kind = TYPE_STATIC_ARRAY;
-    expr->type->status = STATUS_RESOLVED;
-    expr->type->array.elem_type = g_type_ubyte; // TODO: Add char type, make this the underlying type
-    expr->type->array.ss_size = peek(l)->str.len + 1;
+    expr->expr.constant.val.str = peek(l)->str.val;
+    expr->expr.constant.val.str_len = peek(l)->str.len;
+    expr->type = g_type_strlit;
     advance(l);
     return expr;
 }

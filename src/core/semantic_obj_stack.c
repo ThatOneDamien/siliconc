@@ -1,6 +1,9 @@
 #include "semantics.h"
 
-#define OBJ_STACK_SIZE (1 << 16)
+// I do minus 1 here to keep the stack_top and stack_bottom members
+// on the same page as the end of the data array so that there will
+// be less cache misses hopefully.
+#define OBJ_STACK_SIZE ((1 << 16) - 1)
 
 typedef struct ObjStack ObjStack;
 struct ObjStack
@@ -45,10 +48,10 @@ Object* find_obj(Symbol symbol)
         if(o->symbol == symbol)
             return o;
     }
-    o = hashmap_get(&g_sema.unit->priv_symbols, symbol);
+    o = hashmap_get(&g_sema->unit->priv_symbols, symbol);
     if(o != NULL)
         return o;
-    return hashmap_get(&g_sema.unit->module->public_symbols, symbol);
+    return hashmap_get(&g_sema->unit->module->public_symbols, symbol);
 }
 
 uint32_t push_scope()

@@ -23,6 +23,7 @@ int main(int argc, char* argv[])
     process_args(argc, argv);
     
     sym_map_init();
+    builtin_type_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
 #ifdef SI_DEBUG
     atexit(print_debug_stats);

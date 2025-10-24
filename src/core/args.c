@@ -7,6 +7,7 @@ CLIArgs g_args = {0};
 
 static void print_help(void);
 
+
 void process_args(int argc, char* argv[])
 {
     for(int i = 1; i < argc; i++)

@@ -9,20 +9,26 @@ extern CLIArgs         g_args;
 extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
-extern Type* g_type_invalid;
-extern Type* g_type_voidptr;
-extern Type* g_type_void;
-extern Type* g_type_bool;
-extern Type* g_type_ubyte;
-extern Type* g_type_byte;
-extern Type* g_type_ushort;
-extern Type* g_type_short;
-extern Type* g_type_uint;
-extern Type* g_type_int;
-extern Type* g_type_ulong;
-extern Type* g_type_long;
-extern Type* g_type_float;
-extern Type* g_type_double;
+extern Type* const g_type_invalid;
+extern Type* const g_type_voidptr;
+extern Type* const g_type_void;
+extern Type* const g_type_bool;
+extern Type* const g_type_char;
+extern Type* const g_type_byte;
+extern Type* const g_type_ubyte;
+extern Type* const g_type_short;
+extern Type* const g_type_ushort;
+extern Type* const g_type_int;
+extern Type* const g_type_uint;
+extern Type* const g_type_long;
+extern Type* const g_type_ulong;
+extern Type* const g_type_iptr;
+extern Type* const g_type_uptr;
+extern Type* const g_type_isz;
+extern Type* const g_type_usz;
+extern Type* const g_type_float;
+extern Type* const g_type_double;
+extern Type* const g_type_strlit;
 
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;
@@ -88,6 +94,7 @@ static inline Symbol sym_map_get(const char* str, TokenKind* kind)
 }
 
 // Type functions
+void        builtin_type_init();
 Type*       type_from_token(TokenKind type_token);
 Type*       type_pointer_to(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
@@ -130,14 +137,14 @@ static inline Type* type_to_unsigned(Type* ty)
 
 static inline bool type_is_signed(Type* ty)
 {
-    static_assert((TYPE_BYTE & 1) == 1, "Adjust type methods.");
-    return type_is_integer(ty) && (ty->kind & 1);
+    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
+    return type_is_integer(ty) && ((ty->kind & 1) == 0);
 }
 
 static inline bool type_is_unsigned(Type* ty)
 {
-    static_assert((TYPE_UBYTE & 1) == 0, "Adjust type methods.");
-    return type_is_integer(ty) && !(ty->kind & 1);
+    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
+    return type_is_integer(ty) && ((ty->kind & 1) == 1);
 }
 
 static inline bool type_is_float(Type* ty)

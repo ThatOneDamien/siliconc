@@ -43,7 +43,6 @@ typedef enum : int8_t
 {
     CAST_GROUP_INVALID = -1,
     CAST_GROUP_VOID = 0,
-    CAST_GROUP_NULL,
     CAST_GROUP_BOOL,
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
@@ -51,6 +50,7 @@ typedef enum : int8_t
     CAST_GROUP_ARRAY,
     CAST_GROUP_ENUM,
     CAST_GROUP_STRUCT,
+    CAST_GROUP_STRLIT,
     __CAST_GROUP_COUNT,
 } CastGroup;
 
@@ -346,14 +346,19 @@ typedef enum : uint8_t
     TOKEN_VOID,
     TOKEN_TYPENAME_START = TOKEN_VOID,
     TOKEN_BOOL,
-    TOKEN_UBYTE,
+    TOKEN_CHAR,
     TOKEN_BYTE,
-    TOKEN_USHORT,
+    TOKEN_UBYTE,
     TOKEN_SHORT,
-    TOKEN_UINT,
+    TOKEN_USHORT,
     TOKEN_INT,
-    TOKEN_ULONG,
+    TOKEN_UINT,
     TOKEN_LONG,
+    TOKEN_ULONG,
+    TOKEN_IPTR,
+    TOKEN_UPTR,
+    TOKEN_ISZ,
+    TOKEN_USZ,
     TOKEN_FLOAT,
     TOKEN_DOUBLE,
     TOKEN_TYPENAME_END = TOKEN_DOUBLE,
@@ -380,8 +385,9 @@ typedef enum : uint8_t
     TYPE_BOOL,
     TYPE_NUMERIC_START  = TYPE_BOOL,
 
+    TYPE_CHAR,
+    TYPE_INTEGER_START  = TYPE_CHAR,
     TYPE_BYTE,
-    TYPE_INTEGER_START  = TYPE_BYTE,
     TYPE_UBYTE,
     TYPE_SHORT,
     TYPE_USHORT,
@@ -389,7 +395,11 @@ typedef enum : uint8_t
     TYPE_UINT,
     TYPE_LONG,
     TYPE_ULONG,
-    TYPE_INTEGER_END    = TYPE_ULONG,
+    TYPE_IPTR,
+    TYPE_UPTR,
+    TYPE_ISZ,
+    TYPE_USZ,
+    TYPE_INTEGER_END    = TYPE_USZ,
 
     TYPE_FLOAT,
     TYPE_FLOAT_START    = TYPE_FLOAT,
@@ -413,6 +423,7 @@ typedef enum : uint8_t
     // Pre-semantic types.
     TYPE_PRE_SEMA_ARRAY,
     TYPE_PRE_SEMA_USER,
+    TYPE_STRING_LITERAL,
     TYPE_AUTO,
     TYPE_TYPEOF,
     __TYPE_COUNT,
@@ -439,3 +450,24 @@ typedef enum : uint8_t
     VAR_PARAM,
     VAR_MEMBER,
 } VarKind;
+
+#define INT_TYPES             \
+            TYPE_BOOL:        \
+            case TYPE_CHAR:   \
+            case TYPE_BYTE:   \
+            case TYPE_UBYTE:  \
+            case TYPE_SHORT:  \
+            case TYPE_USHORT: \
+            case TYPE_INT:    \
+            case TYPE_UINT:   \
+            case TYPE_LONG:   \
+            case TYPE_ULONG:  \
+            case TYPE_IPTR:   \
+            case TYPE_UPTR:   \
+            case TYPE_ISZ:    \
+            case TYPE_USZ
+                
+#define FLOAT_TYPES           \
+            TYPE_FLOAT:       \
+            case TYPE_DOUBLE
+                

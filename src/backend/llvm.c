@@ -814,7 +814,7 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->val.f);
         return;
     case CONSTANT_STRING: {
-        LLVMValueRef str = LLVMConstString(expr->expr.constant.val.s, strlen(expr->expr.constant.val.s), false);
+        LLVMValueRef str = LLVMConstString(constant->val.str, constant->val.str_len, false);
         LLVMValueRef global_string = LLVMAddGlobal(c->module_ref, LLVMTypeOf(str), ".str");
         LLVMSetGlobalConstant(global_string, true);
         LLVMSetLinkage(global_string, LLVMPrivateLinkage);
@@ -1097,18 +1097,9 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
     switch(type->kind)
     {
     case TYPE_VOID:
-    case TYPE_BOOL:
-    case TYPE_BYTE:
-    case TYPE_UBYTE:
-    case TYPE_SHORT:
-    case TYPE_USHORT:
-    case TYPE_INT:
-    case TYPE_UINT:
-    case TYPE_LONG:
-    case TYPE_ULONG:
+    case INT_TYPES:
         return LLVMConstInt(get_llvm_type(c, type), 0, false);
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case FLOAT_TYPES:
         return LLVMConstReal(get_llvm_type(c, type), 0.0);
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
@@ -1125,6 +1116,7 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -1185,18 +1177,24 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_VOID:
         return type->llvm_ref = LLVMVoidType();
     case TYPE_BOOL:
-    case TYPE_UBYTE:
+    case TYPE_CHAR:
     case TYPE_BYTE:
+    case TYPE_UBYTE:
         return type->llvm_ref = LLVMInt8Type();
-    case TYPE_USHORT:
     case TYPE_SHORT:
+    case TYPE_USHORT:
         return type->llvm_ref = LLVMInt16Type();
-    case TYPE_UINT:
     case TYPE_INT:
+    case TYPE_UINT:
         return type->llvm_ref = LLVMInt32Type();
-    case TYPE_ULONG:
     case TYPE_LONG:
+    case TYPE_ULONG:
         return type->llvm_ref = LLVMInt64Type();
+    case TYPE_IPTR:
+    case TYPE_UPTR:
+    case TYPE_ISZ:
+    case TYPE_USZ:
+        return type->llvm_ref = LLVMIntType(type->builtin.bit_size);
     case TYPE_FLOAT:
         return type->llvm_ref = LLVMFloatType();
     case TYPE_DOUBLE:
@@ -1242,6 +1240,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -1316,14 +1315,19 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
         lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
         lvalue->value = LLVMBuildTrunc(c->builder, lvalue->value, LLVMInt1Type(), "");
         return;
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
+    case TYPE_CHAR:
     case TYPE_BYTE:
+    case TYPE_UBYTE:
     case TYPE_SHORT:
+    case TYPE_USHORT:
     case TYPE_INT:
+    case TYPE_UINT:
     case TYPE_LONG:
+    case TYPE_ULONG:
+    case TYPE_IPTR:
+    case TYPE_UPTR:
+    case TYPE_ISZ:
+    case TYPE_USZ:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER:
@@ -1340,6 +1344,7 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_VOID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case TYPE_TYPEDEF:
@@ -1370,7 +1375,7 @@ static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, UNUSED void *context)
             LLVMDisposeMessage(desc);
 			return;
 	}
-
+    (void)severity;
 #ifdef SI_DEBUG
     if(g_args.debug_output & DEBUG_CODEGEN)
         printf("[DEBUG] %s\033[0m: %s\n", severity, desc);

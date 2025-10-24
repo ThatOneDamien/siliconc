@@ -3,7 +3,7 @@
 #define ANALYZE_EXPR_SET_VALID(expr) do { valid &= analyze_expr(expr); } while(0)
 #define ANALYZE_EXPR_OR_RET(expr) do { if(!analyze_expr(expr)) return false; } while(0)
 #define IF_INVALID_RET() do { if(!valid) return false; } while(0)
-#define ERROR_AND_RET(ret_val, loc, ...) do { sic_error_at(loc, __VA_ARGS__); return ret_val; } while(0)
+#define ERROR_AND_RET(loc, ...) do { sic_error_at(loc, __VA_ARGS__); return false; } while(0)
 
 // Expr kind functions
 static bool analyze_array_access(ASTExpr* expr);
@@ -29,7 +29,7 @@ static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 
 // Unary functions
-static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr* inner);
+static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr** inner_ref);
 static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner);
 static bool analyze_deref(ASTExpr** expr_ref, ASTExpr* inner);
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
@@ -54,11 +54,11 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
     case EXPR_CAST:
         return analyze_cast(expr);
     case EXPR_DEFAULT:
-        ERROR_AND_RET(false, expr->loc, "Keyword \'default\' not allowed in this context.");
+        ERROR_AND_RET(expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
     case EXPR_INITIALIZER_LIST:
-        ERROR_AND_RET(false, expr->loc, "Initializer list not allowed in this context.");
+        ERROR_AND_RET(expr->loc, "Initializer list not allowed in this context.");
     case EXPR_POSTFIX:
         return analyze_expr(&expr->expr.unary.inner) && 
                analyze_incdec(expr, expr->expr.unary.inner);
@@ -89,9 +89,9 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
 static bool analyze_array_access(ASTExpr* expr)
 {
     bool valid = true;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.array_expr);
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.index_expr);
     IF_INVALID_RET();
     ASTExpr* arr = expr->expr.array_access.array_expr;
@@ -99,7 +99,7 @@ static bool analyze_array_access(ASTExpr* expr)
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
-        ERROR_AND_RET(false, expr->loc, 
+        ERROR_AND_RET(expr->loc, 
                       "Attempted to access element of non-array and non-pointer type \'%s\'",
                       type_to_string(arr->type));
     }
@@ -122,11 +122,11 @@ static inline bool analyze_binary(ASTExpr* expr)
     ASTExpr** lhs = &expr->expr.binary.lhs;
     ASTExpr** rhs = &expr->expr.binary.rhs;
     BinaryOpKind kind = expr->expr.binary.kind;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(lhs);
     if(kind != BINARY_ASSIGN)
     {
-        g_sema.ident_mask = IDENT_VAR_ONLY;
+        g_sema->ident_mask = IDENT_VAR_ONLY;
         ANALYZE_EXPR_SET_VALID(rhs);
     }
     IF_INVALID_RET();
@@ -183,23 +183,23 @@ static inline bool analyze_binary(ASTExpr* expr)
 static bool analyze_call(ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
-    g_sema.ident_mask = IDENT_VAR_ONLY | IDENT_FUNC;
+    g_sema->ident_mask = IDENT_VAR_ONLY | IDENT_FUNC;
     ANALYZE_EXPR_OR_RET(&call->func_expr);
     
     Type* func_type = call->func_expr->type;
     if(func_type->kind != TYPE_FUNC_PTR)
-        ERROR_AND_RET(false, expr->loc, "Attempted to call non-function.");
+        ERROR_AND_RET(expr->loc, "Attempted to call non-function.");
 
     FuncSignature* sig = func_type->func_ptr;
     if(call->args.size < sig->params.size)
     {
-        ERROR_AND_RET(false, expr->loc, 
+        ERROR_AND_RET(expr->loc, 
                       "Too few arguments passed to function. Expected %s%u, have %u.",
                       sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
-        ERROR_AND_RET(false, expr->loc, 
+        ERROR_AND_RET(expr->loc, 
                       "Too many arguments passed to function. Expected %u, have %u.",
                       sig->params.size, call->args.size);
     }
@@ -235,10 +235,10 @@ static bool analyze_call(ASTExpr* expr)
 static bool analyze_ident(ASTExpr** expr_ref)
 {
     ASTExpr* expr = *expr_ref;
-    Symbol sym = expr->expr.pre_sema_ident;
+    Symbol sym = expr->expr.pre_sema_ident.sym;
     Object* ident = find_obj(sym);
     if(ident == NULL)
-        ERROR_AND_RET(false, expr->loc, "Reference to undefined symbol \'%s\'.", sym);
+        ERROR_AND_RET(expr->loc, "Reference to undefined symbol \'%s\'.", sym);
 
     switch(ident->kind)
     {
@@ -251,16 +251,16 @@ static bool analyze_ident(ASTExpr** expr_ref)
         expr->expr.constant.val.i = ident->enum_val.const_val;
         return true;
     case OBJ_FUNC:
-        if(BIT_IS_UNSET(g_sema.ident_mask, IDENT_FUNC))
-            ERROR_AND_RET(false, expr->loc, "Function identifier not allowed here, if you want the pointer use '&' before.");
+        if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_FUNC))
+            ERROR_AND_RET(expr->loc, "Function identifier not allowed here, if you want the pointer use '&' before.");
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
         return true;
     case OBJ_BITFIELD:
     case OBJ_ENUM:
-        if(BIT_IS_UNSET(g_sema.ident_mask, IDENT_ENUM))
-            ERROR_AND_RET(false, expr->loc, "Type identifier not allowed in this context, expected expression.");
+        if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_ENUM))
+            ERROR_AND_RET(expr->loc, "Type identifier not allowed in this context, expected expression.");
         expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
         expr->expr.ident = ident;
@@ -269,13 +269,15 @@ static bool analyze_ident(ASTExpr** expr_ref)
     case OBJ_TYPE_ALIAS:
     case OBJ_TYPE_DISTINCT:
     case OBJ_UNION:
-        ERROR_AND_RET(false, expr->loc, "Type identifier not an enum.");
+        ERROR_AND_RET(expr->loc, "Type identifier not allowed in this context, expected expression.");
     case OBJ_VAR:
-        if(ident->var.kind == VAR_GLOBAL)
+
+        if(g_sema->in_global_init && ident->var.kind == VAR_GLOBAL)
         {
             analyze_global_var(ident);
             if(ident->kind == OBJ_INVALID)
                 return false;
+
         }
 
         // if(ident->attribs & ATTR_CONST)
@@ -298,16 +300,16 @@ static bool analyze_ternary(ASTExpr* expr)
 {
     ASTExprTernary* tern = &expr->expr.ternary;
     bool valid = true;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(&tern->cond_expr);
     if(tern->then_expr != NULL)
     {
-        g_sema.ident_mask = IDENT_VAR_ONLY;
+        g_sema->ident_mask = IDENT_VAR_ONLY;
         ANALYZE_EXPR_SET_VALID(&tern->then_expr);
     }
     else
         tern->then_expr = tern->cond_expr;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(&tern->else_expr);
     IF_INVALID_RET();
 
@@ -325,29 +327,29 @@ static bool analyze_unary(ASTExpr** expr_ref)
 {
     ASTExpr* expr = *expr_ref;
     ASTExprUnary* unary = &expr->expr.unary;
-    g_sema.ident_mask = unary->kind == UNARY_ADDR_OF ? 
-                        IDENT_FUNC :
-                        IDENT_VAR_ONLY;
-    ANALYZE_EXPR_OR_RET(&unary->inner);
-    ASTExpr* inner = unary->inner;
-    
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     switch(unary->kind)
     {
     case UNARY_INVALID:
         break;
     case UNARY_ADDR_OF:
-        return analyze_addr_of(expr_ref, inner);
+        return analyze_addr_of(expr_ref, &unary->inner);
     case UNARY_BIT_NOT:
+        ANALYZE_EXPR_OR_RET(&unary->inner);
         return analyze_bit_not(expr, &unary->inner);
     case UNARY_DEC:
     case UNARY_INC:
-        return analyze_incdec(expr, inner);
+        ANALYZE_EXPR_OR_RET(&unary->inner);
+        return analyze_incdec(expr, unary->inner);
     case UNARY_DEREF:
-        return analyze_deref(expr_ref, inner);
+        ANALYZE_EXPR_OR_RET(&unary->inner);
+        return analyze_deref(expr_ref, unary->inner);
     case UNARY_LOG_NOT:
-        return analyze_log_not(expr, inner);
+        ANALYZE_EXPR_OR_RET(&unary->inner);
+        return analyze_log_not(expr, unary->inner);
     case UNARY_NEG:
-        return analyze_negate(expr, inner);
+        ANALYZE_EXPR_OR_RET(&unary->inner);
+        return analyze_negate(expr, unary->inner);
     }
     SIC_UNREACHABLE();
 }
@@ -365,7 +367,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
             expr->kind = EXPR_CONSTANT;
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = parent->type->array.ss_size;
-            expr->type = g_type_ulong;
+            expr->type = g_type_usz;
             return true;
         }
         break;
@@ -388,17 +390,8 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
         break;
     }
     case TYPE_VOID:
-    case TYPE_BOOL:
-    case TYPE_BYTE:
-    case TYPE_UBYTE:
-    case TYPE_SHORT:
-    case TYPE_USHORT:
-    case TYPE_INT:
-    case TYPE_UINT:
-    case TYPE_LONG:
-    case TYPE_ULONG:
-    case TYPE_FLOAT:
-    case TYPE_DOUBLE:
+    case INT_TYPES:
+    case FLOAT_TYPES:
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
         break;
@@ -406,6 +399,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_TYPEDEF:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
+    case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -419,7 +413,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
 static bool analyze_unresolved_arrow(ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
     ASTExpr* parent = uaccess->parent_expr;
 
@@ -441,7 +435,7 @@ static bool analyze_unresolved_arrow(ASTExpr* expr)
 static bool analyze_unresolved_dot(ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-    g_sema.ident_mask = IDENT_ENUM;
+    g_sema->ident_mask = IDENT_ENUM;
     ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
     ASTExpr* parent = uaccess->parent_expr;
 
@@ -514,6 +508,9 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
                          type_to_string(left->type), type_to_string(right->type));
             return false;
         }
+
+        implicit_cast(rhs, type_is_unsigned(right->type) ? g_type_uptr : g_type_iptr);
+        right = *rhs;
 
         // This checks if the constant indexing will overflow the size of the static
         // array. This check is not done for ds-arrays or when the index expression 
@@ -685,7 +682,7 @@ static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     if(!expr_ensure_lvalue(left))
         return false;
     expr->type = left->type;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     return implicit_cast(rhs, left->type);
 }
 
@@ -719,44 +716,29 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     return !expr_is_bad(new_rhs) && analyze_assign(expr, lhs, rhs);
 }
 
-static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr* inner)
+static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr** inner_ref)
 {
     ASTExpr* expr = *expr_ref;
-    if(inner->kind == EXPR_IDENT)
+    bool prev = g_sema->in_global_init;
+    g_sema->in_global_init = false;
+    g_sema->ident_mask = IDENT_FUNC;
+    ANALYZE_EXPR_OR_RET(inner_ref);
+    g_sema->in_global_init = prev;
+
+    ASTExpr* inner = *inner_ref;
+    if(inner->kind == EXPR_IDENT && inner->expr.ident->kind == OBJ_FUNC)
     {
-        Object* ident = inner->expr.ident;
-        switch(ident->kind)
-        {
-        case OBJ_FUNC:
-            *expr_ref = inner;
-            // expr->type = ident->type;
-            // printf("here\n");
-            return true;
-        case OBJ_VAR:
-            switch(ident->var.kind)
-            {
-            case VAR_GLOBAL:
-            case VAR_LOCAL:
-            case VAR_PARAM:
-            default:
-                SIC_UNREACHABLE();
-            }
-            break;
-        default:
-            sic_error_at(expr->loc, "Cannot take address of type object '%s'.", ident->symbol);
-            return false;
-        }
+        *expr_ref = inner;
+        return true;
     }
-    else if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_DEREF)
+
+    if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_DEREF)
     {
         *expr_ref = inner->expr.unary.inner;
         return true;
     }
-    else if(!expr_is_lvalue(inner))
-    {
-        sic_error_at(expr->loc, "Cannot take address of rvalue.");
-        return false;
-    }
+    if(!expr_is_lvalue(inner))
+        ERROR_AND_RET(expr->loc, "Cannot take address of rvalue.");
 
     if(type_is_array(inner->type))
         expr->type = type_pointer_to(inner->type->array.elem_type);
@@ -876,24 +858,20 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
         return false;
     }
 
-    if(e1->type->kind < e2->type->kind)
+    int w1 = type_is_float(e1->type) * 100 + e1->type->builtin.byte_size + type_is_unsigned(e1->type);
+    int w2 = type_is_float(e2->type) * 100 + e2->type->builtin.byte_size + type_is_unsigned(e2->type);
+
+    if(w1 < w2)
     {
         ASTExpr** temp = expr1;
         expr1 = expr2;
         expr2 = temp;
-        e1 = e2;
-        e2 = *expr2;
     }
 
-    if(type_size(e1->type) >= 4)
-    {
-        if(!implicit_cast(expr2, e1->type))
-            SIC_UNREACHABLE();
-        return true;
-    }
+    if((*expr1)->type->builtin.byte_size < 4)
+        implicit_cast(expr1, g_type_int);
 
-    promote_int_type(expr1);
-    promote_int_type(expr2);
+    implicit_cast(expr2, (*expr1)->type);
     SIC_ASSERT((*expr1)->type->kind == (*expr2)->type->kind);
     return true;
 }

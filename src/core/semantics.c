@@ -27,13 +27,15 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
                                SourceLoc err_loc, const char* err_str);
 static bool analyze_union_obj(Object* type_obj);
 
-SemaContext g_sema;
+SemaContext* g_sema = NULL;
 
 void semantic_declaration(CompUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
-    memset(&g_sema, 0, sizeof(SemaContext));
-    g_sema.unit = unit;
+    SemaContext* prev = g_sema;
+    SemaContext sema = {0};
+    g_sema = &sema;
+    sema.unit = unit;
     for(uint32_t i = 0; i < unit->types.size; ++i)
         declare_type(unit->types.data[i]);
 
@@ -42,6 +44,7 @@ void semantic_declaration(CompUnit* unit)
 
     for(uint32_t i = 0; i < unit->vars.size; ++i)
         declare_global_var(unit->vars.data[i]);
+    g_sema = prev;
 }
 
 void semantic_analysis(ModulePTRDA* modules)
@@ -65,37 +68,13 @@ bool expr_is_lvalue(ASTExpr* expr)
     case EXPR_ARRAY_ACCESS:
     case EXPR_MEMBER_ACCESS:
         return true;
-    case EXPR_IDENT: {
-        Object* o = expr->expr.ident;
-        if(o->kind != OBJ_VAR)
-            return false;
-        switch(o->var.kind)
-        {
-        case VAR_LOCAL:
-        case VAR_GLOBAL:
-        case VAR_PARAM:
-        case VAR_MEMBER:
-            return true;
-        case VAR_INVALID:
-            break;
-        }
-        SIC_UNREACHABLE();
-    }
+    case EXPR_IDENT:
+        return expr->expr.ident->kind == OBJ_VAR;
     case EXPR_UNARY:
         return expr->expr.unary.kind == UNARY_DEREF;
     default:
         return false;
     }
-}
-
-bool expr_is_const_eval(ASTExpr* expr)
-{
-    (void)expr;
-    return true;
-    // switch(expr->kind)
-    // {
-    // case EXPR_IDENT
-    // }
 }
 
 static void declare_type(Object* type_obj)
@@ -123,6 +102,7 @@ static void declare_type(Object* type_obj)
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_VAR:
+    default:
         SIC_UNREACHABLE();
     }
     Type* type = type_obj->type = CALLOC_STRUCT(Type);
@@ -186,8 +166,8 @@ static void declare_global_obj(Object* global)
        !analyze_main(global))
         return;
 
-    HashMap* priv = &g_sema.unit->priv_symbols;
-    HashMap* pub  = &g_sema.unit->module->public_symbols;
+    HashMap* priv = &g_sema->unit->priv_symbols;
+    HashMap* pub  = &g_sema->unit->module->public_symbols;
     Object* other = hashmap_get(priv, global->symbol);
     if(other == NULL)
         other = hashmap_get(pub, global->symbol);
@@ -203,8 +183,10 @@ static void declare_global_obj(Object* global)
 
 static void analyze_unit(CompUnit* unit)
 {
-    memset(&g_sema, 0, sizeof(SemaContext));
-    g_sema.unit = unit;
+    SemaContext* prev = g_sema;
+    SemaContext sema = {0};
+    g_sema = &sema;
+    g_sema->unit = unit;
 
     for(uint32_t i = 0; i < unit->types.size; ++i)
         analyze_type_obj(unit->types.data[i], NULL, RES_NORMAL, (SourceLoc){}, NULL);
@@ -214,12 +196,12 @@ static void analyze_unit(CompUnit* unit)
 
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
         analyze_function(unit->funcs.data[i]);
+    g_sema = prev;
 }
 
 static void analyze_function(Object* function)
 {
-    uint32_t scope = push_scope();
-    g_sema.cur_func = function;
+    g_sema->cur_func = function;
     ObjectDA* params = &function->func.signature->params;
     for(uint32_t i = 0; i < params->size; ++i)
         push_obj(params->data[i]);
@@ -227,8 +209,7 @@ static void analyze_function(Object* function)
     if(!analyze_stmt_block(function->func.body) && function->func.signature->ret_type->kind != TYPE_VOID)
         sic_error_at(function->loc, "Function does not return from all control paths.");
 
-    g_sema.cur_func = NULL;
-    pop_scope(scope);
+    g_sema->cur_func = NULL;
 }
 
 void analyze_global_var(Object* global_var)
@@ -242,21 +223,21 @@ void analyze_global_var(Object* global_var)
     }
 
     global_var->status = STATUS_RESOLVING;
-    bool prev = g_sema.in_global_init;
-    g_sema.in_global_init = true;
+    g_sema->in_global_init = true;
     if(global_var->var.initial_val == NULL || 
        !analyze_expr(&global_var->var.initial_val))
     {
         check_cyclic_def(global_var, global_var->loc);
         return;
     }
-    g_sema.in_global_init = prev;
+
     // TODO: Check that this is constant. Make a function that checks if an expression is constant,
     // because something like &global_var, is technically a constant expression.
     if(global_var->type->visibility < global_var->visibility)
         // TODO: Make this error print the actual visibility of both.
         sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");
 
+    global_var->status = STATUS_RESOLVED;
 }
 
 static bool analyze_main(Object* main)
@@ -310,7 +291,7 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     switch(stmt->kind)
     {
     case STMT_BLOCK: {
-        uint32_t scope;
+        uint32_t scope = 0;
         if(add_scope)
             scope = push_scope();
         stmt->always_returns = analyze_stmt_block(stmt->stmt.block.body);
@@ -382,13 +363,13 @@ static bool analyze_stmt_block(ASTStmt* stmt)
 
 static void analyze_break(ASTStmt* stmt)
 {
-    if(BIT_IS_UNSET(g_sema.block_context, BLOCK_BREAKABLE))
+    if(BIT_IS_UNSET(g_sema->block_context, BLOCK_BREAKABLE))
         sic_error_at(stmt->loc, "Cannot break in the current context.");
 }
 
 static void analyze_continue(ASTStmt* stmt)
 {
-    if(BIT_IS_UNSET(g_sema.block_context, BLOCK_CONTINUABLE))
+    if(BIT_IS_UNSET(g_sema->block_context, BLOCK_CONTINUABLE))
         sic_error_at(stmt->loc, "Cannot continue in the current context.");
 }
 
@@ -403,10 +384,10 @@ static void analyze_for(ASTStmt* stmt)
     if(for_stmt->loop_expr != NULL)
         analyze_expr(&for_stmt->loop_expr);
 
-    BlockContext context = g_sema.block_context;
-    g_sema.block_context |= BLOCK_LOOP;
+    BlockContext context = g_sema->block_context;
+    g_sema->block_context |= BLOCK_LOOP;
     analyze_stmt(for_stmt->body, false);
-    g_sema.block_context = context;
+    g_sema->block_context = context;
 
     pop_scope(scope);
 }
@@ -446,7 +427,7 @@ static void analyze_if(ASTStmt* stmt)
 static void analyze_return(ASTStmt* stmt)
 {
     ASTReturn* ret = &stmt->stmt.return_;
-    Type* ret_type = g_sema.cur_func->func.signature->ret_type;
+    Type* ret_type = g_sema->cur_func->func.signature->ret_type;
     if(ret->ret_expr != NULL)
     {
         if(ret_type->kind == TYPE_VOID)
@@ -455,7 +436,7 @@ static void analyze_return(ASTStmt* stmt)
                             "Function returning void should not return a value.");
             return;
         }
-        g_sema.ident_mask = IDENT_VAR_ONLY;
+        g_sema->ident_mask = IDENT_VAR_ONLY;
         implicit_cast(&ret->ret_expr, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
@@ -478,8 +459,8 @@ static void analyze_switch(ASTStmt* stmt)
     if(type_size(swi->expr->type) < 4)
         implicit_cast(&swi->expr, g_type_int);
 
-    BlockContext context = g_sema.block_context;
-    g_sema.block_context |= BLOCK_SWITCH;
+    BlockContext context = g_sema->block_context;
+    g_sema->block_context |= BLOCK_SWITCH;
     bool always_returns = true;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
@@ -517,17 +498,17 @@ static void analyze_switch(ASTStmt* stmt)
         pop_scope(scope);
     }
     stmt->always_returns = always_returns & has_default;
-    g_sema.block_context = context;
+    g_sema->block_context = context;
 }
 
 static void analyze_while(ASTStmt* stmt)
 {
     ASTWhile* while_stmt = &stmt->stmt.while_;
     implicit_cast(&while_stmt->cond, g_type_bool);
-    BlockContext context = g_sema.block_context;
-    g_sema.block_context |= BLOCK_LOOP; 
+    BlockContext context = g_sema->block_context;
+    g_sema->block_context |= BLOCK_LOOP; 
     analyze_stmt(while_stmt->body, true);
-    g_sema.block_context = context;
+    g_sema->block_context = context;
     if(while_stmt->cond->kind == EXPR_CONSTANT &&
        !while_stmt->cond->expr.constant.val.i)
     {
@@ -541,7 +522,7 @@ static void analyze_while(ASTStmt* stmt)
 static void analyze_declaration(ASTDeclaration* decl)
 {
     Type** type_ref = &decl->obj->type;
-    g_sema.ident_mask = IDENT_VAR_ONLY;
+    g_sema->ident_mask = IDENT_VAR_ONLY;
     if((*type_ref)->kind == TYPE_AUTO)
     {
         if(decl->init_expr == NULL)
@@ -580,7 +561,7 @@ static void analyze_swap(ASTStmt* stmt)
 
     if(!type_is_trivially_copyable(left->type))
     {
-        ObjFunc* func = &g_sema.cur_func->func;
+        ObjFunc* func = &g_sema->cur_func->func;
         func->swap_stmt_size = MAX(func->swap_stmt_size, type_size(left->type));
         func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }
@@ -599,7 +580,7 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
         break;
     case OBJ_STRUCT:
         if(type_obj->status == STATUS_RESOLVED) break;
-        if(g_sema.in_ptr || g_sema.in_typedef) break;
+        if(g_sema->in_ptr || g_sema->in_typedef) break;
         if(!analyze_struct_obj(type_obj)) goto ERR;
         break;
     case OBJ_TYPE_ALIAS:
@@ -609,7 +590,7 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
         SIC_TODO();
     case OBJ_UNION:
         if(type_obj->status == STATUS_RESOLVED) break;
-        if(g_sema.in_ptr || g_sema.in_typedef) break;
+        if(g_sema->in_ptr || g_sema->in_typedef) break;
         if(!analyze_union_obj(type_obj)) goto ERR;
         break;
     case OBJ_INVALID:
@@ -720,7 +701,7 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
         }
         return true;
     case STATUS_RESOLVING:
-        if(g_sema.in_typedef)
+        if(g_sema->in_typedef)
         {
             set_cyclic_def(type_obj);
             return false;
@@ -728,10 +709,10 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
         FALLTHROUGH;
     case STATUS_UNRESOLVED: {
         type_obj->status = STATUS_RESOLVING;
-        bool prev = g_sema.in_typedef;
-        g_sema.in_typedef = true;
+        bool prev = g_sema->in_typedef;
+        g_sema->in_typedef = true;
         bool success = resolve_type(&type_obj->type, RES_ALLOW_VOID, type_obj->loc, "Typedef cannot be assigned to type");
-        g_sema.in_typedef = prev;
+        g_sema->in_typedef = prev;
         if(!success)
         {
             check_cyclic_def(type_obj, type_obj->loc);
