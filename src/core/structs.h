@@ -31,7 +31,6 @@ typedef struct Lexer            Lexer;
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
 typedef struct TypeUnresolved   TypeUnresolved;
-typedef struct Object*          TypeUserdef;
 typedef struct Type             Type;
 
 // Dynamic Array Structs
@@ -53,7 +52,7 @@ typedef struct ASTExprCast      ASTExprCast;
 typedef union  ConstantValue    ConstantValue;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct InitListEntry    InitListEntry;
-typedef struct ASTExprInitList  ASTExprInitList;
+typedef struct InitList         InitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
@@ -186,6 +185,7 @@ struct Type
     Visibility    visibility;
     void*         llvm_ref;
     Type*         ptr_cache;
+    Type*         canonical;
 
     union
     {
@@ -196,7 +196,7 @@ struct Type
         Type*          pointer_base;
         ASTExpr*       type_of;
         TypeUnresolved unresolved;
-        TypeUserdef    user_def;
+        Object*        user_def;
     };
 };
 
@@ -289,11 +289,15 @@ struct ASTExprCast
 
 struct InitListEntry
 {
-    ASTExpr* arr_index;
+    union
+    {
+        ASTExpr* arr_index;
+        ASTExpr* member;
+    };
     ASTExpr* init_value;
 };
 
-struct ASTExprInitList
+struct InitList
 {
     InitListEntry* data;
     uint32_t       capacity;
@@ -302,14 +306,14 @@ struct ASTExprInitList
 
 union ConstantValue
 {
-    uint64_t        i;
-    double          f;
+    uint64_t   i;
+    double     f;
     struct
     {
-        char*       str;
-        size_t      str_len;
+        char*  str;
+        size_t str_len;
     };
-    ASTExprInitList list;
+    InitList   list;
 };
 
 struct ASTExprConstant
@@ -366,7 +370,7 @@ struct ASTExpr
         ASTExprCast     cast;
         ASTExprConstant constant;
         Object*         ident;
-        ASTExprInitList init_list;
+        InitList        init_list;
         ASTExprMAccess  member_access;
         ASTExprPreIdent pre_sema_ident;
         ASTExprTernary  ternary;
@@ -522,18 +526,20 @@ struct Object
     Type*         type;
     union
     {
-        ObjEnum      enum_;    // Components of enum typedef
-        ObjEnumValue enum_val; // Components of value in enum
-        ObjFunc      func;     // Components of function
-        ObjStruct    struct_;  // Components of bitfield, struct, or union
-        ObjVar       var;      // Components of variable
+        ObjEnum      enum_;      // Components of enum typedef
+        ObjEnumValue enum_val;   // Components of value in enum
+        ObjFunc      func;       // Components of function
+        ObjStruct    struct_;    // Components of bitfield, struct, or union
+        Type*        type_alias;
+        ObjVar       var;        // Components of variable
     };
 
 };
 
 struct SourceFile
 {
-    const char* path;
+    const char* abs_path;
+    const char* rel_path;
     const char* src;
     FileId      id;
 };

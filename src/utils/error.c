@@ -22,7 +22,7 @@ static const char* DIAG_NAME[] = {
     [DIAG_FATAL]   = "fatal error",
 };
 
-void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...)
+void sic_diagnostic(DiagnosticType diag, const char* message, ...)
 {
     va_list va;
     va_start(va, message);
@@ -30,7 +30,7 @@ void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...)
     va_end(va);
 }
 
-void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va)
+void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va)
 {
     SIC_ASSERT(message != NULL);
     if(g_args.werror && diag == DIAG_WARNING)
@@ -44,7 +44,7 @@ void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list 
         g_warning_cnt++;
 }
 
-void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict message, ...)
+void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* message, ...)
 {
     va_list va;
     va_start(va, message);
@@ -52,7 +52,7 @@ void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict 
     va_end(va);
 }
 
-void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va)
+void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message, va_list va)
 {
     SIC_ASSERT(message != NULL);
     if(g_args.werror && diag == DIAG_WARNING)
@@ -80,7 +80,7 @@ void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict
 
 
     fprintf(stderr, "%s:%u:%hhu \033[%sm%s:\033[0m ",
-            file->path, loc.line_num, loc.col_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
+            file->rel_path, loc.line_num, loc.col_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
     
     vfprintf(stderr, message, va);
 

@@ -42,7 +42,16 @@ def run_test(test_path, compiler_path, tmpdir):
     cfg_parser = configparser.ConfigParser()
     cfg_parser.read(test_path)
     action = cfg_parser['meta'].get('action', 'run')
-    should_pass = cfg_parser['meta'].get('behavior', 'success') == 'success'
+    bhvr = cfg_parser['meta'].get('behavior', 'pass')
+    should_pass = True
+    if bhvr == 'pass':
+        should_pass = True
+    elif bhvr == 'fail':
+        should_pass = False
+    else:
+        print(f'{test_name}: Test attribute \'behavior\' should only be either \'pass\' or \'fail\'')
+        return
+
     timeout = cfg_parser['meta'].getint('timeout', 10)
     source = test_path + '.si'
     if action == 'compile':
@@ -51,6 +60,9 @@ def run_test(test_path, compiler_path, tmpdir):
                                 stderr=subprocess.PIPE, timeout=timeout, text=True)
         return check_test_result(test_name=test_name, should_pass=should_pass,
                                  kind='compiler', proc_res=result)
+    elif action != 'run':
+        print(f'{test_name}: Test attribute \'action\' should only be either \'run\' or \'compile\'')
+        return
 
     cmd = [compiler_path, source, '-o', tmpdir + 'a.out']
     result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,

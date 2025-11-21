@@ -3,7 +3,7 @@
 
 ScratchBuffer g_scratch = {{0}, 0};
 
-void scratch_appendf(const char* restrict fmt, ...)
+void scratch_appendf(const char* fmt, ...)
 {
     va_list va;
     va_start(va, fmt);
@@ -14,7 +14,7 @@ void scratch_appendf(const char* restrict fmt, ...)
 
 }
 
-char* str_format(const char* restrict fmt, ...)
+char* str_format(const char* fmt, ...)
 {
     va_list va;
     va_start(va, fmt);

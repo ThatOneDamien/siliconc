@@ -33,7 +33,8 @@ struct SemaContext
 
 extern SemaContext* g_sema;
 
-void     analyze_global_var(Object* global_var);
+bool     analyze_global_var(Object* global_var);
+bool     analyze_function(Object* function);
 bool     analyze_expr_no_set(ASTExpr** expr_ref);
 bool     analyze_cast(ASTExpr* cast);
 bool     analyze_type_obj(Object* type_obj, Type** o_type, 
@@ -95,7 +96,6 @@ static inline bool obj_is_type(Object* obj)
     case OBJ_ENUM:
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
-    case OBJ_TYPE_DISTINCT:
     case OBJ_UNION:
         return true;
     }
@@ -118,4 +118,21 @@ static inline void check_cyclic_def(Object* other, SourceLoc loc)
         sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
     other->kind = OBJ_INVALID;
     other->status = STATUS_RESOLVED;
+}
+
+static inline Type* flatten_type(Type* type)
+{
+    while(true)
+    {
+        type = type->canonical; // Remove aliasing
+        switch(type->kind)
+        {
+        case TYPE_ALIAS_DISTINCT:
+            type = type->user_def->type_alias;
+            continue;
+        case TYPE_ENUM_DISTINCT:
+        default:
+            return type;
+        }
+    }
 }

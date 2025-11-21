@@ -137,11 +137,10 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
         sic_fatal_error("LLVM failed to create target machine, maybe check target triple?");
 
     SourceFile* file = file_from_id(unit->file);
-    c->module_ref = LLVMModuleCreateWithNameInContext(file->path, s_context);
-    LLVMSetSourceFileName(c->module_ref, file->path, strlen(file->path));
+    c->module_ref = LLVMModuleCreateWithNameInContext(file->rel_path, s_context);
+    LLVMSetSourceFileName(c->module_ref, file->rel_path, strlen(file->rel_path));
     LLVMSetModuleDataLayout(c->module_ref, LLVMCreateTargetDataLayout(c->target_machine));
     LLVMSetTarget(c->module_ref, target_triple);
-
     c->unit = unit;
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
         get_llvm_ref(c, unit->funcs.data[i]);
@@ -149,6 +148,7 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
     for(uint32_t i = 0; i < unit->vars.size; ++i)
     {
         Object* var = unit->vars.data[i];
+        if(var->var.kind == VAR_CONST) continue;
         get_llvm_ref(c, var);
         LLVMValueRef init_val = var->var.initial_val == NULL ? 
                                     emit_const_zero(c, var->type) : 
@@ -164,14 +164,14 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
 
     if(g_args.emit_ir)
     {
-        c->llvm_filename = convert_ext_to(file->path, FT_LLVM_IR);
+        c->llvm_filename = convert_ext_to(file->rel_path, FT_LLVM_IR);
         emit_llvm_ir(c);
     }
 
     if(g_args.mode == MODE_COMPILE)
     {
         c->asm_filename = g_args.output_file == NULL ? 
-                            convert_ext_to(file->path, FT_ASM) : 
+                            convert_ext_to(file->rel_path, FT_ASM) : 
                             g_args.output_file;
         emit_file(c, c->asm_filename, LLVMAssemblyFile);
         return;
@@ -179,7 +179,7 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
 
     if(g_args.emit_asm)
     {
-        c->asm_filename = convert_ext_to(file->path, FT_ASM);
+        c->asm_filename = convert_ext_to(file->rel_path, FT_ASM);
         emit_file(c, c->asm_filename, LLVMAssemblyFile);
     }
 
@@ -187,7 +187,7 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
         c->obj_filename = create_tempfile(FT_OBJ);
     else if(g_args.mode == MODE_ASSEMBLE)
         c->obj_filename = g_args.output_file == NULL ? 
-                            convert_ext_to(file->path, FT_OBJ) : 
+                            convert_ext_to(file->rel_path, FT_OBJ) : 
                             g_args.output_file;
 
     emit_file(c, c->obj_filename, LLVMObjectFile);
@@ -243,7 +243,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
     if(LLVMVerifyFunction(function->llvm_ref, LLVMPrintMessageAction))
     {
         LLVMDumpModule(c->module_ref);
-        fprintf(stderr, "\n");
+        putc('\n', stderr);
         sic_fatal_error("Failed.");
     }
 }
@@ -528,6 +528,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_ARRAY_ACCESS:
         emit_array_access(c, expr, &result);
         return result;
+    case EXPR_ARRAY_INIT_LIST:
+        SIC_TODO();
     case EXPR_BINARY:
         emit_binary(c, expr, &result);
         return result;
@@ -547,8 +549,6 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_IDENT:
         emit_ident(c, expr, &result);
         return result;
-    case EXPR_INITIALIZER_LIST:
-        SIC_TODO();
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
         return result;
@@ -557,6 +557,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         emit_incdec(c, expr, &inner, &result, true);
         return result;
     }
+    case EXPR_STRUCT_INIT_LIST:
+        SIC_TODO();
     case EXPR_TERNARY:
         emit_ternary(c, expr, &result);
         return result;
@@ -729,8 +731,7 @@ static void emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result)
     for(uint32_t i = 0; i < call->args.size; ++i)
     {
         GenValue temp = emit_expr(c, call->args.data[i]);
-        if(i >= func_type->func_ptr->params.size)
-            load_rvalue(c, &temp);
+        load_rvalue(c, &temp);
         args[i] = temp.value;
     }
     result->value = LLVMBuildCall2(c->builder, 
@@ -1094,7 +1095,7 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
 
 static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
 {
-    switch(type->kind)
+    switch(type->canonical->kind)
     {
     case TYPE_VOID:
     case INT_TYPES:
@@ -1106,14 +1107,15 @@ static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
         return LLVMConstPointerNull(c->ptr_type);
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:
-        SIC_TODO();
     case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
         return LLVMConstInt(get_llvm_type(c, type->user_def->enum_.underlying), 0, false);
     case TYPE_STRUCT:
-    case TYPE_TYPEDEF:
     case TYPE_UNION:
         SIC_TODO();
     case TYPE_INVALID:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
     case TYPE_STRING_LITERAL:
@@ -1172,7 +1174,7 @@ static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileTy
 
 static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
 {
-    switch(type->kind)
+    switch(type->canonical->kind)
     {
     case TYPE_VOID:
         return type->llvm_ref = LLVMVoidType();
@@ -1190,11 +1192,6 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_LONG:
     case TYPE_ULONG:
         return type->llvm_ref = LLVMInt64Type();
-    case TYPE_IPTR:
-    case TYPE_UPTR:
-    case TYPE_ISZ:
-    case TYPE_USZ:
-        return type->llvm_ref = LLVMIntType(type->builtin.bit_size);
     case TYPE_FLOAT:
         return type->llvm_ref = LLVMFloatType();
     case TYPE_DOUBLE:
@@ -1210,6 +1207,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
         if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->user_def->enum_.underlying);
     case TYPE_STRUCT: {
@@ -1227,8 +1225,6 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         LLVMStructSetBody(user->llvm_ref, element_types, user->struct_.members.size, false);
         return type->llvm_ref = user->llvm_ref;
     }
-    case TYPE_TYPEDEF:
-        SIC_TODO();
     case TYPE_UNION: {
         if(type->llvm_ref != NULL) return type->llvm_ref;
         Object* user = type->user_def;
@@ -1238,6 +1234,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = user->llvm_ref;
     }
     case TYPE_INVALID:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
     case TYPE_STRING_LITERAL:
@@ -1287,7 +1285,6 @@ static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
     case OBJ_ENUM:
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
-    case OBJ_TYPE_DISTINCT:
     case OBJ_UNION:
     case OBJ_INVALID:
         break;
@@ -1309,7 +1306,7 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     if(lvalue->kind == GEN_VAL_RVALUE)
         return;
     lvalue->kind = GEN_VAL_RVALUE;
-    switch(lvalue->type->kind)
+    switch(lvalue->type->canonical->kind)
     {
     case TYPE_BOOL:
         lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
@@ -1324,15 +1321,12 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_UINT:
     case TYPE_LONG:
     case TYPE_ULONG:
-    case TYPE_IPTR:
-    case TYPE_UPTR:
-    case TYPE_ISZ:
-    case TYPE_USZ:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
     case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
     case TYPE_STRUCT:
     case TYPE_UNION:
         lvalue->value = LLVMBuildLoad2(c->builder, get_llvm_type(c, lvalue->type), lvalue->value, "");
@@ -1342,12 +1336,13 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
         return;
     case TYPE_INVALID:
     case TYPE_VOID:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
     case TYPE_STRING_LITERAL:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
-    case TYPE_TYPEDEF:
     case __TYPE_COUNT:
         break;
     }

@@ -97,15 +97,15 @@ extern int g_error_cnt;
 extern int g_warning_cnt;
 
 PRINTF_FMT(2, 3)
-void sic_diagnostic(DiagnosticType diag, const char* restrict message, ...);
+void sic_diagnostic(DiagnosticType diag, const char* message, ...);
 PRINTF_FMT(3, 4)
-void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* restrict message, ...);
-void sic_diagnosticv(DiagnosticType diag, const char* restrict message, va_list va);
-void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* restrict message, va_list va);
+void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* message, ...);
+void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va);
+void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message, va_list va);
 void sic_error_redef(Object* redef, Object* orig);
 
 PRINTF_FMT(2, 3)
-static inline void sic_error_at(SourceLoc loc, const char* restrict message, ...)
+static inline void sic_error_at(SourceLoc loc, const char* message, ...)
 {
     va_list va;
     va_start(va, message);
@@ -114,7 +114,7 @@ static inline void sic_error_at(SourceLoc loc, const char* restrict message, ...
 }
 
 PRINTF_FMT(1, 2) NORETURN
-static inline void sic_fatal_error(const char* restrict message, ...)
+static inline void sic_fatal_error(const char* message, ...)
 {
     va_list va;
     va_start(va, message);
@@ -133,9 +133,9 @@ static inline void sic_fatal_error(const char* restrict message, ...)
 extern ScratchBuffer g_scratch;
 
 PRINTF_FMT(1, 2)
-void scratch_appendf(const char* restrict fmt, ...);
+void scratch_appendf(const char* fmt, ...);
 PRINTF_FMT(1, 2)
-char* str_format(const char* restrict fmt, ...);
+char* str_format(const char* fmt, ...);
 char* str_dupn(const char* str, size_t len);
 static inline char* str_dup(const char* str) { return str_dupn(str, strlen(str)); }
 

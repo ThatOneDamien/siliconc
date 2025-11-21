@@ -20,8 +20,7 @@ static ObjStack s_obj_stack = {
 
 void push_obj(Object* obj)
 {
-    if(obj->symbol == NULL)
-        return;
+    if(obj->symbol == NULL) return;
     for(uint32_t i = s_obj_stack.stack_bottom; i < s_obj_stack.stack_top; ++i)
     {
         Object* other = s_obj_stack.data[i];

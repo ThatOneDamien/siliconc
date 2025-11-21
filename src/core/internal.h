@@ -32,7 +32,9 @@ extern Type* const g_type_strlit;
 
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;
+
 extern Symbol   g_sym_len;
+extern Symbol   g_sym_main;
 
 void run_subprocess(const char** cmd);
 

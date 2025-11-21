@@ -64,6 +64,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_CONST]           = "const",
     [TOKEN_CONTINUE]        = "continue",
     [TOKEN_DEFAULT]         = "default",
+    [TOKEN_DISTINCT]        = "distinct",
     [TOKEN_ELSE]            = "else",
     [TOKEN_ENUM]            = "enum",
     [TOKEN_EXTERN]          = "extern",

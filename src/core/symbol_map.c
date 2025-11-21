@@ -30,6 +30,7 @@ static Symbol sym_map_internal_get(const char* str, uint32_t len, uint32_t hash,
 static SymbolMap s_sym_map;
 
 Symbol g_sym_len;
+Symbol g_sym_main;
 
 void sym_map_init(void)
 {
@@ -50,6 +51,7 @@ void sym_map_init(void)
 
     kind = TOKEN_IDENT;
     g_sym_len = SYM_ADD("len");
+    g_sym_main = SYM_ADD("main");
 }
 
 Symbol sym_map_addn(const char* str, uint32_t len, TokenKind* kind)

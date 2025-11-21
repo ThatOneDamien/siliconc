@@ -19,6 +19,7 @@ static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", glob
 
 int main(int argc, char* argv[])
 {
+    get_current_dir();
     global_arenas_init();
     process_args(argc, argv);
     

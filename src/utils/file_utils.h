@@ -1,6 +1,7 @@
 #pragma once
 #include "core/internal.h"
 
+void        get_current_dir();
 SourceFile* source_file_add_or_get(const char* path);
 const char* convert_ext_to(const char* path, FileType desired);
 bool        file_exists(const char* path);

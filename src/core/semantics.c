@@ -1,13 +1,9 @@
 #include "semantics.h"
 #include "utils/da.h"
 
-static void declare_type(Object* type_obj);
-static void declare_function(Object* function);
-static void declare_global_var(Object* var);
 static void declare_global_obj(Object* global);
-
+static void analyze_function_body(Object* function);
 static void analyze_unit(CompUnit* unit);
-static void analyze_function(Object* function);
 static bool analyze_main(Object* main);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
 static bool analyze_stmt_block(ASTStmt* stmt);
@@ -37,13 +33,14 @@ void semantic_declaration(CompUnit* unit)
     g_sema = &sema;
     sema.unit = unit;
     for(uint32_t i = 0; i < unit->types.size; ++i)
-        declare_type(unit->types.data[i]);
-
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        declare_function(unit->funcs.data[i]);
+        declare_global_obj(unit->types.data[i]);
 
     for(uint32_t i = 0; i < unit->vars.size; ++i)
-        declare_global_var(unit->vars.data[i]);
+        declare_global_obj(unit->vars.data[i]);
+
+    for(uint32_t i = 0; i < unit->funcs.size; ++i)
+        declare_global_obj(unit->funcs.data[i]);
+
     g_sema = prev;
 }
 
@@ -77,95 +74,8 @@ bool expr_is_lvalue(ASTExpr* expr)
     }
 }
 
-static void declare_type(Object* type_obj)
-{
-    declare_global_obj(type_obj);
-    TypeKind typekind;
-    switch(type_obj->kind)
-    {
-    case OBJ_BITFIELD:
-        SIC_TODO();
-    case OBJ_ENUM:
-        typekind = TYPE_ENUM;
-        break;
-    case OBJ_STRUCT:
-        typekind = TYPE_STRUCT;
-        break;
-    case OBJ_TYPE_ALIAS:
-    case OBJ_TYPE_DISTINCT:
-        return;
-    case OBJ_UNION:
-        typekind = TYPE_UNION;
-        break;
-    case OBJ_INVALID:
-    case OBJ_ALIAS_EXPR:
-    case OBJ_ENUM_VALUE:
-    case OBJ_FUNC:
-    case OBJ_VAR:
-    default:
-        SIC_UNREACHABLE();
-    }
-    Type* type = type_obj->type = CALLOC_STRUCT(Type);
-    type->kind = typekind;
-    type->visibility = type_obj->visibility;
-    type->user_def = type_obj;
-}
-
-static void declare_function(Object* function)
-{
-    declare_global_obj(function);
-    FuncSignature* sig = function->func.signature;
-    ObjectDA* params = &sig->params;
-    bool success = true;
-
-    if(resolve_type(&sig->ret_type, RES_ALLOW_VOID, function->loc, "Function cannot have return type") 
-       && sig->ret_type->visibility < function->visibility)
-    {
-        sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
-        success = false;
-    }
-
-    for(uint32_t i = 0; i < params->size; ++i)
-    {
-        Object* param = params->data[i];
-        if(!resolve_type(&param->type, RES_NORMAL, param->loc, "Parameter cannot be of type"))
-        {
-            param->kind = OBJ_INVALID;
-            success = false;
-            continue;
-        }
-        if(param->type->visibility < function->visibility)
-        {
-            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
-            success = false;
-            continue;
-        }
-    }
-
-    if(success)
-    {
-        function->type->visibility = function->visibility;
-        function->type->status = STATUS_RESOLVED;
-    }
-    else
-    {
-        function->kind = OBJ_INVALID;
-        function->type->kind = TYPE_INVALID;
-    }
-}
-
-static void declare_global_var(Object* var)
-{
-    declare_global_obj(var);
-    resolve_type(&var->type, RES_NORMAL, var->loc, "Variable cannot be of type");
-}
-
 static void declare_global_obj(Object* global)
 {
-    if(memcmp(global->symbol, "main", 4) == 0 &&
-       !analyze_main(global))
-        return;
-
     HashMap* priv = &g_sema->unit->priv_symbols;
     HashMap* pub  = &g_sema->unit->module->public_symbols;
     Object* other = hashmap_get(priv, global->symbol);
@@ -179,6 +89,12 @@ static void declare_global_obj(Object* global)
         hashmap_put(priv, global->symbol, global);
     else
         hashmap_put(pub, global->symbol, global);
+
+    if(global->symbol == g_sym_main && !analyze_main(global))
+    {
+        global->status = STATUS_RESOLVED;
+        global->kind = OBJ_INVALID;
+    }
 }
 
 static void analyze_unit(CompUnit* unit)
@@ -195,40 +111,129 @@ static void analyze_unit(CompUnit* unit)
         analyze_global_var(unit->vars.data[i]);
 
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        analyze_function(unit->funcs.data[i]);
+        analyze_function_body(unit->funcs.data[i]);
     g_sema = prev;
 }
 
-static void analyze_function(Object* function)
+bool analyze_function(Object* function)
 {
-    g_sema->cur_func = function;
-    ObjectDA* params = &function->func.signature->params;
-    for(uint32_t i = 0; i < params->size; ++i)
-        push_obj(params->data[i]);
-
-    if(!analyze_stmt_block(function->func.body) && function->func.signature->ret_type->kind != TYPE_VOID)
-        sic_error_at(function->loc, "Function does not return from all control paths.");
-
-    g_sema->cur_func = NULL;
-}
-
-void analyze_global_var(Object* global_var)
-{
-    if(global_var->status == STATUS_RESOLVED)
-        return;
-    else if(global_var->status == STATUS_RESOLVING)
+    if(function->status == STATUS_RESOLVED) return function->kind != OBJ_INVALID;
+    SIC_ASSERT(function->kind == OBJ_FUNC);
+    if(function->status == STATUS_RESOLVING)
     {
-        set_cyclic_def(global_var);
-        return;
+        set_cyclic_def(function);
+        return false;
+    }
+    FuncSignature* sig = function->func.signature;
+    Type* func_type = function->type;
+    ObjectDA* params = &sig->params;
+    bool success = true;
+    function->status = STATUS_RESOLVING;
+    g_sema->in_global_init = true;
+
+    if(!resolve_type(&sig->ret_type, RES_ALLOW_VOID, function->loc, "Function cannot have return type"))
+    {
+        check_cyclic_def(function, function->loc);
+        success = false;
+    }
+    else
+    {
+        func_type->visibility = sig->ret_type->visibility;
+        if(sig->ret_type->visibility < function->visibility)
+        {
+            sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
+            success = false;
+        }
     }
 
-    global_var->status = STATUS_RESOLVING;
+
+    for(uint32_t i = 0; i < params->size; ++i)
+    {
+        Object* param = params->data[i];
+        if(!resolve_type(&param->type, RES_NORMAL, param->loc, "Parameter cannot be of type"))
+        {
+            check_cyclic_def(param, param->loc);
+            success = false;
+            continue;
+        }
+        if(param->type->visibility < func_type->visibility)
+            func_type->visibility = param->type->visibility;
+        if(param->type->visibility < function->visibility)
+        {
+            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
+            success = false;
+            continue;
+        }
+    }
+
+    function->status = STATUS_RESOLVED;
+    func_type->status = STATUS_RESOLVED;
+
+    if(!success)
+    {
+        function->kind = OBJ_INVALID;
+        func_type->kind = TYPE_INVALID;
+    }
+
+    return success;
+}
+
+static void analyze_function_body(Object* function)
+{
+    if(!analyze_function(function)) return;
+
+    g_sema->in_global_init = false;
+    FuncSignature* sig = function->func.signature;
+    ObjectDA* params = &sig->params;
+
+    uint32_t scope = push_scope();
+    for(uint32_t i = 0; i < params->size; ++i)
+    {
+        Object* param = params->data[i];
+        push_obj(param);
+    }
+
+
+    ASTStmt* body = function->func.body;
+    g_sema->cur_func = function;
+    if(body != NULL && !analyze_stmt_block(body->stmt.block.body) && 
+       sig->ret_type->kind != TYPE_VOID)
+    {
+        sic_error_at(function->loc, "Function does not return from all control paths.");
+    }
+    g_sema->cur_func = NULL;
+    pop_scope(scope);
+}
+
+bool analyze_global_var(Object* global_var)
+{
+    if(global_var->status == STATUS_RESOLVED) return global_var->kind != OBJ_INVALID;
+    SIC_ASSERT(global_var->kind == OBJ_VAR);
+    if(global_var->status == STATUS_RESOLVING)
+    {
+        set_cyclic_def(global_var);
+        return false;
+    }
+
     g_sema->in_global_init = true;
-    if(global_var->var.initial_val == NULL || 
-       !analyze_expr(&global_var->var.initial_val))
+    global_var->status = STATUS_RESOLVING;
+
+    if(!resolve_type(&global_var->type, RES_NORMAL, global_var->loc, "Variable cannot be of type"))
     {
         check_cyclic_def(global_var, global_var->loc);
-        return;
+        global_var->kind = OBJ_INVALID;
+        global_var->status = STATUS_RESOLVED;
+        return false;
+    }
+
+    if(global_var->var.initial_val != NULL)
+    {
+        if(!analyze_expr(&global_var->var.initial_val))
+        {
+            check_cyclic_def(global_var, global_var->loc);
+            return false;
+        }
+
     }
 
     // TODO: Check that this is constant. Make a function that checks if an expression is constant,
@@ -238,6 +243,7 @@ void analyze_global_var(Object* global_var)
         sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");
 
     global_var->status = STATUS_RESOLVED;
+    return true;
 }
 
 static bool analyze_main(Object* main)
@@ -272,7 +278,7 @@ static bool analyze_main(Object* main)
         if(second->kind != TYPE_POINTER)
             goto BAD_SIG;
         second = second->pointer_base;
-        if(second->kind != TYPE_UBYTE)
+        if(second->kind != TYPE_CHAR)
             goto BAD_SIG;
     }
 
@@ -282,7 +288,7 @@ static bool analyze_main(Object* main)
 BAD_SIG:
     sic_error_at(main->loc, "The signature of the main function is invalid. "
                             "The return type should be 'int' or 'void', with "
-                            "optional parameters 'int, ubyte**'.");
+                            "optional parameters 'int, char**'.");
     return false;
 }
 
@@ -428,6 +434,8 @@ static void analyze_return(ASTStmt* stmt)
 {
     ASTReturn* ret = &stmt->stmt.return_;
     Type* ret_type = g_sema->cur_func->func.signature->ret_type;
+    stmt->always_returns = true;
+    if(ret_type->kind == TYPE_INVALID) return;
     if(ret->ret_expr != NULL)
     {
         if(ret_type->kind == TYPE_VOID)
@@ -442,7 +450,6 @@ static void analyze_return(ASTStmt* stmt)
     else if(ret_type->kind != TYPE_VOID)
         sic_error_at(stmt->loc, "Function returning non-void should return a value.");
 
-    stmt->always_returns = true;
 }
 
 static void analyze_switch(ASTStmt* stmt)
@@ -586,8 +593,6 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
     case OBJ_TYPE_ALIAS:
         if(!analyze_type_alias(type_obj, o_type, flags, err_loc, err_str)) goto ERR;
         return true;
-    case OBJ_TYPE_DISTINCT:
-        SIC_TODO();
     case OBJ_UNION:
         if(type_obj->status == STATUS_RESOLVED) break;
         if(g_sema->in_ptr || g_sema->in_typedef) break;
@@ -711,7 +716,7 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
         type_obj->status = STATUS_RESOLVING;
         bool prev = g_sema->in_typedef;
         g_sema->in_typedef = true;
-        bool success = resolve_type(&type_obj->type, RES_ALLOW_VOID, type_obj->loc, "Typedef cannot be assigned to type");
+        bool success = resolve_type(&type_obj->type_alias, RES_ALLOW_VOID, type_obj->loc, "Typedef cannot be assigned to type");
         g_sema->in_typedef = prev;
         if(!success)
         {
@@ -719,6 +724,8 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
             return false;
         }
         type_obj->status = STATUS_RESOLVED;
+        type_obj->type->status = STATUS_RESOLVED;
+        type_obj->type->canonical = type_obj->type->kind == TYPE_ALIAS ? type_obj->type_alias->canonical : type_obj->type;
         if(o_type != NULL)
         {
             *o_type = type_obj->type;

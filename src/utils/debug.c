@@ -39,7 +39,7 @@ void print_unit(const CompUnit* unit)
 {
     SIC_ASSERT(unit != NULL);
     printf("Compilation Unit: \'%s\' (%u Funcs, %u Global Vars)\n", 
-           file_from_id(unit->file)->path, 
+           file_from_id(unit->file)->rel_path, 
            unit->funcs.size, unit->vars.size);
     for(uint32_t i = 0; i < unit->funcs.size; ++i)
         print_func(unit->funcs.data[i]);
@@ -195,8 +195,6 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     case EXPR_CONSTANT:
         print_constant(expr);
         return;
-    case EXPR_DEFAULT:
-        SIC_TODO();
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type));
         print_expr_at_depth(expr->expr.call.func_expr, depth + 1, NULL);
@@ -218,8 +216,6 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
             SIC_UNREACHABLE();
         }
     }
-    case EXPR_INITIALIZER_LIST:
-        SIC_TODO();
     case EXPR_INVALID:
         printf("Invalid ]\n");
         return;
@@ -243,8 +239,6 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.ternary.then_expr, depth + 1, "then");
         print_expr_at_depth(expr->expr.ternary.else_expr, depth + 1, "else");
         return;
-    case EXPR_TYPE_IDENT:
-        SIC_TODO();
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type));
@@ -260,10 +254,9 @@ UNRESOLVED_ARR:
         PRINT_DEPTH(depth + 1);
         printf("member: ( %s )\n", expr->expr.unresolved_access.member_sym);
         return;
-    case EXPR_CT_SIZEOF:
+    default:
         SIC_TODO();
     }
-    SIC_UNREACHABLE();
 }
 
 static void print_constant(const ASTExpr* expr)

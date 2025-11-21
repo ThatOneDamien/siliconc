@@ -31,11 +31,19 @@ static FTStorage s_ft_to_ext[] = {
     [FT_SHARED]  = { ".so", 3 }, 
 };
 
+static char s_cwd[PATH_MAX];
 static StringDA s_tempfiles = {0};
 
 static inline const char* ft_to_extension(FileType ft, size_t* len);
 static void get_name_and_ext(const char* path, const char** name, 
-                                 const char** ext, const char** end);
+                             const char** ext, const char** end);
+static const char* normalize_rel_path(const char* abs_path);
+
+void get_current_dir()
+{
+    if(getcwd(s_cwd, PATH_MAX) == NULL)
+        sic_fatal_error("Failed to get current working directory.");
+}
 
 SourceFile* source_file_add_or_get(const char* path)
 {
@@ -48,13 +56,14 @@ SourceFile* source_file_add_or_get(const char* path)
     for(uint32_t i = 0; i < g_compiler.sources.size; ++i)
     {
         SourceFile* file = g_compiler.sources.data + i;
-        if(strcmp(abs_path, file->path) == 0)
+        if(strcmp(abs_path, file->abs_path) == 0)
             return file;
     }
 
     da_reserve(&g_compiler.sources, g_compiler.sources.size + 1);
     SourceFile* file = g_compiler.sources.data + g_compiler.sources.size;
-    file->path = str_dup(abs_path);
+    file->abs_path = str_dup(abs_path);
+    file->rel_path = normalize_rel_path(abs_path);
     file->src  = NULL;
     file->id   = g_compiler.sources.size;
     g_compiler.sources.size++;
@@ -196,4 +205,56 @@ static void get_name_and_ext(const char* path, const char** name,
     *ext = file_ext;
     if(end != NULL)
         *end = file_end;
+}
+
+static const char* normalize_rel_path(const char* abs_path)
+{
+    char temp[PATH_MAX];
+    const char* abs_last = abs_path;
+    const char* cwd_last = s_cwd;
+    const char* cwd_cur  = s_cwd;
+    while(true)
+    {
+        char cwd = *cwd_cur;
+        char abs = *abs_path;
+        if(cwd == '\0')
+        {
+            SIC_ASSERT(abs != '\0');
+            if(abs == '/')
+                return abs_path + 1;
+            break;
+        }
+        if(abs == '\0')
+        {
+            if(cwd == '/')
+            {
+                abs_last = abs_path;
+                cwd_last = cwd_cur;
+            }
+            break;
+        }
+        if(abs != cwd)
+            break;
+        if(cwd == '/')
+        {
+            abs_last = abs_path + 1;
+            cwd_last = cwd_cur;
+        }
+        cwd_cur++;
+        abs_path++;
+    }
+    
+    char* t = temp;
+    while(*cwd_last != '\0')
+    {
+        if(*cwd_last == '/')
+        {
+            t[0] = '.';
+            t[1] = '.';
+            t[2] = '/';
+            t += 3;
+        }
+    }
+    strcpy(t, abs_last);
+    return str_dup(temp);
 }

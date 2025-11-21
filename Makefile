@@ -22,7 +22,7 @@ release: $(BUILD_DIR)/sic
 all: debug release
 
 test: debug
-	$(BUILD_DIR)/sicdb test/test.si
+	python3 tests/run_tests.py
 
 clean:
 	rm -rf $(BUILD_DIR)

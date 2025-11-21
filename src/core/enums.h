@@ -51,6 +51,7 @@ typedef enum : int8_t
     CAST_GROUP_ENUM,
     CAST_GROUP_STRUCT,
     CAST_GROUP_STRLIT,
+    CAST_GROUP_DISTINCT,
     __CAST_GROUP_COUNT,
 } CastGroup;
 
@@ -118,16 +119,17 @@ typedef enum : uint8_t
     EXPR_INVALID = 0,
     
     EXPR_ARRAY_ACCESS,
+    EXPR_ARRAY_INIT_LIST,
     EXPR_BINARY,
     EXPR_CAST,
     EXPR_CONSTANT,
     EXPR_DEFAULT,
     EXPR_FUNC_CALL,
     EXPR_IDENT,
-    EXPR_INITIALIZER_LIST,
     EXPR_MEMBER_ACCESS,
     EXPR_POSTFIX,
     EXPR_PRE_SEMANTIC_IDENT,
+    EXPR_STRUCT_INIT_LIST,
     EXPR_TERNARY,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
@@ -180,7 +182,6 @@ typedef enum : uint8_t
     OBJ_FUNC,
     OBJ_STRUCT,
     OBJ_TYPE_ALIAS,
-    OBJ_TYPE_DISTINCT,
     OBJ_UNION,
     OBJ_VAR,
 } ObjKind;
@@ -320,6 +321,7 @@ typedef enum : uint8_t
     TOKEN_CONST,
     TOKEN_CONTINUE,
     TOKEN_DEFAULT,
+    TOKEN_DISTINCT,
     TOKEN_ELSE,
     TOKEN_ENUM,
     TOKEN_EXTERN,
@@ -395,11 +397,7 @@ typedef enum : uint8_t
     TYPE_UINT,
     TYPE_LONG,
     TYPE_ULONG,
-    TYPE_IPTR,
-    TYPE_UPTR,
-    TYPE_ISZ,
-    TYPE_USZ,
-    TYPE_INTEGER_END    = TYPE_USZ,
+    TYPE_INTEGER_END    = TYPE_ULONG,
 
     TYPE_FLOAT,
     TYPE_FLOAT_START    = TYPE_FLOAT,
@@ -413,10 +411,12 @@ typedef enum : uint8_t
     TYPE_STATIC_ARRAY,
     TYPE_RUNTIME_ARRAY,
 
+    TYPE_ALIAS,
+    TYPE_USER_DEF_START = TYPE_ALIAS,
+    TYPE_ALIAS_DISTINCT,
     TYPE_ENUM,
-    TYPE_USER_DEF_START = TYPE_ENUM,
+    TYPE_ENUM_DISTINCT,
     TYPE_STRUCT,
-    TYPE_TYPEDEF,
     TYPE_UNION,
     TYPE_USER_DEF_END   = TYPE_UNION,
 
@@ -447,6 +447,7 @@ typedef enum : uint8_t
     VAR_INVALID = 0,
     VAR_GLOBAL,
     VAR_LOCAL,
+    VAR_CONST,
     VAR_PARAM,
     VAR_MEMBER,
 } VarKind;
@@ -461,11 +462,7 @@ typedef enum : uint8_t
             case TYPE_INT:    \
             case TYPE_UINT:   \
             case TYPE_LONG:   \
-            case TYPE_ULONG:  \
-            case TYPE_IPTR:   \
-            case TYPE_UPTR:   \
-            case TYPE_ISZ:    \
-            case TYPE_USZ
+            case TYPE_ULONG
                 
 #define FLOAT_TYPES           \
             TYPE_FLOAT:       \

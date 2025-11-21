@@ -7,6 +7,7 @@
 
 // Expr kind functions
 static bool analyze_array_access(ASTExpr* expr);
+static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
 static bool analyze_ident(ASTExpr** expr_ref);
@@ -49,6 +50,8 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
     {
     case EXPR_ARRAY_ACCESS:
         return analyze_array_access(expr);
+    case EXPR_ARRAY_INIT_LIST:
+        return analyze_array_init_list(expr);
     case EXPR_BINARY:
         return analyze_binary(expr);
     case EXPR_CAST:
@@ -57,13 +60,15 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
         ERROR_AND_RET(expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
-    case EXPR_INITIALIZER_LIST:
-        ERROR_AND_RET(expr->loc, "Initializer list not allowed in this context.");
     case EXPR_POSTFIX:
         return analyze_expr(&expr->expr.unary.inner) && 
                analyze_incdec(expr, expr->expr.unary.inner);
     case EXPR_PRE_SEMANTIC_IDENT:
         return analyze_ident(expr_ref);
+    case EXPR_STRUCT_INIT_LIST:
+        break;
+    case EXPR_TERNARY:
+        return analyze_ternary(expr);
     case EXPR_UNARY:
         return analyze_unary(expr_ref);
     case EXPR_UNRESOLVED_ARR:
@@ -74,8 +79,6 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
         return resolve_type(&expr->type, RES_NORMAL, expr->loc, "Constant cannot be of type");
     case EXPR_INVALID:
         return false;
-    case EXPR_TERNARY:
-        return analyze_ternary(expr);
     case EXPR_CT_SIZEOF:
         return analyze_ct_sizeof(expr);
     case EXPR_IDENT:
@@ -88,14 +91,15 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
 
 static bool analyze_array_access(ASTExpr* expr)
 {
+    ASTExprAAccess* access = &expr->expr.array_access;
     bool valid = true;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.array_expr);
+    ANALYZE_EXPR_SET_VALID(&access->array_expr);
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&expr->expr.array_access.index_expr);
+    ANALYZE_EXPR_SET_VALID(&access->index_expr);
     IF_INVALID_RET();
-    ASTExpr* arr = expr->expr.array_access.array_expr;
-    ASTExpr* index = expr->expr.array_access.index_expr;
+    ASTExpr* arr = access->array_expr;
+    ASTExpr* index = access->index_expr;
 
     if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
     {
@@ -114,6 +118,37 @@ static bool analyze_array_access(ASTExpr* expr)
 
     expr->type = type_pointer_base(arr->type);
     return true;
+}
+
+static bool analyze_array_init_list(ASTExpr* expr)
+{
+    InitList* list = &expr->expr.init_list;
+    bool valid = true;
+    bool is_constant = true;
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        InitListEntry* entry = list->data + i;
+        if(entry->arr_index != NULL)
+        {
+            g_sema->ident_mask = IDENT_VAR_ONLY;
+            if(!implicit_cast(&entry->arr_index, g_type_ulong))
+                valid = false;
+            else if(entry->arr_index->kind != EXPR_CONSTANT)
+            {
+                sic_error_at(entry->arr_index->loc, "Array index must be a constant value.");
+                valid = false;
+            }
+        }
+        g_sema->ident_mask = IDENT_VAR_ONLY;
+        if(!analyze_expr(&entry->init_value))
+            valid = false;
+        else if(is_constant && entry->init_value->kind == EXPR_CONSTANT)
+        {
+
+        }
+    }
+
+    return valid;
 }
 
 static inline bool analyze_binary(ASTExpr* expr)
@@ -253,6 +288,7 @@ static bool analyze_ident(ASTExpr** expr_ref)
     case OBJ_FUNC:
         if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_FUNC))
             ERROR_AND_RET(expr->loc, "Function identifier not allowed here, if you want the pointer use '&' before.");
+        if(!analyze_function(ident)) return false;
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
@@ -267,24 +303,22 @@ static bool analyze_ident(ASTExpr** expr_ref)
         return true;
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
-    case OBJ_TYPE_DISTINCT:
     case OBJ_UNION:
         ERROR_AND_RET(expr->loc, "Type identifier not allowed in this context, expected expression.");
     case OBJ_VAR:
-
-        if(g_sema->in_global_init && ident->var.kind == VAR_GLOBAL)
+        if(ident->var.kind == VAR_CONST)
         {
             analyze_global_var(ident);
             if(ident->kind == OBJ_INVALID)
                 return false;
 
         }
+        if(g_sema->in_global_init && ident->var.kind == VAR_GLOBAL &&
+           !analyze_global_var(ident))
+        {
+            return false;
+        }
 
-        // if(ident->attribs & ATTR_CONST)
-        // {
-        //     *expr_ref = ident->var.initial_val;
-        //     return true;
-        // }
 
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
@@ -359,7 +393,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     Symbol member = uaccess->member_sym;
     SIC_ASSERT(parent->type->status == STATUS_RESOLVED);
-    switch(parent->type->kind)
+    switch(parent->type->canonical->kind)
     {
     case TYPE_STATIC_ARRAY:
         if(member == g_sym_len)
@@ -372,8 +406,6 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
         }
         break;
     case TYPE_RUNTIME_ARRAY:
-    case TYPE_ENUM:
-        SIC_TODO();
     case TYPE_STRUCT:
     case TYPE_UNION: {
         ObjectDA* members = &parent->type->user_def->struct_.members;
@@ -394,9 +426,12 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case FLOAT_TYPES:
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
         break;
     case TYPE_INVALID:
-    case TYPE_TYPEDEF:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
     case TYPE_STRING_LITERAL:

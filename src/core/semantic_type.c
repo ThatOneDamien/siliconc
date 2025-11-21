@@ -51,9 +51,11 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         if(!resolve_type(&type->array.elem_type, RES_NORMAL, err_loc, "")) break;
         type->status = type->array.elem_type->status;
         return true;
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
     case TYPE_STRUCT:
-    case TYPE_TYPEDEF:
     case TYPE_UNION:
         if(type->status == STATUS_RESOLVED) return true;
         if(!analyze_type_obj(type->user_def, type_ref, flags, err_loc, err_str)) break;
@@ -133,6 +135,7 @@ static bool resolve_func_ptr(Type* func_ty, SourceLoc err_loc)
 
 static bool resolve_typeof(Type** type_ref, Type* typeof)
 {
+    g_sema->ident_mask = IDENT_FUNC;
     if(!analyze_expr(&typeof->type_of))
         return false;
     *type_ref = typeof->type_of->type;
