@@ -49,6 +49,8 @@ SourceFile* source_file_add_or_get(const char* path)
 {
     SIC_ASSERT(path != NULL);
 
+    bool is_abs = path[0] == '/';
+
     char abs_path[PATH_MAX];
     if(realpath(path, abs_path) == NULL)
         sic_fatal_error("Failed to resolve path '%s'. (Errno %d: %s)", path, errno, strerror(errno));
@@ -63,7 +65,7 @@ SourceFile* source_file_add_or_get(const char* path)
     da_reserve(&g_compiler.sources, g_compiler.sources.size + 1);
     SourceFile* file = g_compiler.sources.data + g_compiler.sources.size;
     file->abs_path = str_dup(abs_path);
-    file->rel_path = normalize_rel_path(abs_path);
+    file->rel_path = is_abs ? file->abs_path : normalize_rel_path(abs_path);
     file->src  = NULL;
     file->id   = g_compiler.sources.size;
     g_compiler.sources.size++;
@@ -254,6 +256,7 @@ static const char* normalize_rel_path(const char* abs_path)
             t[2] = '/';
             t += 3;
         }
+        cwd_last++;
     }
     strcpy(t, abs_last);
     return str_dup(temp);

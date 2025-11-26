@@ -1,0 +1,23 @@
+/// test:   valid
+/// action: compile
+/// result: pass
+typedef A1 = B;
+typedef A2 = B*;
+struct B
+{
+    A1* a1;
+    A2  a2;
+}
+
+typedef C = int;
+struct D
+{
+    C  c1;
+    C* c2;
+}
+
+/// test:   cyclic
+/// action: compile
+/// result: fail
+typedef A = B;
+typedef B = A;

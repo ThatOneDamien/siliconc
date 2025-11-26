@@ -1,0 +1,11 @@
+/// test:   valid1
+/// action: compile
+/// result: pass
+int  a = 0; 
+int* b = &a;
+
+/// test:   valid2
+/// action: compile
+/// result: pass
+int     a = 0;
+int*[2] b = [ &a, &a ];

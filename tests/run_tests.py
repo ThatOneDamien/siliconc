@@ -6,74 +6,193 @@ import pathlib
 import argparse
 import tempfile
 import shutil
-import configparser
+import re
 
 TEST_ROOT = pathlib.Path(__file__).parent
 
-def print_fail(test_name, message):
-    print(f'\033[31m[FAIL]\033[0m {test_name}: {message}')
 
-def print_pass(test_name, message):
+class TestMeta:
+    name: str
+    source: str
+    action: str
+    should_pass: bool 
+    timeout: int
+
+    def __init__(self):
+        self.name = None
+        self.source = None
+        self.action = 'compile'
+        self.should_pass = True
+        self.timeout = 10
+
+class TestResult:
+    passed: bool
+    message: str
+    details: str | None
+
+class TestRunner:
+    def __init__(self):
+        self.tests_passed = 0
+        self.test_count = 0
+
+
+    def print_results(self):
+        print('\n******** Result *********')
+        completion_str = f'Completed {self.test_count} test(s)'
+        pass_fail_str = f'\033[31m{self.test_count - self.tests_passed}\033[0m failed, \033[32m{self.tests_passed}\033[0m passed.'
+        if self.test_count == self.tests_passed:
+            print_pass(completion_str, pass_fail_str)
+        else:
+            print_fail(completion_str, pass_fail_str)
+
+
+    def run_test_file(self, test_path: str, compiler_path: str, tmpdir):
+        tests = parse_test_file(test_path)
+        test_prefix = test_path[test_path.rfind('/') + 1:] + ':'
+        for test in tests:
+            self.test_count += 1
+            result = self.run_test(test, compiler_path, tmpdir)
+            if result.passed:
+                self.tests_passed += 1
+                print_pass(test_prefix + test.name, result.message)
+            else:
+                print_fail(test_prefix + test.name, result.message, result.details)
+
+
+    def run_test(self, test: TestMeta, compiler_path: str, tmpdir):
+        # Create tempfile with extracted source
+        source_file = pathlib.Path(tmpdir) / (test.name + '.si')
+        with open(source_file, 'w', encoding='utf-8') as f:
+            f.write(test.source)
+
+        # Check compile only test
+        if test.action == 'compile':
+            out_obj = pathlib.Path(tmpdir) / 'a.o'
+            cmd = [compiler_path, '-s', source_file, '-o', out_obj]
+            result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, timeout=test.timeout, text=True)
+            return check_test_result(should_pass=test.should_pass, kind='compiler', proc_res=result)
+
+        # --- Compiling and Running ---
+
+        # Compile first
+        out_exe = pathlib.Path(tmpdir) / 'a.out'
+        cmd = [compiler_path, test.source, '-o', out_exe]
+        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=test.timeout, text=True)
+        test_result = check_test_result(should_pass=True, kind='compiler', proc_res=result)
+        if not test_result.passed:
+            return test_result
+
+        # Compilation succeeded, now run
+        result = subprocess.run([out_exe], check=False, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=test.timeout, text=True)
+        return check_test_result(should_pass=test.should_pass,
+                                 kind='runtime', proc_res=result)
+
+
+def print_fail(test_name: str, message: str, details: str | None = None):
+    print(f'\033[31m[FAIL]\033[0m {test_name}: {message}')
+    if details:
+        print('\n---- Details ----\n')
+        print(details)
+        print('-----------------\n')
+
+
+def print_pass(test_name: str, message: str):
     print(f'\033[32m[PASS]\033[0m {test_name}: {message}')
 
-def check_test_result(test_name, should_pass, kind, proc_res):
-    result = True
+
+
+def check_test_result(should_pass: bool, kind: str, proc_res):
+    result = TestResult()
     rc = proc_res.returncode
-    if rc != 0 and rc != 1: # Unknown exit 
-        print_fail(test_name, f'{kind} encountered an unknown error/signal (Code: {rc})')
-        result = False
-    elif should_pass:
-        if proc_res.returncode == 0:
-            print_pass(test_name, f'{kind} finished successfully.')
+    if rc == 0:
+        if should_pass:
+            result.passed  = True
+            result.message = f'{kind} finished successfully.'
         else:
-            print_fail(test_name, f'{kind} unexpectedly failed.')
-            result = False
+            result.passed  = False
+            result.message = f'{kind} unexpectedly finished.'
+    elif rc == 1:
+        if should_pass:
+            result.passed  = False
+            result.message = f'{kind} unexpectedly failed.'
+            result.details = proc_res.stderr
+        else:
+            result.passed  = True
+            result.message = f'{kind} failed as expected.'
     else:
-        if proc_res.returncode == 1:
-            print_pass(test_name, f'{kind} failed as expected.')
-        else:
-            print_fail(test_name, f'{kind} unexpectedly finished.')
-            result = False
+        result.passed  = False
+        result.message = f'{kind} encountered an unknown error/signal (Code: {rc})'
+        result.details = proc_res.stderr
+
     return result
 
 
-def run_test(test_path, compiler_path, tmpdir):
-    test_name = test_path[test_path.rfind('/') + 1:]
-    cfg_parser = configparser.ConfigParser()
-    cfg_parser.read(test_path)
-    action = cfg_parser['meta'].get('action', 'run')
-    bhvr = cfg_parser['meta'].get('behavior', 'pass')
-    should_pass = True
-    if bhvr == 'pass':
-        should_pass = True
-    elif bhvr == 'fail':
-        should_pass = False
-    else:
-        print(f'{test_name}: Test attribute \'behavior\' should only be either \'pass\' or \'fail\'')
-        return
+def parse_test_file(test_path: str):
+    tests = []
+    test_set = set()
+    with open(test_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
 
-    timeout = cfg_parser['meta'].getint('timeout', 10)
-    source = test_path + '.si'
-    if action == 'compile':
-        cmd = [compiler_path, '-s', source, '-o', tmpdir + 'a.o']
-        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=timeout, text=True)
-        return check_test_result(test_name=test_name, should_pass=should_pass,
-                                 kind='compiler', proc_res=result)
-    elif action != 'run':
-        print(f'{test_name}: Test attribute \'action\' should only be either \'run\' or \'compile\'')
-        return
+    i = 0
+    while i < len(lines):
+        meta = TestMeta()
+        start = i
 
-    cmd = [compiler_path, source, '-o', tmpdir + 'a.out']
-    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout, text=True)
-    if not check_test_result(test_name, True, 'compiler', result):
-        return False
-    cmd = [tmpdir + 'a.out']
-    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=timeout, text=True)
-    return check_test_result(test_name=test_name, should_pass=should_pass,
-                             kind='runtime', proc_res=result)
+        # Collect metadata lines starting with ///
+        while i < len(lines) and lines[i].startswith('///'):
+            m = re.match(r'^(\w+)\s*:\s*"?([^"]+)"?$', lines[i][3:].strip())
+            if m:
+                key, value = m.groups()
+                key = key.lower()
+                value = value.lower()
+                if key == 'test':
+                    meta.name = value
+                elif key == 'action':
+                    if not value in ('compile', 'run'):
+                        print(f'{test_path}:{i}: Test attribute \'action\' should only be either \'run\' or \'compile\'')
+                        sys.exit(1)
+                    meta.action = value
+                elif key == 'result':
+                    if not value in ('pass', 'fail'):
+                        print(f'{test_path}:{i}: Test attribute \'result\' should only be either \'pass\' or \'fail\'')
+                        sys.exit(1)
+                    meta.should_pass = value == 'pass'
+                elif key == 'timeout':
+                    meta.timeout = int(value)
+                else:
+                    print(f'{test_path}:{i}: Unrecognized test meta field \'{key}\', ignoring')
+            i += 1
+
+        # Skip empty lines between metadata and source
+        while i < len(lines) and lines[i].strip() == '':
+            i += 1
+
+        # Collect source until next metadata block or EOF
+        source_lines = []
+        while i < len(lines) and not lines[i].startswith('///'):
+            source_lines.append(lines[i].rstrip('\n'))
+            i += 1
+
+        meta.source = '\n'.join(source_lines).strip()
+
+        if not meta.name:
+            print(f'{test_path}:{start}: Test is missing a name')
+            sys.exit(1)
+        if not meta.source:
+            print(f'{test_path}:{start}: Test \'{meta.name}\' has no source code')
+            sys.exit(1)
+
+        # Check for duplicate test names
+        if meta.name in test_set:
+            print(f'{test_path}:{start}: Duplicate test case name \'{meta.name}\'')
+            sys.exit(1)
+
+        test_set.add(meta.name)
+        tests.append(meta)
+    return tests
 
 
 def main():
@@ -90,22 +209,20 @@ def main():
         compiler_path = (TEST_ROOT/'../build/sicdb').resolve()
 
     if not compiler_path.exists():
-        print(f'Failed to find compiler binary \'{compiler_path}\', try performing a make.')
+        print(f'Failed to find compiler binary \'{str(compiler_path)}\', try performing a make.')
         sys.exit(1)
+
+    compiler_path = str(compiler_path)
 
     print('******** Tests **********')
     tmpdir = tempfile.mkdtemp()
-    test_count = 0
-    tests_passed = 0
+    tester = TestRunner()
     try:
+        tests = None
         if args.test:
-            if not args.test.endswith('.test'):
-                args.test = args.test + '.test'
-
-            for test in TEST_ROOT.rglob(args.test):
-                test_count += 1
-                if run_test(str(test), str(compiler_path), tmpdir):
-                    tests_passed += 1
+            if not args.test.endswith('.test.si'):
+                args.test += '.test.si'
+            tests = TEST_ROOT.rglob(args.test)
         elif args.group:
             group_path = (TEST_ROOT/args.group).resolve()
             if not group_path.exists():
@@ -114,29 +231,19 @@ def main():
             if not group_path.is_dir():
                 print(f'Test group path \'{args.group}\' is not a directory.')
                 sys.exit(1)
-            for test in group_path.rglob('*.test'):
-                test_count += 1
-                if run_test(str(test), str(compiler_path), tmpdir):
-                    tests_passed += 1
+            tests = group_path.rglob('*.test.si')
         else:
-            for test in TEST_ROOT.rglob('*.test'):
-                test_count += 1
-                if run_test(str(test), str(compiler_path), tmpdir):
-                    tests_passed += 1
+            tests = TEST_ROOT.rglob('*.test.si')
 
+        for test in tests:
+            tester.run_test_file(str(test), compiler_path, tmpdir)
     finally:
         shutil.rmtree(tmpdir)
 
-    if test_count == 0:
+    if tester.test_count == 0:
         print('No tests found.')
-        return
-    print('\n******** Result *********')
-    completion_str = f'Completed {test_count} test(s)'
-    pass_fail_str = f'\033[31m{test_count - tests_passed}\033[0m failed, \033[32m{tests_passed}\033[0m passed.'
-    if test_count == tests_passed:
-        print_pass(completion_str, pass_fail_str)
-    else:
-        print_fail(completion_str, pass_fail_str)
+        sys.exit(1)
+
 
 if __name__ == '__main__':
     main()

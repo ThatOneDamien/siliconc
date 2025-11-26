@@ -411,7 +411,6 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis)
             Object* member = new_obj(peek_prev(l), OBJ_VAR, vis);
             member->type = ty;
             da_append(members, member);
-            advance(l);
         } while(try_consume(l, TOKEN_COMMA));
 
         CONSUME_OR_RET(TOKEN_SEMI, obj);
@@ -449,9 +448,6 @@ static Object* parse_bitfield_decl(Lexer* l, Visibility vis)
         Object* member = new_obj(peek_prev(l), OBJ_VAR, vis);
         member->type = ty;
         da_append(members, member);
-        advance(l);
-        // CONSUME_OR_RET()
-
         CONSUME_OR_RET(TOKEN_SEMI, obj);
     }
 

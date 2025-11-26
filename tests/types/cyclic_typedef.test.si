@@ -1,2 +1,0 @@
-typedef A = B;
-typedef B = A;
