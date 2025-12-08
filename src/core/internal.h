@@ -28,7 +28,7 @@ extern Type* const g_type_isz;
 extern Type* const g_type_usz;
 extern Type* const g_type_float;
 extern Type* const g_type_double;
-extern Type* const g_type_strlit;
+extern Type* const g_type_anon_arr;
 
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;
@@ -81,6 +81,7 @@ void parse_unit(CompUnit* unit);
 // Semantic analysis functions
 void semantic_declaration(CompUnit* unit);
 void semantic_analysis(ModulePTRDA* modules);
+void perform_cast(ASTExpr* cast);
 
 // Symbol map functions
 void   sym_map_init(void);
@@ -101,6 +102,7 @@ Type*       type_from_token(TokenKind type_token);
 Type*       type_pointer_to(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
+Type*       type_reduce(Type* t);
 bool        type_equal(Type* t1, Type* t2);
 uint32_t    type_size(Type* ty);
 uint32_t    type_alignment(Type* ty);

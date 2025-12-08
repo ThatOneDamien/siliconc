@@ -14,7 +14,7 @@ static void compile(const SourceFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
-static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", global_arena_allocated()); }
+static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", g_global_arena.allocated); }
 #endif // SI_DEBUG
 
 int main(int argc, char* argv[])

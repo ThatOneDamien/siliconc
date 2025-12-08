@@ -17,7 +17,7 @@ struct CastParams
 struct CastRule
 {
     bool (*able)(CastParams*);
-    void (*convert)(ASTExpr*, ASTExpr*);
+    void (*conversion)(ASTExpr*, ASTExpr*);
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT];
@@ -64,8 +64,7 @@ bool analyze_cast(ASTExpr* cast)
         return false;
     }
 
-    if(rule.convert != NULL)
-        rule.convert(cast, inner);
+    rule.conversion(cast, inner);
 
     return true;
 }
@@ -90,7 +89,7 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     CastRule rule = get_cast_rule(&params);
     if(rule.able == NULL)
     {
-        sic_error_at(prev->loc, "Attempted to implicit cast from %s to %s, but it is not allowed.",
+        sic_error_at(prev->loc, "Casting from %s to %s is not allowed.",
                      type_to_string(params.from), type_to_string(params.to));
         return false;
     }
@@ -109,11 +108,48 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     new_cast->evaluated = true;
     new_cast->type = desired;
 
-    if(rule.convert != NULL)
-        rule.convert(new_cast, prev);
+    rule.conversion(new_cast, prev);
 
     *expr_to_cast = new_cast;
     return true;
+}
+
+bool can_cast(ASTExpr* expr, Type* to)
+{
+    SIC_ASSERT(to->status == STATUS_RESOLVED && expr->evaluated);
+
+    CastParams params;
+    params.inner     = expr;
+    params.from      = expr->type;
+    params.to        = to;
+    params.from_kind = params.from->canonical->kind;
+    params.to_kind   = params.to->canonical->kind;
+    params.explicit  = false;
+    params.silent    = false;
+    if(type_equal(params.from, params.to))
+        return true;
+
+    CastRule rule = get_cast_rule(&params);
+    if(rule.able == NULL)
+    {
+        sic_error_at(expr->loc, "Casting from %s to %s is not allowed.",
+                     type_to_string(params.from), type_to_string(params.to));
+        return false;
+    }
+
+
+    return rule.able(&params);
+}
+
+void perform_cast(ASTExpr* cast)
+{
+    ASTExpr* inner = cast->expr.cast.inner;
+    CastGroup from = s_type_to_group[inner->type->canonical->kind];
+    CastGroup to = s_type_to_group[cast->type->canonical->kind];
+    SIC_ASSERT(from != CAST_GROUP_INVALID && to != CAST_GROUP_INVALID);
+    CastRule rule = s_rule_table[from][to];
+
+    rule.conversion(cast, inner);
 }
 
 void implicit_cast_varargs(ASTExpr** expr_to_cast)
@@ -137,6 +173,7 @@ void implicit_cast_varargs(ASTExpr** expr_to_cast)
         return;
     }
 }
+
 
 static bool rule_not_defined(UNUSED CastParams* params) { SIC_UNREACHABLE(); }
 static bool rule_always(UNUSED CastParams* params) { return true; }
@@ -209,6 +246,7 @@ ERR:
 static bool rule_str_to_ptr(CastParams* params)
 {
     TypeKind kind = params->to->pointer_base->kind;
+
     if(kind != TYPE_CHAR && kind != TYPE_UBYTE)
     {
         cast_error(params, "String literal can only be casted to char* or ubyte*.");
@@ -217,35 +255,64 @@ static bool rule_str_to_ptr(CastParams* params)
     return true;
 }
 
-static bool rule_str_to_arr(CastParams* params)
+static bool rule_anon_to_arr(CastParams* params)
 {
     if(params->to_kind == TYPE_RUNTIME_ARRAY)
     {
-        cast_error(params, "Unable to assign runtime-sized array to a string literal.");
-        return false;
-    }
-    if(params->to->array.elem_type->kind != TYPE_UBYTE)
-    {
-        cast_error(params, "String literal can only be casted to ubyte[].");
+        // NOTE: This can be improved later on if I add some runtime checks. Don't plan on doing that
+        //       atm, but if I do, revisit this.
+        cast_error(params, "Array cannot be assigned because its size is unknown at compile time (try memcpy).");
         return false;
     }
     uint64_t arr_size = params->to->array.ss_size; 
-    uint64_t str_len = params->inner->expr.constant.val.str_len;
-    if(arr_size != str_len && arr_size != str_len + 1)
+    Type* elem_type = params->to->array.elem_type;
+    if(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING)
     {
-        cast_error(params, "Size of array(%lu) does not match size of string literal(%lu).",
-                   arr_size, str_len);
-        return false;
+        if(elem_type->kind != TYPE_CHAR)
+        {
+            cast_error(params, "String literal can only be casted to char[].");
+            return false;
+        }
+        uint64_t str_len = params->inner->expr.constant.val.str_len;
+        if(arr_size >= str_len)
+        {
+            cast_error(params, "Length of array(%lu) is smaller than length of string literal(%lu).",
+                       arr_size, str_len);
+            return false;
+        }
+        return true;
     }
+
+    SIC_ASSERT(params->inner->kind == EXPR_ARRAY_INIT_LIST);
+    InitList* list = &params->inner->expr.init_list;
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        if(list->data[i].const_index >= arr_size)
+        {
+            if(!params->silent)
+            {
+                sic_error_at(list->data[i].init_value->loc, "Index of array constant(%lu) exceeds bounds of array(%lu).",
+                             list->data[i].const_index, arr_size);
+            }
+            return false;
+        }
+
+        if(!can_cast(list->data[i].init_value, elem_type))
+            return false;
+    }
+
     return true;
 }
 
-static bool rule_to_distinct(CastParams* params)
+static bool rule_distinct(CastParams* params)
 {
     if(!params->explicit)
     {
-        // cast_error(params, "")
+        cast_error(params, "Casting from %s to %s requires an explicit cast.",
+                   type_to_string(params->from), type_to_string(params->to));
+        return false;
     }
+
     return true;
 }
 
@@ -263,6 +330,7 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->const_eval = true;
         uint32_t from_bit_width = inner->type->builtin.bit_size;
         uint32_t to_bit_width = cast->type->builtin.bit_size;
         if(to_bit_width == 64)
@@ -303,6 +371,7 @@ static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
         cast->expr.constant.kind = CONSTANT_BOOL;
+        cast->const_eval = true;
         return;
     }
 
@@ -316,6 +385,7 @@ static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.f = (double)inner->expr.constant.val.i;
         cast->expr.constant.kind = CONSTANT_FLOAT;
+        cast->const_eval = true;
         return;
     }
 
@@ -341,6 +411,7 @@ static void cast_float_to_float(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.f = inner->expr.constant.val.f;
         cast->expr.constant.kind = CONSTANT_FLOAT;
+        cast->const_eval = true;
         return;
     }
 
@@ -354,6 +425,7 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (inner->expr.constant.val.f != 0.0);
         cast->expr.constant.kind = CONSTANT_BOOL;
+        cast->const_eval = true;
         return;
     }
 
@@ -367,6 +439,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner)
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (uint64_t)inner->expr.constant.val.f;
         cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->const_eval = true;
         return;
     }
 
@@ -377,6 +450,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner)
 
 static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
 {
+    cast->const_eval = inner->const_eval;
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
@@ -385,17 +459,12 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner)
         return;
     }
 
-    // TODO: Maybe avoid a malloc here?
-    ASTExpr* intermediate = MALLOC_STRUCT(ASTExpr);
-    memcpy(intermediate, cast, sizeof(ASTExpr));
-    intermediate->expr.cast.kind = CAST_PTR_TO_INT;
-    intermediate->type = g_type_ulong;
-    cast->expr.cast.inner = intermediate;
-    cast->expr.cast.kind = CAST_INT_TO_BOOL;
+    cast->expr.cast.kind = CAST_PTR_TO_BOOL;
 }
 
 static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
 {
+    cast->const_eval = inner->const_eval;
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
@@ -409,6 +478,7 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner)
 
 static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 {
+    cast->const_eval = inner->const_eval;
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
@@ -422,6 +492,13 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner)
 static void cast_reinterpret(ASTExpr* cast, UNUSED ASTExpr* inner)
 {
     cast->expr.cast.kind = CAST_REINTERPRET;
+}
+
+static void cast_anon_arr(ASTExpr* cast, ASTExpr* inner)
+{
+    Type* to_type = cast->type;
+    memcpy(cast, inner, sizeof(ASTExpr));
+    cast->type = to_type;
 }
 
 #define NOALLW { NULL              , NULL }
@@ -438,22 +515,21 @@ static void cast_reinterpret(ASTExpr* cast, UNUSED ASTExpr* inner)
 #define PTRINT { rule_explicit_only, cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr   , cast_ptr_to_ptr }
 #define STRPTR { rule_str_to_ptr   , cast_reinterpret }
-#define STRARR { rule_str_to_arr   , cast_reinterpret }
-#define TODIST { rule_to_distinct  , NULL }
-#define DISTTO { rule_distinct_to  , NULL }
+#define ANNARR { rule_anon_to_arr  , cast_anon_arr }
+#define DISTIN { rule_distinct     , NULL }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    // FROM             TO:   VOID    BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT  STRLIT  DIST
+    // FROM             TO:   VOID    BOOL    INT     FLOAT   PTR     ARRAY   ENUM    STRUCT  ANONAR  DIST
     [CAST_GROUP_VOID]     = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
-    [CAST_GROUP_BOOL]     = { TOVOID, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_INT]      = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_FLOAT]    = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_PTR]      = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_ARRAY]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_ENUM]     = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_STRUCT]   = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_STRLIT]   = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, STRARR, NOALLW, NOALLW, NOTDEF, TODIST },
-    [CAST_GROUP_DISTINCT] = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, STRARR, NOALLW, NOALLW, NOTDEF, TODIST },
+    [CAST_GROUP_BOOL]     = { TOVOID, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]      = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]    = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]      = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ENUM]     = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]   = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ANON_ARR] = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, ANNARR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_DISTINCT] = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
 };
 
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
@@ -481,7 +557,7 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_ENUM_DISTINCT]  = CAST_GROUP_ENUM,
     [TYPE_STRUCT]         = CAST_GROUP_STRUCT,
     [TYPE_UNION]          = CAST_GROUP_STRUCT,
-    [TYPE_STRING_LITERAL] = CAST_GROUP_STRLIT,
+    [TYPE_ANON_ARRAY]     = CAST_GROUP_ANON_ARR,
 };
 
 static inline CastRule get_cast_rule(CastParams* params)

@@ -221,23 +221,25 @@ bool analyze_global_var(Object* global_var)
     if(!resolve_type(&global_var->type, RES_NORMAL, global_var->loc, "Variable cannot be of type"))
     {
         check_cyclic_def(global_var, global_var->loc);
-        global_var->kind = OBJ_INVALID;
-        global_var->status = STATUS_RESOLVED;
         return false;
     }
 
     if(global_var->var.initial_val != NULL)
     {
-        if(!analyze_expr(&global_var->var.initial_val))
+        if(!implicit_cast(&global_var->var.initial_val, global_var->type))
         {
             check_cyclic_def(global_var, global_var->loc);
             return false;
         }
-
+        if(!global_var->var.initial_val->const_eval)
+        {
+            sic_error_at(global_var->loc, "Global variable must be initialized with a compile-time evaluable value.");
+            global_var->kind = OBJ_INVALID;
+            global_var->status = STATUS_RESOLVED;
+            return false;
+        }
     }
 
-    // TODO: Check that this is constant. Make a function that checks if an expression is constant,
-    // because something like &global_var, is technically a constant expression.
     if(global_var->type->visibility < global_var->visibility)
         // TODO: Make this error print the actual visibility of both.
         sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");

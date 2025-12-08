@@ -94,6 +94,7 @@ static inline Object*  new_obj(Token* t, ObjKind kind, Visibility vis);
 static inline Object*  new_var(Token* t, VarKind kind, Visibility vis, Type* type);
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
+static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind);
 
 static ASTStmt s_bad_stmt = {0};
 static ASTExpr s_bad_expr = {0};
@@ -1117,6 +1118,7 @@ static ASTExpr* parse_array_init_list(Lexer* l)
         da_reserve(list, list->size + 1);
         InitListEntry* entry = list->data + list->size;
         ASSIGN_EXPR_OR_RET(entry->init_value, BAD_EXPR);
+        list->size++;
         if(try_consume(l, TOKEN_COLON))
         {
             entry->arr_index = entry->init_value;
@@ -1127,6 +1129,7 @@ static ASTExpr* parse_array_init_list(Lexer* l)
     }
 
     CONSUME_OR_RET(TOKEN_RBRACKET, BAD_EXPR);
+    expr->type = g_type_anon_arr;
     return expr;
 
 }
@@ -1171,8 +1174,7 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
 
 static ASTExpr* parse_binary_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
 
     const char* src = peek_prev(l)->start;
@@ -1187,7 +1189,7 @@ static ASTExpr* parse_binary_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
     return expr;
@@ -1195,8 +1197,7 @@ static ASTExpr* parse_binary_literal(Lexer* l)
 
 static ASTExpr* parse_octal_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
 
     const char* src = peek_prev(l)->start;
@@ -1211,7 +1212,7 @@ static ASTExpr* parse_octal_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
     return expr;
@@ -1219,8 +1220,7 @@ static ASTExpr* parse_octal_literal(Lexer* l)
 
 static ASTExpr* parse_decimal_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
 
     const char* src = peek_prev(l)->start;
@@ -1236,7 +1236,7 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
     return expr;
@@ -1262,8 +1262,7 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
         ['E'] = 14, ['e'] = 14,
         ['F'] = 15, ['f'] = 15,
     };
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
 
     const char* src = peek_prev(l)->start;
@@ -1278,7 +1277,7 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > 0xFFFFFFFF ? g_type_ulong : g_type_uint;
+    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
 
     // TODO: Deal with the suffix.
     return expr;
@@ -1287,8 +1286,7 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     expr->expr.constant.val.i = peek(l)->chr.val;
     expr->type = g_type_char;
     advance(l);
@@ -1297,8 +1295,7 @@ static ASTExpr* parse_char_literal(Lexer* l)
 
 static ASTExpr* parse_float_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_FLOAT;
+    ASTExpr* expr = new_constant(l, CONSTANT_FLOAT);
     advance(l);
     const char* src = peek_prev(l)->start;
     double val = 0.0f;
@@ -1343,11 +1340,10 @@ END:
 
 static ASTExpr* parse_string_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_STRING;
+    ASTExpr* expr = new_constant(l, CONSTANT_STRING);
     expr->expr.constant.val.str = peek(l)->str.val;
     expr->expr.constant.val.str_len = peek(l)->str.len;
-    expr->type = g_type_strlit;
+    expr->type = g_type_anon_arr;
     advance(l);
     return expr;
 }
@@ -1361,8 +1357,7 @@ static ASTExpr* parse_default_expr(Lexer* l)
 
 static ASTExpr* parse_bool_literal(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->expr.constant.kind = CONSTANT_BOOL;
+    ASTExpr* expr = new_constant(l, CONSTANT_BOOL);
     expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
@@ -1371,10 +1366,9 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 
 static ASTExpr* parse_nullptr(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_CONSTANT);
-    expr->type = g_type_voidptr;
+    ASTExpr* expr = new_constant(l, CONSTANT_POINTER);
     expr->expr.constant.val.i = 0;
-    expr->expr.constant.kind = CONSTANT_POINTER;
+    expr->type = g_type_voidptr;
     advance(l);
     return expr;
 }
@@ -1482,6 +1476,17 @@ static inline ASTExpr* new_expr(Lexer* l, ExprKind kind)
     expr->kind = kind;
     expr->loc = peek(l)->loc;
     return expr;
+}
+
+static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
+{
+    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    expr->kind = EXPR_CONSTANT;
+    expr->loc = peek(l)->loc;
+    expr->expr.constant.kind = kind;
+    expr->const_eval = true;
+    return expr;
+
 }
 
 static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)

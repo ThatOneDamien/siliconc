@@ -286,8 +286,6 @@ static void print_constant(const ASTExpr* expr)
         printf("Constant Integer val: 0x%lX] (Type: %s)\n",
                constant->val.i, debug_type_to_str(expr->type));
         break;
-    case CONSTANT_INIT_LIST:
-        SIC_TODO();
     }
 }
 

@@ -37,36 +37,36 @@ BUILTIN_TYPE_DEF(s_float , TYPE_FLOAT , 4);
 BUILTIN_TYPE_DEF(s_double, TYPE_DOUBLE, 8);
 
 static Type s_voidptr;
-TYPE_DEF(s_invalid, TYPE_INVALID);
-TYPE_DEF(s_void   , TYPE_VOID, .ptr_cache = &s_voidptr);
-TYPE_DEF(s_voidptr, TYPE_POINTER, .pointer_base = &s_void);
-TYPE_DEF(s_strlit , TYPE_STRING_LITERAL);
-TYPE_DEF(s_iptr   , TYPE_ALIAS);
-TYPE_DEF(s_uptr   , TYPE_ALIAS);
-TYPE_DEF(s_isz    , TYPE_ALIAS);
-TYPE_DEF(s_usz    , TYPE_ALIAS);
+TYPE_DEF(s_invalid , TYPE_INVALID);
+TYPE_DEF(s_void    , TYPE_VOID, .ptr_cache = &s_voidptr);
+TYPE_DEF(s_voidptr , TYPE_POINTER, .pointer_base = &s_void);
+TYPE_DEF(s_iptr    , TYPE_ALIAS);
+TYPE_DEF(s_uptr    , TYPE_ALIAS);
+TYPE_DEF(s_isz     , TYPE_ALIAS);
+TYPE_DEF(s_usz     , TYPE_ALIAS);
+TYPE_DEF(s_anon_arr, TYPE_ANON_ARRAY);
 
 // Builtin-types
-Type* const g_type_invalid = &s_invalid;
-Type* const g_type_voidptr = &s_voidptr;
-Type* const g_type_void    = &s_void;
-Type* const g_type_bool    = &s_bool;
-Type* const g_type_char    = &s_char;
-Type* const g_type_byte    = &s_byte;
-Type* const g_type_ubyte   = &s_ubyte;
-Type* const g_type_short   = &s_short;
-Type* const g_type_ushort  = &s_ushort;
-Type* const g_type_int     = &s_int;
-Type* const g_type_uint    = &s_uint;
-Type* const g_type_long    = &s_long;
-Type* const g_type_ulong   = &s_ulong;
-Type* const g_type_iptr    = &s_iptr;
-Type* const g_type_uptr    = &s_uptr;
-Type* const g_type_isz     = &s_isz;
-Type* const g_type_usz     = &s_usz;
-Type* const g_type_float   = &s_float;
-Type* const g_type_double  = &s_double;
-Type* const g_type_strlit  = &s_strlit;
+Type* const g_type_invalid  = &s_invalid;
+Type* const g_type_voidptr  = &s_voidptr;
+Type* const g_type_void     = &s_void;
+Type* const g_type_bool     = &s_bool;
+Type* const g_type_char     = &s_char;
+Type* const g_type_byte     = &s_byte;
+Type* const g_type_ubyte    = &s_ubyte;
+Type* const g_type_short    = &s_short;
+Type* const g_type_ushort   = &s_ushort;
+Type* const g_type_int      = &s_int;
+Type* const g_type_uint     = &s_uint;
+Type* const g_type_long     = &s_long;
+Type* const g_type_ulong    = &s_ulong;
+Type* const g_type_iptr     = &s_iptr;
+Type* const g_type_uptr     = &s_uptr;
+Type* const g_type_isz      = &s_isz;
+Type* const g_type_usz      = &s_usz;
+Type* const g_type_float    = &s_float;
+Type* const g_type_double   = &s_double;
+Type* const g_type_anon_arr = &s_anon_arr;
 
 
 static Type* builtin_type_lookup[] = {
@@ -172,6 +172,22 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
     return new_type;
 }
 
+Type* type_reduce(Type* t)
+{
+    while(true)
+    {
+        t = t->canonical;
+        switch(t->kind)
+        {
+        case TYPE_ALIAS_DISTINCT:
+            t = t->user_def->type_alias;
+            continue;
+        default:
+            return t;
+        }
+    }
+}
+
 bool type_equal(Type* t1, Type* t2)
 {
     SIC_ASSERT(t1 != NULL);
@@ -215,7 +231,7 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -227,7 +243,8 @@ bool type_equal(Type* t1, Type* t2)
 ByteSize type_size(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
-    switch(ty->canonical->kind)
+    ty = ty->canonical;
+    switch(ty->kind)
     {
     case INT_TYPES:
     case FLOAT_TYPES:
@@ -250,7 +267,7 @@ ByteSize type_size(Type* ty)
     case TYPE_ENUM_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -263,7 +280,8 @@ uint32_t type_alignment(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
     SIC_ASSERT(ty->status == STATUS_RESOLVED);
-    switch(ty->canonical->kind)
+    ty = ty->canonical;
+    switch(ty->kind)
     {
     case INT_TYPES:
     case FLOAT_TYPES:
@@ -287,7 +305,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_ENUM_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -342,7 +360,7 @@ const char* type_to_string(Type* type)
     case TYPE_INVALID:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:

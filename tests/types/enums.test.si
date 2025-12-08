@@ -1,0 +1,40 @@
+/// test:   simple
+/// action: run
+/// result: pass
+/// output: "0 1"
+enum Something
+{
+    A,
+    B,
+    C,
+    D
+}
+fn printf(char* str, ...);
+fn main() -> int
+{
+    printf("%d %d\n", Something.A, Something.B);
+    return 0;
+}
+
+
+/// test:   simple2
+/// action: compile
+/// result: pass
+enum Something
+{
+    A,
+    B,
+    C = 3,
+    D
+}
+
+/// test:   bad
+/// action: compile
+/// result: fail
+enum Something
+{
+    A,
+    B,
+    C = A,
+    D
+}

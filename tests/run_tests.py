@@ -16,6 +16,7 @@ class TestMeta:
     source: str
     action: str
     should_pass: bool 
+    output: str
     timeout: int
 
     def __init__(self):
@@ -23,12 +24,13 @@ class TestMeta:
         self.source = None
         self.action = 'compile'
         self.should_pass = True
+        self.output = None
         self.timeout = 10
 
 class TestResult:
     passed: bool
     message: str
-    details: str | None
+    details: str
 
 class TestRunner:
     def __init__(self):
@@ -69,6 +71,7 @@ class TestRunner:
         if test.action == 'compile':
             out_obj = pathlib.Path(tmpdir) / 'a.o'
             cmd = [compiler_path, '-s', source_file, '-o', out_obj]
+            # result = subprocess.run(cmd, check=False, timeout=test.timeout, text=True)
             result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, timeout=test.timeout, text=True)
             return check_test_result(should_pass=test.should_pass, kind='compiler', proc_res=result)
@@ -77,7 +80,7 @@ class TestRunner:
 
         # Compile first
         out_exe = pathlib.Path(tmpdir) / 'a.out'
-        cmd = [compiler_path, test.source, '-o', out_exe]
+        cmd = [compiler_path, source_file, '-o', out_exe]
         result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=test.timeout, text=True)
         test_result = check_test_result(should_pass=True, kind='compiler', proc_res=result)
@@ -88,7 +91,7 @@ class TestRunner:
         result = subprocess.run([out_exe], check=False, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, timeout=test.timeout, text=True)
         return check_test_result(should_pass=test.should_pass,
-                                 kind='runtime', proc_res=result)
+                                 kind='runtime', proc_res=result, output=test.output)
 
 
 def print_fail(test_name: str, message: str, details: str | None = None):
@@ -104,16 +107,22 @@ def print_pass(test_name: str, message: str):
 
 
 
-def check_test_result(should_pass: bool, kind: str, proc_res):
+def check_test_result(should_pass: bool, kind: str, proc_res, output: str | None = None):
     result = TestResult()
     rc = proc_res.returncode
     if rc == 0:
-        if should_pass:
-            result.passed  = True
-            result.message = f'{kind} finished successfully.'
-        else:
+        if not should_pass:
             result.passed  = False
             result.message = f'{kind} unexpectedly finished.'
+            result.details = None
+        elif output and output != proc_res.stdout.strip():
+            result.passed  = False
+            result.message = 'Failed to match expected output.'
+            result.details = f'> {proc_res.stdout.strip()}\n< {output}\n'
+        else:
+            result.passed  = True
+            result.message = f'{kind} finished successfully.'
+            result.details = None
     elif rc == 1:
         if should_pass:
             result.passed  = False
@@ -122,6 +131,7 @@ def check_test_result(should_pass: bool, kind: str, proc_res):
         else:
             result.passed  = True
             result.message = f'{kind} failed as expected.'
+            result.details = None
     else:
         result.passed  = False
         result.message = f'{kind} encountered an unknown error/signal (Code: {rc})'
@@ -147,19 +157,22 @@ def parse_test_file(test_path: str):
             if m:
                 key, value = m.groups()
                 key = key.lower()
-                value = value.lower()
                 if key == 'test':
                     meta.name = value
                 elif key == 'action':
+                    value = value.lower()
                     if not value in ('compile', 'run'):
                         print(f'{test_path}:{i}: Test attribute \'action\' should only be either \'run\' or \'compile\'')
                         sys.exit(1)
                     meta.action = value
                 elif key == 'result':
+                    value = value.lower()
                     if not value in ('pass', 'fail'):
                         print(f'{test_path}:{i}: Test attribute \'result\' should only be either \'pass\' or \'fail\'')
                         sys.exit(1)
                     meta.should_pass = value == 'pass'
+                elif key == 'output':
+                    meta.output = value.strip()
                 elif key == 'timeout':
                     meta.timeout = int(value)
                 else:
@@ -193,7 +206,6 @@ def parse_test_file(test_path: str):
         test_set.add(meta.name)
         tests.append(meta)
     return tests
-
 
 def main():
     compiler_path = ''

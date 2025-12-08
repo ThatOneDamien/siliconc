@@ -6,11 +6,11 @@
 
 #define GLOBAL_ARENA_INIT_SIZE (64ul * 1024ul * 1024ul)
 
-static MemArena s_global_arena;
+MemArena g_global_arena;
 
 void global_arenas_init(void)
 {
-    arena_init(&s_global_arena, GLOBAL_ARENA_INIT_SIZE);
+    arena_init(&g_global_arena, GLOBAL_ARENA_INIT_SIZE);
 }
 
 void arena_init(MemArena* arena, size_t capacity)
@@ -38,9 +38,10 @@ void arena_init(MemArena* arena, size_t capacity)
     arena->base = base;
     arena->capacity = capacity;
     arena->allocated = 0;
+    arena->last_alloced = NULL;
 }
 
-void* arena_alloc(MemArena* arena, size_t size, uint32_t align)
+void* arena_malloc(MemArena* arena, size_t size, uint32_t align)
 {
     // Some useful debug checks (These are not done in release).
     SIC_ASSERT(arena != NULL);
@@ -49,7 +50,7 @@ void* arena_alloc(MemArena* arena, size_t size, uint32_t align)
     SIC_ASSERT(arena->capacity > 0);
 
     arena->allocated = (arena->allocated + (align - 1)) & ~(align - 1);
-    void* res = arena->base + arena->allocated;
+    void* res = arena->last_alloced = arena->base + arena->allocated;
     arena->allocated += size;
     if(arena->capacity < size)
         sic_fatal_error("Ran out of memory!!! An arena with capacity %zu overflowed.", arena->capacity);
@@ -57,19 +58,16 @@ void* arena_alloc(MemArena* arena, size_t size, uint32_t align)
     return res;
 }
 
-void* global_arena_malloc(size_t size, uint32_t align)
+void* arena_calloc(MemArena* arena, size_t size, uint32_t align)
 {
-    return arena_alloc(&s_global_arena, size, align);
-}
-
-void* global_arena_calloc(size_t nmemb, size_t size, uint32_t align)
-{
-    void* res = arena_alloc(&s_global_arena, nmemb * size, align);
-    memset(res, 0, nmemb * size);
+    void* res = arena_malloc(arena, size, align);
+    memset(res, 0, size);
     return res;
 }
 
-size_t global_arena_allocated()
+void arena_free(MemArena* arena, const void* ptr)
 {
-    return s_global_arena.allocated;
+    if(arena->last_alloced == NULL || ptr != arena->last_alloced) return;
+    arena->allocated = (uintptr_t)arena->last_alloced - (uintptr_t)arena->base;
+    arena->last_alloced = NULL;
 }

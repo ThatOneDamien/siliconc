@@ -65,7 +65,7 @@ SourceFile* source_file_add_or_get(const char* path)
     da_reserve(&g_compiler.sources, g_compiler.sources.size + 1);
     SourceFile* file = g_compiler.sources.data + g_compiler.sources.size;
     file->abs_path = str_dup(abs_path);
-    file->rel_path = is_abs ? file->abs_path : normalize_rel_path(abs_path);
+    file->rel_path = is_abs ? file->abs_path : normalize_rel_path(file->abs_path);
     file->src  = NULL;
     file->id   = g_compiler.sources.size;
     g_compiler.sources.size++;

@@ -16,6 +16,15 @@ struct D
     C* c2;
 }
 
+fn main()
+{
+    A1 a1;
+    A2 a2;
+    B  b;
+    C  c;
+    D  d;
+}
+
 /// test:   cyclic
 /// action: compile
 /// result: fail

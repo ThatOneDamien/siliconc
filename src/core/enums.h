@@ -50,7 +50,7 @@ typedef enum : int8_t
     CAST_GROUP_ARRAY,
     CAST_GROUP_ENUM,
     CAST_GROUP_STRUCT,
-    CAST_GROUP_STRLIT,
+    CAST_GROUP_ANON_ARR,
     CAST_GROUP_DISTINCT,
     __CAST_GROUP_COUNT,
 } CastGroup;
@@ -63,6 +63,7 @@ typedef enum : uint8_t
     CAST_SINT_TO_FLOAT,
     CAST_UINT_TO_FLOAT,
     CAST_INT_TO_BOOL,
+    CAST_PTR_TO_BOOL,
     CAST_PTR_TO_INT,
     CAST_INT_TO_PTR,
     CAST_FLOAT_EXT_TRUNC,
@@ -94,7 +95,6 @@ typedef enum : uint8_t
     CONSTANT_FLOAT,
     CONSTANT_STRING,
     CONSTANT_POINTER,
-    CONSTANT_INIT_LIST,
 } ConstantKind;
 
 typedef enum : uint8_t
@@ -149,13 +149,6 @@ typedef enum : uint8_t
     FT_STATIC,      // Static library (.a)
     FT_SHARED,      // Shared object/library (.so)
 } FileType;
-
-typedef enum : uint8_t
-{
-    INIT_LIST_ANY,
-    INIT_LIST_STRUCT,
-    INIT_LIST_ARRAY
-} InitListKind;
 
 typedef enum : uint8_t
 {
@@ -423,7 +416,7 @@ typedef enum : uint8_t
     // Pre-semantic types.
     TYPE_PRE_SEMA_ARRAY,
     TYPE_PRE_SEMA_USER,
-    TYPE_STRING_LITERAL,
+    TYPE_ANON_ARRAY, // Anonymous array literals before being casted (i.e. [4, 3])
     TYPE_AUTO,
     TYPE_TYPEOF,
     __TYPE_COUNT,

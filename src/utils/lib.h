@@ -85,12 +85,13 @@ void* hashmap_get(HashMap* map, Symbol key);
 void  hashmap_clear(HashMap* map);
 
 // arena.c - Arena functions
+extern MemArena g_global_arena;
+
 void   arena_init(MemArena* arena, size_t capacity);
-void*  arena_alloc(MemArena* arena, size_t size, uint32_t align);
+void*  arena_malloc(MemArena* arena, size_t size, uint32_t align);
+void*  arena_calloc(MemArena* arena, size_t size, uint32_t align);
+void   arena_free(MemArena* arena, const void* ptr);
 void   global_arenas_init(void);
-void*  global_arena_malloc(size_t size, uint32_t align);
-void*  global_arena_calloc(size_t nmemb, size_t size, uint32_t align);
-size_t global_arena_allocated();
 
 // error.c - Error functions
 extern int g_error_cnt;
@@ -195,19 +196,21 @@ static inline void* crealloc(void* ptr, size_t size)
 }
 
 #ifdef SIC_CMALLOC_ONLY
-#define MALLOC(size)                cmalloc(size)
-#define CALLOC(nmemb, size)         ccalloc(nmemb, size)
+#define MALLOC(size, align)         cmalloc(size)
+#define CALLOC(nmemb, size, align)  ccalloc(nmemb, size)
+#define FREE(ptr)
 #define MALLOC_STRUCT(type)         cmalloc(sizeof(type))
 #define CALLOC_STRUCT(type)         ccalloc(1, sizeof(type))
 #define MALLOC_STRUCTS(type, count) cmalloc(sizeof(type) * (count))
 #define CALLOC_STRUCTS(type, count) ccalloc(count, sizeof(type))
 #else
-#define MALLOC(size, align)         global_arena_malloc(size, align)
-#define CALLOC(nmemb, size, align)  global_arena_calloc(nmemb, size, align)
-#define MALLOC_STRUCT(type)         global_arena_malloc(sizeof(type), _Alignof(type))
-#define CALLOC_STRUCT(type)         global_arena_calloc(1, sizeof(type), _Alignof(type))
-#define MALLOC_STRUCTS(type, count) global_arena_malloc(sizeof(type) * (count), _Alignof(type))
-#define CALLOC_STRUCTS(type, count) global_arena_calloc(count, sizeof(type), _Alignof(type))
+#define MALLOC(size, align)         arena_malloc(&g_global_arena, size, align)
+#define CALLOC(nmemb, size, align)  arena_calloc(&g_global_arena, (nmemb) * (size), align)
+#define FREE(ptr)                   arena_free(&g_global_arena, ptr)
+#define MALLOC_STRUCT(type)         arena_malloc(&g_global_arena, sizeof(type), _Alignof(type))
+#define CALLOC_STRUCT(type)         arena_calloc(&g_global_arena, sizeof(type), _Alignof(type))
+#define MALLOC_STRUCTS(type, count) arena_malloc(&g_global_arena, sizeof(type) * (count), _Alignof(type))
+#define CALLOC_STRUCTS(type, count) arena_calloc(&g_global_arena, sizeof(type) * (count), _Alignof(type))
 #endif
 
 #define FNV_SEED   0xCBF29CE484222325

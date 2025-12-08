@@ -27,7 +27,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         FALLTHROUGH;
     case INT_TYPES:
     case FLOAT_TYPES:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
     case TYPE_POINTER: {

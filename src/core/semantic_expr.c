@@ -125,6 +125,9 @@ static bool analyze_array_init_list(ASTExpr* expr)
     InitList* list = &expr->expr.init_list;
     bool valid = true;
     bool is_constant = true;
+    uint64_t next_index = 0;
+    uint64_t min = UINT64_MAX;
+    uint64_t max = 0;
     for(uint32_t i = 0; i < list->size; ++i)
     {
         InitListEntry* entry = list->data + i;
@@ -138,16 +141,43 @@ static bool analyze_array_init_list(ASTExpr* expr)
                 sic_error_at(entry->arr_index->loc, "Array index must be a constant value.");
                 valid = false;
             }
+            else
+            {
+                entry->const_index = entry->arr_index->expr.constant.val.i;
+                next_index = entry->const_index + 1;
+            }
         }
+        else
+            entry->const_index = next_index++;
+
+
+        if(entry->const_index >= min && entry->const_index <= max)
+        {
+            for(uint32_t j = 0; j < i; ++j)
+                if(entry->const_index == list->data[j].const_index)
+                {
+                    sic_error_at(entry->init_value->loc, "Array index '%lu' initialized multiple times.", entry->const_index);
+                    valid = false;
+                    break;
+                }
+        }
+        else
+        {
+            if(entry->const_index < min)
+                min = entry->const_index;
+            if(entry->const_index > max)
+                max = entry->const_index;
+        }
+
         g_sema->ident_mask = IDENT_VAR_ONLY;
         if(!analyze_expr(&entry->init_value))
             valid = false;
-        else if(is_constant && entry->init_value->kind == EXPR_CONSTANT)
-        {
+        else if(!entry->init_value->const_eval)
+            is_constant = false;
 
-        }
     }
 
+    expr->const_eval = is_constant;
     return valid;
 }
 
@@ -434,7 +464,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_PRE_SEMA_ARRAY:
     case TYPE_PRE_SEMA_USER:
-    case TYPE_STRING_LITERAL:
+    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:

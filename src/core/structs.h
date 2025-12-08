@@ -104,6 +104,7 @@ struct HashMap
 struct MemArena
 {
     uint8_t* base;
+    uint8_t* last_alloced;
     size_t   capacity;
     size_t   allocated;
 };
@@ -293,6 +294,7 @@ struct InitListEntry
     {
         ASTExpr* arr_index;
         ASTExpr* member;
+        uint64_t const_index;
     };
     ASTExpr* init_value;
 };
@@ -302,6 +304,7 @@ struct InitList
     InitListEntry* data;
     uint32_t       capacity;
     uint32_t       size;
+    uint64_t       max;
 };
 
 union ConstantValue
@@ -313,7 +316,6 @@ union ConstantValue
         char*  str;
         size_t str_len;
     };
-    InitList   list;
 };
 
 struct ASTExprConstant
@@ -361,6 +363,7 @@ struct ASTExpr
     SourceLoc loc;
     ExprKind  kind;
     bool      evaluated : 1;
+    bool      const_eval : 1;
 
     union
     {
