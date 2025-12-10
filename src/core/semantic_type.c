@@ -1,6 +1,7 @@
 #include "semantics.h"
 
-static bool resolve_array(Type* arr_ty, SourceLoc err_loc);
+static bool resolve_array(Type* arr_ty, ResolutionFlags flags,
+                          SourceLoc err_loc, const char* err_str);
 static bool resolve_func_ptr(Type* func_ty, SourceLoc err_loc);
 static bool resolve_typeof(Type** type_ref, Type* typeof);
 static bool resolve_user(Type** type_ref, ResolutionFlags flags,
@@ -60,18 +61,20 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         if(type->status == STATUS_RESOLVED) return true;
         if(!analyze_type_obj(type->user_def, type_ref, flags, err_loc, err_str)) break;
         return true;
-    case TYPE_PRE_SEMA_ARRAY:
-        SIC_ASSERT(type->status != STATUS_RESOLVED);
-        if(!resolve_array(type, err_loc)) break;
+    case TYPE_AUTO:
+        if(BIT_IS_UNSET(flags, RES_ALLOW_AUTO))
+        {
+            sic_error_at(err_loc, "%s 'auto'.", err_str);
+            break;
+        }
         return true;
-    case TYPE_PRE_SEMA_USER:
+    case TYPE_PS_ARRAY:
+        if(!resolve_array(type, flags, err_loc, err_str)) break;
+        return true;
+    case TYPE_PS_USER:
         SIC_ASSERT(type->status != STATUS_RESOLVED);
         if(!resolve_user(type_ref, flags, err_loc, err_str)) break;
         return true;
-    case TYPE_AUTO:
-        // TODO: Utilize less memory now that we take in the location and error string.
-        sic_error_at(type->auto_loc, "Type 'auto' not allowed in this context.");
-        break;
     case TYPE_TYPEOF:
         if(type->status == STATUS_RESOLVED) return true;
         type->status = STATUS_RESOLVED;
@@ -85,27 +88,43 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
 }
 
 
-static bool resolve_array(Type* arr_ty, SourceLoc err_loc)
+static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
 {
     TypeArray* arr = &arr_ty->array;
     if(!resolve_type(&arr->elem_type, RES_NORMAL, err_loc, "Arrays cannot have elements of type"))
         return false;
 
-    // TODO: Check for negative size expr, that is BAD.
-    //       For now negative sizes are implicitly casted to ulong, which
-    //       means ubyte[-1] tries to allocate quintillions of bytes!! :)
-    if(!analyze_expr(&arr->size_expr) || !implicit_cast(&arr->size_expr, g_type_ulong))
-        return false;
-
     arr_ty->visibility = arr->elem_type->visibility;
     arr_ty->status = arr->elem_type->status;
 
+    if(arr->size_expr == NULL)
+    {
+        if(BIT_IS_SET(flags, RES_ALLOW_AUTO_ARRAY))
+            return true;
+
+        sic_error_at(err_loc, "%s auto-sized array \'%s\'.", err_str, type_to_string(arr_ty));
+        return false;
+    }
+
+    if(!analyze_expr(&arr->size_expr))
+        return false;
+
+    bool was_signed = type_is_signed(arr->size_expr->type->canonical);
+    if(!implicit_cast(&arr->size_expr, g_type_ulong))
+        return false;
+
+
     if(arr->size_expr->kind == EXPR_CONSTANT)
     {
-        SIC_ASSERT(arr->size_expr->expr.constant.kind == CONSTANT_INTEGER &&
-                   arr->size_expr->type->kind == TYPE_ULONG);
+        SIC_ASSERT(arr->size_expr->expr.constant.kind == CONSTANT_INTEGER);
+        uint64_t length = arr->size_expr->expr.constant.val.i;
+        if(was_signed && (int64_t)length < 0)
+        {
+            sic_error_at(err_loc, "Array declared with a negative length(%ld).", (int64_t)length);
+            return false;
+        }
         arr_ty->kind = TYPE_STATIC_ARRAY;
-        arr->ss_size = arr->size_expr->expr.constant.val.i;
+        arr->static_len = length;
         return true;
     }
 

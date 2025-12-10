@@ -163,7 +163,7 @@ struct TypeArray
     union
     {
         ASTExpr* size_expr;
-        uint64_t ss_size;
+        uint64_t static_len;
     };
 };
 
@@ -191,7 +191,6 @@ struct Type
     union
     {
         TypeArray      array;
-        SourceLoc      auto_loc;
         TypeBuiltin    builtin;
         FuncSignature* func_ptr;
         Type*          pointer_base;

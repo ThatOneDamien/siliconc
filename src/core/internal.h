@@ -29,6 +29,7 @@ extern Type* const g_type_usz;
 extern Type* const g_type_float;
 extern Type* const g_type_double;
 extern Type* const g_type_anon_arr;
+extern Type* const g_type_auto;
 
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;
@@ -179,7 +180,7 @@ static inline bool type_is_user_def(Type* ty)
 
 static inline bool type_is_trivially_copyable(Type* ty)
 {
-    return ty->kind != TYPE_RUNTIME_ARRAY && type_size(ty) <= 16;
+    return !type_is_array(ty) && type_size(ty) <= 16;
 }
 
 static inline Type* type_pointer_base(Type* ptr_ty)

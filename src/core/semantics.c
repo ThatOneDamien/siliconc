@@ -530,24 +530,80 @@ static void analyze_while(ASTStmt* stmt)
 
 static void analyze_declaration(ASTDeclaration* decl)
 {
-    Type** type_ref = &decl->obj->type;
+    Object* obj = decl->obj;
+    if(!resolve_type(&obj->type, RES_ALLOW_AUTO_ARRAY | RES_ALLOW_AUTO, decl->obj->loc, "Variable cannot be of type"))
+        goto ERR;
+
+    TypeKind kind = obj->type->kind;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    if((*type_ref)->kind == TYPE_AUTO)
+    if(decl->init_expr == NULL)
     {
-        if(decl->init_expr == NULL)
+        if(kind == TYPE_AUTO)
         {
-            sic_error_at(decl->obj->loc, "Declaring a variable with auto requires "
-                                         "it to be initialized with an expression.");
-            return;
+            sic_error_at(obj->loc, "Declaring a variable with auto requires "
+                                   "it to be initialized with an expression.");
+            goto ERR;
         }
-        if(!analyze_expr(&decl->init_expr))
-            return;
-        decl->obj->type = decl->init_expr->type;
+
+        if(kind == TYPE_PS_ARRAY)
+        {
+            sic_error_at(obj->loc, "Auto-sized arrays require an right hand side with an "
+                                   "inferrible array size(i.e. an array literal) to be initialized.");
+            goto ERR;
+        }
+
     }
-    else if(!resolve_type(type_ref, RES_NORMAL, decl->obj->loc, "Variable cannot be of type"))
-        decl->obj->kind = OBJ_INVALID;
-    else if(decl->init_expr != NULL)
-        implicit_cast(&decl->init_expr, *type_ref);
+    else if(!analyze_expr(&decl->init_expr))
+        goto ERR;
+
+    Type* rhs_type = decl->init_expr->type;
+    Type* rhs_ctype = rhs_type->canonical;
+    if(kind == TYPE_AUTO)
+    {
+        if(rhs_type->kind == TYPE_ANON_ARRAY)
+        {
+            sic_error_at(obj->loc, "Unable to deduce type of right hand expression. "
+                                   "For array literals, please declare a type.");
+            goto ERR;
+        }
+        obj->type = rhs_type;
+    }
+    else if(kind == TYPE_PS_ARRAY)
+    {
+        if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
+        {
+            if(!type_equal(obj->type->array.elem_type, rhs_ctype->array.elem_type))
+            {
+                sic_error_at(obj->loc, 
+                             "Cannot assign auto-sized array type \'%s\' to "
+                             "incompatible array type \'%s\'.",
+                             type_to_string(obj->type),
+                             type_to_string(rhs_type));
+                goto ERR;
+            }
+            obj->type = rhs_type;
+        }
+        else if(rhs_type->kind == TYPE_ANON_ARRAY)
+        {
+            if(decl->init_expr->expr.init_list.size == 0)
+            {
+                sic_error_at(obj->loc, "Cannot assign auto-sized array type to array literal with length 0.");
+                goto ERR;
+            }
+
+            obj->type->kind = TYPE_STATIC_ARRAY;
+            obj->type->array.static_len = decl->init_expr->expr.init_list.max + 1;
+            implicit_cast(&decl->init_expr, obj->type);
+        }
+    }
+    else
+        implicit_cast(&decl->init_expr, obj->type);
+
+    push_obj(decl->obj);
+    return;
+ERR:
+    decl->obj->kind = OBJ_INVALID;
+    decl->obj->status = STATUS_RESOLVED;
     push_obj(decl->obj);
 }
 

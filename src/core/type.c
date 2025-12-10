@@ -45,6 +45,7 @@ TYPE_DEF(s_uptr    , TYPE_ALIAS);
 TYPE_DEF(s_isz     , TYPE_ALIAS);
 TYPE_DEF(s_usz     , TYPE_ALIAS);
 TYPE_DEF(s_anon_arr, TYPE_ANON_ARRAY);
+TYPE_DEF(s_auto    , TYPE_AUTO);
 
 // Builtin-types
 Type* const g_type_invalid  = &s_invalid;
@@ -67,6 +68,7 @@ Type* const g_type_usz      = &s_usz;
 Type* const g_type_float    = &s_float;
 Type* const g_type_double   = &s_double;
 Type* const g_type_anon_arr = &s_anon_arr;
+Type* const g_type_auto     = &s_auto;
 
 
 static Type* builtin_type_lookup[] = {
@@ -163,9 +165,8 @@ Type* type_func_ptr(FuncSignature* signature)
 Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
     SIC_ASSERT(elem_ty != NULL);
-    SIC_ASSERT(size_expr != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_PRE_SEMA_ARRAY;
+    new_type->kind = TYPE_PS_ARRAY;
     new_type->array.elem_type = elem_ty;
     new_type->array.size_expr = size_expr;
     new_type->canonical = new_type;
@@ -217,7 +218,7 @@ bool type_equal(Type* t1, Type* t2)
         return true;
     }
     case TYPE_STATIC_ARRAY:
-        return t1->array.ss_size == t2->array.ss_size &&
+        return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_RUNTIME_ARRAY:
         return false;
@@ -229,10 +230,10 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_UNION:
         return t1->user_def == t2->user_def;
     case TYPE_INVALID:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -253,7 +254,7 @@ ByteSize type_size(Type* ty)
     case TYPE_FUNC_PTR:
         return 8;
     case TYPE_STATIC_ARRAY:
-        return type_size(ty->array.elem_type) * ty->array.ss_size;
+        return type_size(ty->array.elem_type) * ty->array.static_len;
     case TYPE_STRUCT:
         return ty->user_def->struct_.size;
     case TYPE_UNION:
@@ -265,10 +266,10 @@ ByteSize type_size(Type* ty)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -303,10 +304,10 @@ uint32_t type_alignment(Type* ty)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -345,7 +346,7 @@ const char* type_to_string(Type* type)
         return str_dupn(scratch_string(), g_scratch.len);
     }
     case TYPE_STATIC_ARRAY:
-        return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.ss_size);
+        return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.static_len);
     case TYPE_RUNTIME_ARRAY:
         return str_format("%s[]", type_to_string(type->array.elem_type));
     case TYPE_ALIAS:
@@ -357,9 +358,10 @@ const char* type_to_string(Type* type)
     case TYPE_STRUCT:
     case TYPE_UNION:
         return str_format("%s", type->user_def->symbol);
+    case TYPE_PS_ARRAY:
+        return str_format("%s[*]", type_to_string(type->array.elem_type));
     case TYPE_INVALID:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
+    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:

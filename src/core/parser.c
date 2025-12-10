@@ -511,10 +511,8 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         case TOKEN_AUTO:
             if(ty != NULL)
                 ERROR_AND_RET(false, "Cannot combine auto with previous type specifier.");
+            ty = g_type_auto;
             ambiguous = false;
-            ty = CALLOC_STRUCT(Type);
-            ty->kind = TYPE_AUTO;
-            ty->auto_loc = peek(l)->loc;
             advance(l);
             continue;
         case TOKEN_FN:
@@ -579,6 +577,20 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
                 parser_error(l, "Exceeded maximum dimensions for array type (64 dimensions).");
                 return false;
             }
+            if(peek(l)->kind == TOKEN_ASTERISK && peek_next(l)->kind == TOKEN_RBRACKET)
+            {
+                // Automatically sized array, definitely a type.
+                ty = CALLOC_STRUCT(Type);
+                ty->kind = TYPE_PS_USER;
+                ty->unresolved.sym = ident_sym;
+                ty->unresolved.loc = ident_loc;
+                for(uint32_t i = 0; i < dims; ++i)
+                    ty = type_array_of(ty, temp_buf[i]);
+                ty = type_array_of(ty, NULL);
+                advance(l);
+                advance(l);
+                goto TYPE_SUFFIX;
+            }
             temp_buf[dims] = parse_expr(l);
             if(expr_is_bad(temp_buf[dims++]) || !consume(l, TOKEN_RBRACKET))
                 return false;
@@ -587,7 +599,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         if(tok_equal(l, TOKEN_IDENT) || tok_equal(l, TOKEN_ASTERISK)) // Treat it as a type
         {
             ty = CALLOC_STRUCT(Type);
-            ty->kind = TYPE_PRE_SEMA_USER;
+            ty->kind = TYPE_PS_USER;
             ty->unresolved.sym = ident_sym;
             ty->unresolved.loc = ident_loc;
             for(uint32_t i = 0; i < dims; ++i)
@@ -596,7 +608,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         else
         {
             ASTExpr* cur = CALLOC_STRUCT(ASTExpr);
-            cur->kind = EXPR_PRE_SEMANTIC_IDENT;
+            cur->kind = EXPR_PS_IDENT;
             cur->loc = ident_loc;
             cur->expr.pre_sema_ident.sym = ident_sym;
             for(uint32_t i = 0; i < dims; ++i)
@@ -614,7 +626,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
     else if(ty == NULL)
     {
         ty = CALLOC_STRUCT(Type);
-        ty->kind = TYPE_PRE_SEMA_USER;
+        ty->kind = TYPE_PS_USER;
         ty->unresolved.sym = peek(l)->sym;
         ty->unresolved.loc = peek(l)->loc;
         advance(l);
@@ -625,11 +637,21 @@ TYPE_SUFFIX:
     {
         if(try_consume(l, TOKEN_LBRACKET))
         {
-            // TODO: Add auto detection for size when initialized.
-            //       For now size must be specified as an expression.
             ASTExpr* size_expr;
-            ASSIGN_EXPR_OR_RET(size_expr, false);
-            CONSUME_OR_RET(TOKEN_RBRACKET, false);
+            if(peek(l)->kind == TOKEN_ASTERISK &&
+               peek_next(l)->kind == TOKEN_RBRACKET)
+            {
+                // We have an array whose size is to be determined.
+                size_expr = NULL;
+                advance(l);
+                advance(l);
+            }
+            else
+            {
+                ASSIGN_EXPR_OR_RET(size_expr, false);
+                CONSUME_OR_RET(TOKEN_RBRACKET, false);
+            }
+
             ty = type_array_of(ty, size_expr);
             continue;
         }
@@ -1142,7 +1164,7 @@ static ASTExpr* parse_invalid(UNUSED Lexer* l)
 
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
-    ASTExpr* expr = new_expr(l, EXPR_PRE_SEMANTIC_IDENT);
+    ASTExpr* expr = new_expr(l, EXPR_PS_IDENT);
     if(!parse_namespace(l, &expr->expr.pre_sema_ident.ns, true))
         return BAD_EXPR;
     expr->expr.pre_sema_ident.sym = peek(l)->sym;

@@ -128,13 +128,14 @@ typedef enum : uint8_t
     EXPR_IDENT,
     EXPR_MEMBER_ACCESS,
     EXPR_POSTFIX,
-    EXPR_PRE_SEMANTIC_IDENT,
+    EXPR_PS_IDENT,
     EXPR_STRUCT_INIT_LIST,
     EXPR_TERNARY,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
     EXPR_UNRESOLVED_ARR,
     EXPR_UNRESOLVED_DOT,
+    EXPR_ZEROED_OUT,
 
     EXPR_CT_SIZEOF,
 } ExprKind;
@@ -200,7 +201,8 @@ typedef enum
 {
     RES_NORMAL           = 0,
     RES_ALLOW_VOID       = 1 << 0,
-    RES_ALLOW_INFERRED   = 1 << 1,
+    RES_ALLOW_AUTO       = 1 << 1,
+    RES_ALLOW_AUTO_ARRAY = 1 << 2,
 } ResolutionFlags;
 
 typedef enum : uint8_t
@@ -413,11 +415,11 @@ typedef enum : uint8_t
     TYPE_UNION,
     TYPE_USER_DEF_END   = TYPE_UNION,
 
-    // Pre-semantic types.
-    TYPE_PRE_SEMA_ARRAY,
-    TYPE_PRE_SEMA_USER,
+    // Pre-semantic types. After analyzing the type these should never appear
     TYPE_ANON_ARRAY, // Anonymous array literals before being casted (i.e. [4, 3])
     TYPE_AUTO,
+    TYPE_PS_ARRAY,
+    TYPE_PS_USER,
     TYPE_TYPEOF,
     __TYPE_COUNT,
 } TypeKind;

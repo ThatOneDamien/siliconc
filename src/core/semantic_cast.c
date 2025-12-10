@@ -247,6 +247,7 @@ static bool rule_str_to_ptr(CastParams* params)
 {
     TypeKind kind = params->to->pointer_base->kind;
 
+
     if(kind != TYPE_CHAR && kind != TYPE_UBYTE)
     {
         cast_error(params, "String literal can only be casted to char* or ubyte*.");
@@ -264,13 +265,13 @@ static bool rule_anon_to_arr(CastParams* params)
         cast_error(params, "Array cannot be assigned because its size is unknown at compile time (try memcpy).");
         return false;
     }
-    uint64_t arr_size = params->to->array.ss_size; 
+    uint64_t arr_size = params->to->array.static_len; 
     Type* elem_type = params->to->array.elem_type;
     if(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING)
     {
-        if(elem_type->kind != TYPE_CHAR)
+        if(elem_type->kind != TYPE_CHAR && elem_type->kind != TYPE_UBYTE)
         {
-            cast_error(params, "String literal can only be casted to char[].");
+            cast_error(params, "String literal can only be casted to char[] or ubyte[].");
             return false;
         }
         uint64_t str_len = params->inner->expr.constant.val.str_len;

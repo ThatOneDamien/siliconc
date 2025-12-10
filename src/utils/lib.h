@@ -121,6 +121,7 @@ static inline void sic_fatal_error(const char* message, ...)
     va_start(va, message);
     sic_diagnosticv(DIAG_FATAL, message, va);
     va_end(va);
+    SIC_ERROR_DBG("Breaking because of fatal error!");
     exit(EXIT_FAILURE);
 }
 

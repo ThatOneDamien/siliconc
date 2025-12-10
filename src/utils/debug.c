@@ -19,7 +19,7 @@ static inline const char* debug_type_to_str(Type* type)
         return "Unknown";
     if(type->status == STATUS_UNRESOLVED)
         return "Unresolved";
-    if(type->kind == TYPE_PRE_SEMA_ARRAY)
+    if(type->kind == TYPE_PS_ARRAY)
         return str_format("Pre-Sema-Array %s[]", type_to_string(type->array.elem_type));
     return type_to_string(type);
 }
@@ -228,7 +228,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                s_unary_op_strs[expr->expr.unary.kind], 
                debug_type_to_str(expr->type));
         return;
-    case EXPR_PRE_SEMANTIC_IDENT: {
+    case EXPR_PS_IDENT: {
         printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
                expr->expr.pre_sema_ident.sym, debug_type_to_str(expr->type));
         return;

@@ -57,6 +57,7 @@ static void     emit_switch(CodegenContext* c, ASTStmt* stmt);
 static void     emit_while(CodegenContext* c, ASTStmt* stmt);
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr);
 static void     emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* expr, GenValue* result);
 static void     emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result);
@@ -71,13 +72,12 @@ static void     emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 
 static void     emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
-static void     emit_assign(CodegenContext* c, GenValue* ptr, GenValue* value, GenValue* result);
+static void     emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result);
 static void     emit_br(CodegenContext* c, LLVMBasicBlockRef block);
 static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
 
 static LLVMValueRef      emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
 static void              emit_var_alloca(CodegenContext* c, Object* obj);
-// static LLVMValueRef      emit_const_zero(CodegenContext* c, Type* type);
 static LLVMBasicBlockRef create_basic_block(const char* label);
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label);
 static void              append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
@@ -345,10 +345,8 @@ static void emit_declaration(CodegenContext* c, ASTDeclaration* decl)
     var.kind = GEN_VAL_ADDRESS;
     if(decl->init_expr != NULL)
     {
-        GenValue init = emit_expr(c, decl->init_expr);
-        load_rvalue(c, &init);
         GenValue temp;
-        emit_assign(c, &var, &init, &temp);
+        emit_assign(c, &var, decl->init_expr, &temp);
     }
 }
 
@@ -540,8 +538,7 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         emit_array_access(c, expr, &result);
         return result;
     case EXPR_ARRAY_INIT_LIST:
-        // emit_array_init_list(c, expr, &result);
-        return result;
+        SIC_TODO();
     case EXPR_BINARY:
         emit_binary(c, expr, &result);
         return result;
@@ -577,8 +574,10 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_UNARY:
         emit_unary(c, expr, &result);
         return result;
+    case EXPR_ZEROED_OUT:
+        SIC_TODO();
     case EXPR_INVALID:
-    case EXPR_PRE_SEMANTIC_IDENT:
+    case EXPR_PS_IDENT:
     case EXPR_TYPE_IDENT:
     case EXPR_UNRESOLVED_ARR:
     case EXPR_UNRESOLVED_DOT:
@@ -600,36 +599,87 @@ static void emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result
     result->kind = GEN_VAL_ADDRESS;
 }
 
+static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* expr, GenValue* result)
+{
+    SIC_ASSERT(expr->kind == EXPR_ARRAY_INIT_LIST);
+    result->kind = GEN_VAL_ADDRESS;
+    if(expr->const_eval)
+    {
+        LLVMValueRef global = LLVMAddGlobal(c->module_ref, get_llvm_type(c, expr->type), "__anon.const");
+        LLVMSetGlobalConstant(global, true);
+        LLVMSetLinkage(global, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddress(global, LLVMGlobalUnnamedAddr);
+        LLVMSetInitializer(global, emit_const_array_init_list(c, expr));
+        LLVMBuildMemCpy(c->builder, 
+                        lhs->value, type_alignment(lhs->type), 
+                        global, type_alignment(expr->type), 
+                        LLVMConstInt(LLVMInt64Type(), type_size(expr->type), false));
+        result->value = global;
+        return;
+    }
+
+    SIC_ASSERT(lhs->type->kind == TYPE_STATIC_ARRAY);
+    InitList* list = &expr->expr.init_list;
+    for(uint64_t i = 0; i < lhs->type->array.static_len; ++i)
+    {
+        LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usz), i, false);
+        GenValue index;
+        GenValue temp;
+        index.value = LLVMBuildGEP2(c->builder, get_llvm_type(c, lhs->type->array.elem_type), lhs->value, &indval, 1, "");
+        index.kind = GEN_VAL_ADDRESS;
+        index.type = lhs->type->array.elem_type;
+        for(uint32_t j = 0; j < list->size; ++j)
+        {
+            if(list->data[j].const_index == i)
+            {
+                ASTExpr cast;
+                cast.kind = EXPR_CAST;
+                cast.type = expr->type->array.elem_type;
+                cast.expr.cast.inner = list->data[j].init_value;
+                perform_cast(&cast);
+                emit_assign(c, &index, &cast, &temp);
+                goto NEXT_ENTRY;
+            }
+        }
+        
+        LLVMBuildStore(c->builder, LLVMConstNull(get_llvm_type(c, index.type)), index.value);
+
+    NEXT_ENTRY:;
+    }
+
+    result->value = lhs->value;
+}
+
 static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
     ASTExprBinary* binary = &expr->expr.binary;
     GenValue lhs = emit_expr(c, binary->lhs);
-    if(binary->kind == BINARY_LOG_AND || binary->kind == BINARY_LOG_OR)
-    {
-        load_rvalue(c, &lhs);
-        emit_logical_andor(c, &lhs, binary->rhs, result, binary->kind == BINARY_LOG_OR);
-        return;
-    }
-    GenValue rhs = emit_expr(c, binary->rhs);
-    load_rvalue(c, &rhs);
+    GenValue rhs;
     result->kind = GEN_VAL_RVALUE;
-
     switch(binary->kind)
     {
     case BINARY_ADD:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         emit_add(c, &lhs, &rhs, result);
         return;
     case BINARY_SUB:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         emit_sub(c, &lhs, &rhs, result);
         return;
     case BINARY_MUL:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildMul(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_DIV:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         if(type_is_signed(expr->type))
             result->value = LLVMBuildSDiv(c->builder, lhs.value, rhs.value, "");
         else if(type_is_unsigned(expr->type))
@@ -639,6 +689,8 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         return;
     case BINARY_MOD:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         if(type_is_signed(expr->type))
             result->value = LLVMBuildSRem(c->builder, lhs.value, rhs.value, "");
         else if(type_is_unsigned(expr->type))
@@ -646,68 +698,100 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         else
             result->value = LLVMBuildFRem(c->builder, lhs.value, rhs.value, "");
         return;
+    case BINARY_LOG_OR:
+        load_rvalue(c, &lhs);
+        emit_logical_andor(c, &lhs, binary->rhs, result, true);
+        return;
+    case BINARY_LOG_AND:
+        load_rvalue(c, &lhs);
+        emit_logical_andor(c, &lhs, binary->rhs, result, false);
+        return;
     case BINARY_EQ:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOEQ, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntEQ, lhs.value, rhs.value, "");                    
         return;
     case BINARY_NE:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealONE, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntNE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_LT:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSLT : LLVMIntULT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_LE:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSLE : LLVMIntULE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GT:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGT, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSGT : LLVMIntUGT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GE:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGE, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSGE : LLVMIntUGE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_SHL:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildShl(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_LSHR:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildLShr(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_ASHR:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildAShr(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_BIT_OR:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildOr(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_BIT_XOR:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildXor(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_BIT_AND:
         load_rvalue(c, &lhs);
+        rhs = emit_expr(c, binary->rhs);
+        load_rvalue(c, &rhs);
         result->value = LLVMBuildAnd(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_ASSIGN:
-        emit_assign(c, &lhs, &rhs, result);
+        emit_assign(c, &lhs, binary->rhs, result);
         return;
     case BINARY_INVALID:
     case BINARY_ADD_ASSIGN:
@@ -721,8 +805,6 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     case BINARY_SHL_ASSIGN:
     case BINARY_LSHR_ASSIGN:
     case BINARY_ASHR_ASSIGN:
-    case BINARY_LOG_OR:
-    case BINARY_LOG_AND:
         break;
     }
     SIC_UNREACHABLE();
@@ -858,7 +940,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
         return emit_const_array_init_list(c, expr);
     case EXPR_CONSTANT: {
         ASTExprConstant* constant = &expr->expr.constant;
-        uint64_t size = expr->type->array.ss_size;
+        uint64_t size = expr->type->array.static_len;
         if(constant->kind == CONSTANT_STRING && type_is_array(expr->type))
         {
             SIC_ASSERT(size > constant->val.str_len);
@@ -893,7 +975,7 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     if(list->size == 0)
         return LLVMConstNull(get_llvm_type(c, expr->type));
 
-    LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, expr->type->array.ss_size);
+    LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, expr->type->array.static_len);
     for(uint32_t i = 0; i < list->size; ++i)
     {
         ASTExpr cast;
@@ -903,12 +985,12 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
         perform_cast(&cast);
         values[list->data[i].const_index] = emit_const_initializer(c, &cast);
     }
-    for(uint32_t i = 0; i < expr->type->array.ss_size; ++i)
+    for(uint32_t i = 0; i < expr->type->array.static_len; ++i)
     {
         if(values[i] == NULL)
             values[i] = LLVMConstNull(get_llvm_type(c, expr->type->array.elem_type));
     }
-    return LLVMConstArray2(get_llvm_type(c, expr->type->array.elem_type), values, expr->type->array.ss_size);
+    return LLVMConstArray2(get_llvm_type(c, expr->type->array.elem_type), values, expr->type->array.static_len);
 }
 
 
@@ -1106,20 +1188,34 @@ static void emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValu
         result->value = LLVMBuildAdd(c->builder, left->value, right->value, "");
 }
 
-static void emit_assign(CodegenContext* c, GenValue* ptr, GenValue* value, GenValue* result)
+static void emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result)
 {
-    result->value = value->value;
-    if(type_is_trivially_copyable(value->type))
+    if(rhs->kind == EXPR_ARRAY_INIT_LIST)
     {
-        LLVMBuildStore(c->builder, value->value, ptr->value);
+        emit_array_initialization(c, lhs, rhs, result);
+        return;
     }
-    else
+
+    GenValue rhsval = emit_expr(c, rhs);
+    if(rhsval.kind == GEN_VAL_ADDRESS)
     {
-        LLVMBuildMemCpy(c->builder, 
-                        ptr->value, type_alignment(ptr->type), 
-                        value->value, type_alignment(value->type), 
-                        LLVMConstInt(LLVMInt64Type(), type_size(value->type), false));
+        if(type_is_trivially_copyable(rhs->type))
+            load_rvalue(c, &rhsval);
+        else
+        {
+            LLVMBuildMemCpy(c->builder, 
+                            lhs->value, type_alignment(lhs->type), 
+                            rhsval.value, type_alignment(rhs->type), 
+                            LLVMConstInt(LLVMInt64Type(), type_size(rhs->type), false));
+            result->kind = GEN_VAL_ADDRESS;
+            result->value = rhsval.value;
+            return;
+        }
     }
+
+    LLVMBuildStore(c->builder, rhsval.value, lhs->value);
+    result->kind = GEN_VAL_RVALUE;
+    result->value = rhsval.value;
 }
 
 static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
@@ -1167,40 +1263,6 @@ static void emit_var_alloca(CodegenContext* c, Object* obj)
     }
     obj->llvm_ref = emit_alloca(c, obj->symbol, get_llvm_type(c, obj->type), type_alignment(obj->type));
 }
-
-// static LLVMValueRef emit_const_zero(CodegenContext* c, Type* type)
-// {
-//     switch(type->canonical->kind)
-//     {
-//     case TYPE_VOID:
-//     case INT_TYPES:
-//         return LLVMConstInt(get_llvm_type(c, type), 0, false);
-//     case FLOAT_TYPES:
-//         return LLVMConstReal(get_llvm_type(c, type), 0.0);
-//     case TYPE_POINTER:
-//     case TYPE_FUNC_PTR:
-//         return LLVMConstPointerNull(c->ptr_type);
-//     case TYPE_STATIC_ARRAY:
-//     case TYPE_RUNTIME_ARRAY:
-//     case TYPE_ENUM:
-//     case TYPE_ENUM_DISTINCT:
-//         return LLVMConstInt(get_llvm_type(c, type->user_def->enum_.underlying), 0, false);
-//     case TYPE_STRUCT:
-//     case TYPE_UNION:
-//         SIC_TODO();
-//     case TYPE_INVALID:
-//     case TYPE_ALIAS:
-//     case TYPE_ALIAS_DISTINCT:
-//     case TYPE_PRE_SEMA_ARRAY:
-//     case TYPE_PRE_SEMA_USER:
-//     case TYPE_ANON_ARRAY:
-//     case TYPE_AUTO:
-//     case TYPE_TYPEOF:
-//     case __TYPE_COUNT:
-//         break;
-//     }
-//     SIC_UNREACHABLE();
-// }
 
 static LLVMBasicBlockRef create_basic_block(const char* label)
 {
@@ -1278,7 +1340,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return c->ptr_type;
     case TYPE_STATIC_ARRAY:
         if(type->llvm_ref != NULL) return type->llvm_ref;
-        return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.ss_size);
+        return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.static_len);
     case TYPE_RUNTIME_ARRAY:
         if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
@@ -1312,8 +1374,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
@@ -1414,8 +1476,8 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:

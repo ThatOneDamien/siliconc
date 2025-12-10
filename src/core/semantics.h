@@ -29,6 +29,7 @@ struct SemaContext
     bool         in_ptr : 1;
     bool         in_typedef : 1;
     bool         in_global_init : 1;
+    bool         check_lvalue : 1;
 };
 
 extern SemaContext* g_sema;

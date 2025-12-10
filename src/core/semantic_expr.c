@@ -39,6 +39,7 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr* inner);
 
 static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(ASTExpr** expr);
+static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
 bool analyze_expr_no_set(ASTExpr** expr_ref)
 {
@@ -63,7 +64,7 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
     case EXPR_POSTFIX:
         return analyze_expr(&expr->expr.unary.inner) && 
                analyze_incdec(expr, expr->expr.unary.inner);
-    case EXPR_PRE_SEMANTIC_IDENT:
+    case EXPR_PS_IDENT:
         return analyze_ident(expr_ref);
     case EXPR_STRUCT_INIT_LIST:
         break;
@@ -84,10 +85,12 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
     case EXPR_TYPE_IDENT:
+    case EXPR_ZEROED_OUT:
         break;
     }
     SIC_UNREACHABLE();
 }
+
 
 static bool analyze_array_access(ASTExpr* expr)
 {
@@ -99,24 +102,57 @@ static bool analyze_array_access(ASTExpr* expr)
     ANALYZE_EXPR_SET_VALID(&access->index_expr);
     IF_INVALID_RET();
     ASTExpr* arr = access->array_expr;
-    ASTExpr* index = access->index_expr;
+    Type* arr_t = arr->type->canonical;
 
-    if(!type_is_array(arr->type) && !type_is_pointer(arr->type))
+    if(arr_t->kind == TYPE_ANON_ARRAY)
     {
         ERROR_AND_RET(expr->loc, 
-                      "Attempted to access element of non-array and non-pointer type \'%s\'",
+                      "Cannot access element of array literal. Please first assign the array to a const "
+                      "literal or cast it to a typed array (i.e. int[*]), then perform the access.");
+    }
+    if(!type_is_array(arr_t) && !type_is_pointer(arr_t))
+    {
+        ERROR_AND_RET(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
                       type_to_string(arr->type));
     }
 
-    if(arr->type->kind == TYPE_STATIC_ARRAY && index->kind == EXPR_CONSTANT && 
-       index->expr.constant.val.i >= arr->type->array.ss_size)
-    {
-        sic_diagnostic_at(expr->loc, DIAG_WARNING,
-                          "Array index will overflow the size of the array.");
+    Type* elem_t = expr->type = type_pointer_base(arr_t);
+    if(type_reduce(elem_t)->kind == TYPE_VOID)
+        ERROR_AND_RET(expr->loc, "Cannot access element of void array. Consider casting to another type.");
+    if(!implicit_cast(&access->index_expr, g_type_usz))
         return false;
-    }
 
-    expr->type = type_pointer_base(arr->type);
+    ASTExpr* index = access->index_expr;
+
+    if(index->kind == EXPR_CONSTANT)
+    {
+        uint64_t idx = index->expr.constant.val.i;
+        if(arr_t->kind == TYPE_STATIC_ARRAY && idx >= arr_t->array.static_len)
+        {
+            sic_diagnostic_at(expr->loc, DIAG_WARNING,
+                              "Index of access(%lu) will overflow the length of the array(%lu).",
+                              idx, arr_t->array.static_len);
+            return true;
+        }
+
+        if(arr->kind == EXPR_ARRAY_INIT_LIST)
+        {
+            InitList* list = &arr->expr.init_list;
+            for(uint32_t i = 0; i < list->size; ++i)
+            {
+                if(list->data[i].const_index == idx)
+                {
+                    expr->kind = EXPR_CAST;
+                    expr->expr.cast.inner = list->data[i].init_value;
+                    perform_cast(expr);
+                    return true;
+                }
+            }
+
+            convert_to_const_zero(expr, expr->type);
+        }
+    }
+    
     return true;
 }
 
@@ -178,6 +214,7 @@ static bool analyze_array_init_list(ASTExpr* expr)
     }
 
     expr->const_eval = is_constant;
+    list->max = max;
     return valid;
 }
 
@@ -189,11 +226,11 @@ static inline bool analyze_binary(ASTExpr* expr)
     BinaryOpKind kind = expr->expr.binary.kind;
     g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(lhs);
-    if(kind != BINARY_ASSIGN)
-    {
-        g_sema->ident_mask = IDENT_VAR_ONLY;
-        ANALYZE_EXPR_SET_VALID(rhs);
-    }
+    if(kind == BINARY_ASSIGN)
+        return analyze_assign(expr, lhs, rhs);
+
+    g_sema->ident_mask = IDENT_VAR_ONLY;
+    ANALYZE_EXPR_SET_VALID(rhs);
     IF_INVALID_RET();
     switch(expr->expr.binary.kind)
     {
@@ -225,8 +262,6 @@ static inline bool analyze_binary(ASTExpr* expr)
     case BINARY_BIT_XOR:
     case BINARY_BIT_AND:
         return analyze_bit_op(expr, lhs, rhs);
-    case BINARY_ASSIGN:
-        return analyze_assign(expr, lhs, rhs);
     case BINARY_ADD_ASSIGN:
     case BINARY_SUB_ASSIGN:
     case BINARY_MUL_ASSIGN:
@@ -240,6 +275,7 @@ static inline bool analyze_binary(ASTExpr* expr)
     case BINARY_ASHR_ASSIGN:
         return analyze_op_assign(expr, lhs, rhs);
     case BINARY_INVALID:
+    case BINARY_ASSIGN:
         break;
     }
     SIC_UNREACHABLE();
@@ -258,14 +294,12 @@ static bool analyze_call(ASTExpr* expr)
     FuncSignature* sig = func_type->func_ptr;
     if(call->args.size < sig->params.size)
     {
-        ERROR_AND_RET(expr->loc, 
-                      "Too few arguments passed to function. Expected %s%u, have %u.",
+        ERROR_AND_RET(expr->loc, "Too few arguments passed to function. Expected %s%u, have %u.",
                       sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
-        ERROR_AND_RET(expr->loc, 
-                      "Too many arguments passed to function. Expected %u, have %u.",
+        ERROR_AND_RET(expr->loc, "Too many arguments passed to function. Expected %u, have %u.",
                       sig->params.size, call->args.size);
     }
 
@@ -314,6 +348,7 @@ static bool analyze_ident(ASTExpr** expr_ref)
         expr->kind = EXPR_CONSTANT;
         expr->expr.constant.kind = CONSTANT_INTEGER;
         expr->expr.constant.val.i = ident->enum_val.const_val;
+        expr->const_eval = true;
         return true;
     case OBJ_FUNC:
         if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_FUNC))
@@ -341,8 +376,8 @@ static bool analyze_ident(ASTExpr** expr_ref)
             analyze_global_var(ident);
             if(ident->kind == OBJ_INVALID)
                 return false;
-
         }
+
         if(g_sema->in_global_init && ident->var.kind == VAR_GLOBAL &&
            !analyze_global_var(ident))
         {
@@ -430,7 +465,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
         {
             expr->kind = EXPR_CONSTANT;
             expr->expr.constant.kind = CONSTANT_INTEGER;
-            expr->expr.constant.val.i = parent->type->array.ss_size;
+            expr->expr.constant.val.i = parent->type->array.static_len;
             expr->type = g_type_usz;
             return true;
         }
@@ -462,8 +497,8 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_PRE_SEMA_ARRAY:
-    case TYPE_PRE_SEMA_USER:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
@@ -581,7 +616,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         // array. This check is not done for ds-arrays or when the index expression 
         // is calculated at runtime. 
         if(left->type->kind == TYPE_STATIC_ARRAY && right->kind == EXPR_CONSTANT && 
-           right->expr.constant.val.i >= left->type->array.ss_size)
+           right->expr.constant.val.i >= left->type->array.static_len)
         {
             sic_diagnostic_at(expr->loc, DIAG_WARNING,
                               "Array index will overflow the size of the array.");
@@ -660,28 +695,20 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 
 static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
-    ASTExpr* left = *lhs;
-    ASTExpr* right = *rhs;
+    Type* lhs_type = (*lhs)->type;
+    Type* rhs_type = (*rhs)->type;
+    Type* lhs_ctype = lhs_type->canonical;
+    Type* rhs_ctype = rhs_type->canonical;
     expr->type = g_type_bool;
-    bool left_is_pointer = type_is_pointer(left->type);
-    if(type_is_pointer(right->type) && !left_is_pointer)
-    {
-        left_is_pointer = true;
-        ASTExpr** temp = lhs;
-        lhs = rhs;
-        rhs = temp;
-        left = right;
-        right = *rhs;
-    }
-    if(left_is_pointer)
-        return implicit_cast(rhs, left->type);
+    if(type_is_pointer(lhs_ctype))
+        return implicit_cast(rhs, lhs_type);
+    if(type_is_pointer(rhs_ctype))
+        return implicit_cast(lhs, rhs_type);
 
-    right = *rhs;
-
-    if(!type_is_numeric(left->type) || !type_is_numeric(right->type))
+    if(!type_is_numeric(lhs_ctype) || !type_is_numeric(rhs_ctype))
     {
         sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                   type_to_string(left->type), type_to_string(right->type));
+                   type_to_string(lhs_type), type_to_string(rhs_type));
         return false;
     }
 
@@ -914,30 +941,31 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
 
 static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
 {
-    ASTExpr* e1 = *expr1;
-    ASTExpr* e2 = *expr2;
-    if(!type_is_numeric(e1->type) || !type_is_numeric(e2->type))
+    Type* t1  = (*expr1)->type->canonical;
+    Type* t2  = (*expr2)->type->canonical;
+    if(!type_is_numeric(t1) || !type_is_numeric(t2))
     {
         sic_error_at(parent->loc, "Invalid operand types %s and %s.",
-                   type_to_string(e1->type), type_to_string(e2->type));
+                     type_to_string((*expr1)->type), type_to_string((*expr2)->type));
         return false;
     }
 
-    int w1 = type_is_float(e1->type) * 100 + e1->type->builtin.byte_size + type_is_unsigned(e1->type);
-    int w2 = type_is_float(e2->type) * 100 + e2->type->builtin.byte_size + type_is_unsigned(e2->type);
+    int w1 = type_is_float(t1) * 100 + t1->builtin.byte_size + type_is_unsigned(t1);
+    int w2 = type_is_float(t2) * 100 + t2->builtin.byte_size + type_is_unsigned(t2);
 
     if(w1 < w2)
     {
         ASTExpr** temp = expr1;
         expr1 = expr2;
         expr2 = temp;
+        t1 = t2;
     }
 
-    if((*expr1)->type->builtin.byte_size < 4)
+    if(t1->builtin.byte_size < 4)
         implicit_cast(expr1, g_type_int);
 
     implicit_cast(expr2, (*expr1)->type);
-    SIC_ASSERT((*expr1)->type->kind == (*expr2)->type->kind);
+    SIC_ASSERT(type_equal((*expr1)->type, (*expr2)->type));
     return true;
 }
 
@@ -946,4 +974,50 @@ static void promote_int_type(ASTExpr** expr)
     SIC_ASSERT(type_is_integer((*expr)->type));
     if(type_size((*expr)->type) < 4 && !implicit_cast(expr, g_type_int))
         SIC_UNREACHABLE();
+}
+
+static void convert_to_const_zero(ASTExpr* expr, Type* type)
+{
+    expr->type = type;
+    type = type_reduce(type);
+    expr->const_eval = true;
+    switch(type->kind)
+    {
+    case INT_TYPES:
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        expr->expr.constant.val.i = 0;
+        return;
+    case FLOAT_TYPES:
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_FLOAT;
+        expr->expr.constant.val.f = 0.0;
+        return;
+    case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_POINTER;
+        expr->expr.constant.val.i = 0;
+        return;
+    case TYPE_STATIC_ARRAY:
+    case TYPE_STRUCT:
+    case TYPE_UNION:
+        expr->kind = EXPR_ZEROED_OUT;
+        return;
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_RUNTIME_ARRAY:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_ANON_ARRAY:
+    case TYPE_AUTO:
+    case TYPE_TYPEOF:
+    case __TYPE_COUNT:
+        break;
+    }
+    SIC_UNREACHABLE();
 }
