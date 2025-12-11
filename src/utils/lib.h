@@ -91,6 +91,7 @@ void   arena_init(MemArena* arena, size_t capacity);
 void*  arena_malloc(MemArena* arena, size_t size, uint32_t align);
 void*  arena_calloc(MemArena* arena, size_t size, uint32_t align);
 void   arena_free(MemArena* arena, const void* ptr);
+void*  arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, size_t prev_size);
 void   global_arenas_init(void);
 
 // error.c - Error functions
@@ -200,6 +201,7 @@ static inline void* crealloc(void* ptr, size_t size)
 #define MALLOC(size, align)         cmalloc(size)
 #define CALLOC(nmemb, size, align)  ccalloc(nmemb, size)
 #define FREE(ptr)
+#define REALLOC(ptr, sz, al, psz)   crealloc(ptr, size)
 #define MALLOC_STRUCT(type)         cmalloc(sizeof(type))
 #define CALLOC_STRUCT(type)         ccalloc(1, sizeof(type))
 #define MALLOC_STRUCTS(type, count) cmalloc(sizeof(type) * (count))
@@ -208,6 +210,7 @@ static inline void* crealloc(void* ptr, size_t size)
 #define MALLOC(size, align)         arena_malloc(&g_global_arena, size, align)
 #define CALLOC(nmemb, size, align)  arena_calloc(&g_global_arena, (nmemb) * (size), align)
 #define FREE(ptr)                   arena_free(&g_global_arena, ptr)
+#define REALLOC(ptr, sz, al, psz)   arena_realloc(&g_global_arena, ptr, sz, al, psz)
 #define MALLOC_STRUCT(type)         arena_malloc(&g_global_arena, sizeof(type), _Alignof(type))
 #define CALLOC_STRUCT(type)         arena_calloc(&g_global_arena, sizeof(type), _Alignof(type))
 #define MALLOC_STRUCTS(type, count) arena_malloc(&g_global_arena, sizeof(type) * (count), _Alignof(type))

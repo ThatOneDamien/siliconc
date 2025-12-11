@@ -314,7 +314,7 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
         analyze_continue(stmt);
         return;
     case STMT_EXPR_STMT:
-        analyze_expr(&stmt->stmt.expr);
+        analyze_expr(stmt->stmt.expr);
         return;
     case STMT_FOR:
         analyze_for(stmt);
@@ -390,7 +390,7 @@ static void analyze_for(ASTStmt* stmt)
     if(for_stmt->cond_expr != NULL)
         implicit_cast(&for_stmt->cond_expr, g_type_bool);
     if(for_stmt->loop_expr != NULL)
-        analyze_expr(&for_stmt->loop_expr);
+        analyze_expr(for_stmt->loop_expr);
 
     BlockContext context = g_sema->block_context;
     g_sema->block_context |= BLOCK_LOOP;
@@ -459,7 +459,7 @@ static void analyze_switch(ASTStmt* stmt)
     ASTSwitch* swi = &stmt->stmt.switch_;
     uint32_t scope;
     bool has_default = false;
-    analyze_expr(&swi->expr);
+    analyze_expr(swi->expr);
     if(!type_is_integer(swi->expr->type))
     {
         sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
@@ -553,7 +553,7 @@ static void analyze_declaration(ASTDeclaration* decl)
         }
 
     }
-    else if(!analyze_expr(&decl->init_expr))
+    else if(!analyze_expr(decl->init_expr))
         goto ERR;
 
     Type* rhs_type = decl->init_expr->type;
@@ -609,8 +609,8 @@ ERR:
 
 static void analyze_swap(ASTStmt* stmt)
 {
-    analyze_expr(&stmt->stmt.swap.left);
-    analyze_expr(&stmt->stmt.swap.right);
+    analyze_expr(stmt->stmt.swap.left);
+    analyze_expr(stmt->stmt.swap.right);
     ASTExpr* left = stmt->stmt.swap.left;
     ASTExpr* right = stmt->stmt.swap.right;
     if(expr_is_bad(left) || expr_is_bad(right) ||
@@ -696,7 +696,7 @@ static bool analyze_enum_obj(Object* type_obj)
         value->type = enum_->underlying;
         if(value->enum_val.value == NULL)
             value->enum_val.const_val = ++last_value;
-        else if(!analyze_expr(&value->enum_val.value))
+        else if(!analyze_expr(value->enum_val.value))
             return false;
         else if(value->enum_val.value->kind != EXPR_CONSTANT)
         {

@@ -25,12 +25,12 @@
             da_init(da, desired_cap);                                       \
         else if((da)->capacity < (desired_cap))                             \
         {                                                                   \
-            (da)->capacity = (desired_cap) << 1;                            \
-            void* n = MALLOC((da)->capacity * sizeof(*((da)->data)), 8);    \
-            memcpy(n, (da)->data,                                           \
-                (da)->size * sizeof(*((da)->data)));                        \
-            (da)->data = n;                                                 \
-                                                                            \
+            size_t new_cap = (desired_cap) << 1;                            \
+            (da)->data = REALLOC((da)->data,                                \
+                                 new_cap * sizeof(*((da)->data)),           \
+                                 8,                                         \
+                                 (da)->capacity * sizeof(*((da)->data)));   \
+            (da)->capacity = new_cap;                                       \
         }                                                                   \
     } while(0)
 

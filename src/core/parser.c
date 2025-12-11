@@ -1266,24 +1266,6 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
 
 static ASTExpr* parse_hexadecimal_literal(Lexer* l)
 {
-    static uint8_t hex_val[256] = {
-        ['0'] = 0,
-        ['1'] = 1,
-        ['2'] = 2,
-        ['3'] = 3,
-        ['4'] = 4,
-        ['5'] = 5,
-        ['6'] = 6,
-        ['7'] = 7,
-        ['8'] = 8,
-        ['9'] = 9,
-        ['A'] = 10, ['a'] = 10,
-        ['B'] = 11, ['b'] = 11,
-        ['C'] = 12, ['c'] = 12,
-        ['D'] = 13, ['d'] = 13,
-        ['E'] = 14, ['e'] = 14,
-        ['F'] = 15, ['f'] = 15,
-    };
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
 
@@ -1295,7 +1277,9 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
             continue;
         if(val > (UINT64_MAX >> 4))
             ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
-        val = (val << 4) + hex_val[(size_t)src[i]];
+        uint64_t hex_val = g_hex_char_to_val[(uint8_t)src[i]] - 1;
+        SIC_ASSERT(hex_val < 16);
+        val = (val << 4) + hex_val;
     }
 
     expr->expr.constant.val.i = val;
@@ -1308,8 +1292,9 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
+    // TODO: Add checks for char16 and char32 once added.
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    expr->expr.constant.val.i = peek(l)->chr.val;
+    expr->expr.constant.val.i = *(uint32_t*)peek(l)->chr.val; // Hack for now
     expr->type = g_type_char;
     advance(l);
     return expr;

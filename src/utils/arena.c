@@ -67,7 +67,36 @@ void* arena_calloc(MemArena* arena, size_t size, uint32_t align)
 
 void arena_free(MemArena* arena, const void* ptr)
 {
-    if(arena->last_alloced == NULL || ptr != arena->last_alloced) return;
+    SIC_ASSERT(arena != NULL);
+    if(ptr == NULL || ptr != arena->last_alloced) return;
     arena->allocated = (uintptr_t)arena->last_alloced - (uintptr_t)arena->base;
     arena->last_alloced = NULL;
+}
+
+void* arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, size_t prev_size)
+{
+    SIC_ASSERT(arena != NULL);
+    SIC_ASSERT(size > 0);
+    SIC_ASSERT(is_pow_of_2(align));
+    SIC_ASSERT(ptr != NULL);
+    if(ptr == arena->last_alloced)
+    {
+        // Reclaim memory if at the end of the arena.
+        if(prev_size >= size)
+        {
+            arena->allocated -= prev_size - size;
+            return ptr;
+        }
+        size_t needed = size - prev_size;
+        if(arena->capacity - arena->allocated < needed)
+            sic_fatal_error("Ran out of memory!!! An arena with capacity %zu overflowed.", arena->capacity);
+        arena->allocated += needed; 
+        return ptr;
+    }
+
+    if(prev_size >= size) return ptr;
+
+    void* new_ptr = arena_malloc(arena, size, align);
+    memcpy(new_ptr, ptr, prev_size);
+    return new_ptr;
 }

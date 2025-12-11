@@ -106,7 +106,7 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
         return false;
     }
 
-    if(!analyze_expr(&arr->size_expr))
+    if(!analyze_expr(arr->size_expr))
         return false;
 
     bool was_signed = type_is_signed(arr->size_expr->type->canonical);
@@ -155,7 +155,7 @@ static bool resolve_func_ptr(Type* func_ty, SourceLoc err_loc)
 static bool resolve_typeof(Type** type_ref, Type* typeof)
 {
     g_sema->ident_mask = IDENT_FUNC;
-    if(!analyze_expr(&typeof->type_of))
+    if(!analyze_expr(typeof->type_of))
         return false;
     *type_ref = typeof->type_of->type;
     return true;

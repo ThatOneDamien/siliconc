@@ -131,7 +131,7 @@ struct Token
 
         struct
         {
-            uint64_t val;
+            char    val[4];
             size_t   width;
         } chr;
 

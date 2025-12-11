@@ -30,10 +30,10 @@ static inline void cast_error(CastParams* params, const char* message, ...);
 
 bool analyze_cast(ASTExpr* cast)
 {
-    if(!resolve_type(&cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || 
-       !analyze_expr(&cast->expr.cast.inner))
-        return false;
     ASTExpr* inner = cast->expr.cast.inner;
+    if(!resolve_type(&cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || 
+       !analyze_expr(inner))
+        return false;
     CastParams params;
     params.inner     = inner;
     params.from      = inner->type;
@@ -72,9 +72,9 @@ bool analyze_cast(ASTExpr* cast)
 bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
 {
     SIC_ASSERT(desired->status == STATUS_RESOLVED);
-    if(!analyze_expr(expr_to_cast) || type_is_bad(desired))
-        return false;
     ASTExpr* prev = *expr_to_cast;
+    if(!analyze_expr(prev) || type_is_bad(desired))
+        return false;
     CastParams params;
     params.inner     = prev;
     params.from      = prev->type;

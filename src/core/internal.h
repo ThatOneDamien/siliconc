@@ -37,6 +37,8 @@ extern ASTStmt* g_bad_stmt;
 extern Symbol   g_sym_len;
 extern Symbol   g_sym_main;
 
+extern const uint8_t g_hex_char_to_val[256];
+
 void run_subprocess(const char** cmd);
 
 // Command line arguments

@@ -10,9 +10,9 @@ static bool analyze_array_access(ASTExpr* expr);
 static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
-static bool analyze_ident(ASTExpr** expr_ref);
+static bool analyze_ident(ASTExpr* expr);
 static bool analyze_ternary(ASTExpr* expr);
-static bool analyze_unary(ASTExpr** expr_ref);
+static bool analyze_unary(ASTExpr* expr);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
 static bool analyze_unresolved_dot(ASTExpr* expr);
 static bool analyze_ct_sizeof(ASTExpr* expr);
@@ -30,9 +30,9 @@ static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 
 // Unary functions
-static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr** inner_ref);
+static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner);
-static bool analyze_deref(ASTExpr** expr_ref, ASTExpr* inner);
+static bool analyze_deref(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_negate(ASTExpr* expr, ASTExpr* inner);
@@ -41,9 +41,8 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(ASTExpr** expr);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
-bool analyze_expr_no_set(ASTExpr** expr_ref)
+bool analyze_expr_no_set(ASTExpr* expr)
 {
-    ASTExpr* expr = *expr_ref;
     if(expr->evaluated)
         return expr->kind != EXPR_INVALID;
     expr->evaluated = true;
@@ -61,17 +60,19 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
         ERROR_AND_RET(expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
-    case EXPR_POSTFIX:
-        return analyze_expr(&expr->expr.unary.inner) && 
-               analyze_incdec(expr, expr->expr.unary.inner);
+    case EXPR_POSTFIX: {
+        ASTExpr* inner = expr->expr.unary.inner;
+        return analyze_expr(inner) && 
+               analyze_incdec(expr, inner);
+    }
     case EXPR_PS_IDENT:
-        return analyze_ident(expr_ref);
+        return analyze_ident(expr);
     case EXPR_STRUCT_INIT_LIST:
         break;
     case EXPR_TERNARY:
         return analyze_ternary(expr);
     case EXPR_UNARY:
-        return analyze_unary(expr_ref);
+        return analyze_unary(expr);
     case EXPR_UNRESOLVED_ARR:
         return analyze_unresolved_arrow(expr);
     case EXPR_UNRESOLVED_DOT:
@@ -94,15 +95,14 @@ bool analyze_expr_no_set(ASTExpr** expr_ref)
 
 static bool analyze_array_access(ASTExpr* expr)
 {
-    ASTExprAAccess* access = &expr->expr.array_access;
+    ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     bool valid = true;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&access->array_expr);
+    ANALYZE_EXPR_SET_VALID(arr_expr);
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&access->index_expr);
+    ANALYZE_EXPR_SET_VALID(expr->expr.array_access.index_expr);
     IF_INVALID_RET();
-    ASTExpr* arr = access->array_expr;
-    Type* arr_t = arr->type->canonical;
+    Type* arr_t = arr_expr->type->canonical;
 
     if(arr_t->kind == TYPE_ANON_ARRAY)
     {
@@ -113,20 +113,21 @@ static bool analyze_array_access(ASTExpr* expr)
     if(!type_is_array(arr_t) && !type_is_pointer(arr_t))
     {
         ERROR_AND_RET(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
-                      type_to_string(arr->type));
+                      type_to_string(arr_expr->type));
     }
 
     Type* elem_t = expr->type = type_pointer_base(arr_t);
     if(type_reduce(elem_t)->kind == TYPE_VOID)
         ERROR_AND_RET(expr->loc, "Cannot access element of void array. Consider casting to another type.");
-    if(!implicit_cast(&access->index_expr, g_type_usz))
+    if(!implicit_cast(&expr->expr.array_access.index_expr, g_type_usz))
         return false;
 
-    ASTExpr* index = access->index_expr;
+    ASTExpr* index_expr = expr->expr.array_access.index_expr;
 
-    if(index->kind == EXPR_CONSTANT)
+
+    if(index_expr->kind == EXPR_CONSTANT)
     {
-        uint64_t idx = index->expr.constant.val.i;
+        uint64_t idx = index_expr->expr.constant.val.i;
         if(arr_t->kind == TYPE_STATIC_ARRAY && idx >= arr_t->array.static_len)
         {
             sic_diagnostic_at(expr->loc, DIAG_WARNING,
@@ -135,9 +136,9 @@ static bool analyze_array_access(ASTExpr* expr)
             return true;
         }
 
-        if(arr->kind == EXPR_ARRAY_INIT_LIST)
+        if(arr_expr->kind == EXPR_ARRAY_INIT_LIST)
         {
-            InitList* list = &arr->expr.init_list;
+            InitList* list = &arr_expr->expr.init_list;
             for(uint32_t i = 0; i < list->size; ++i)
             {
                 if(list->data[i].const_index == idx)
@@ -206,7 +207,7 @@ static bool analyze_array_init_list(ASTExpr* expr)
         }
 
         g_sema->ident_mask = IDENT_VAR_ONLY;
-        if(!analyze_expr(&entry->init_value))
+        if(!analyze_expr(entry->init_value))
             valid = false;
         else if(!entry->init_value->const_eval)
             is_constant = false;
@@ -225,12 +226,12 @@ static inline bool analyze_binary(ASTExpr* expr)
     ASTExpr** rhs = &expr->expr.binary.rhs;
     BinaryOpKind kind = expr->expr.binary.kind;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(lhs);
+    ANALYZE_EXPR_SET_VALID(*lhs);
     if(kind == BINARY_ASSIGN)
         return analyze_assign(expr, lhs, rhs);
 
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(rhs);
+    ANALYZE_EXPR_SET_VALID(*rhs);
     IF_INVALID_RET();
     switch(expr->expr.binary.kind)
     {
@@ -285,7 +286,7 @@ static bool analyze_call(ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
     g_sema->ident_mask = IDENT_VAR_ONLY | IDENT_FUNC;
-    ANALYZE_EXPR_OR_RET(&call->func_expr);
+    ANALYZE_EXPR_OR_RET(call->func_expr);
     
     Type* func_type = call->func_expr->type;
     if(func_type->kind != TYPE_FUNC_PTR)
@@ -294,12 +295,12 @@ static bool analyze_call(ASTExpr* expr)
     FuncSignature* sig = func_type->func_ptr;
     if(call->args.size < sig->params.size)
     {
-        ERROR_AND_RET(expr->loc, "Too few arguments passed to function. Expected %s%u, have %u.",
+        ERROR_AND_RET(expr->loc, "Too few arguments passed to function. Expected %s%u, got %u.",
                       sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
     }
     if(!sig->is_var_arg && call->args.size > sig->params.size)
     {
-        ERROR_AND_RET(expr->loc, "Too many arguments passed to function. Expected %u, have %u.",
+        ERROR_AND_RET(expr->loc, "Too many arguments passed to function. Expected %u, got %u.",
                       sig->params.size, call->args.size);
     }
 
@@ -317,7 +318,7 @@ static bool analyze_call(ASTExpr* expr)
     for(uint32_t i = sig->params.size; i < call->args.size; ++i)
     {
         ASTExpr** arg = call->args.data + i;
-        if(!analyze_expr(arg))
+        if(!analyze_expr(*arg))
         {
             valid = false;
             continue;
@@ -331,9 +332,8 @@ static bool analyze_call(ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(ASTExpr** expr_ref)
+static bool analyze_ident(ASTExpr* expr)
 {
-    ASTExpr* expr = *expr_ref;
     Symbol sym = expr->expr.pre_sema_ident.sym;
     Object* ident = find_obj(sym);
     if(ident == NULL)
@@ -400,16 +400,16 @@ static bool analyze_ternary(ASTExpr* expr)
     ASTExprTernary* tern = &expr->expr.ternary;
     bool valid = true;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&tern->cond_expr);
+    ANALYZE_EXPR_SET_VALID(tern->cond_expr);
     if(tern->then_expr != NULL)
     {
         g_sema->ident_mask = IDENT_VAR_ONLY;
-        ANALYZE_EXPR_SET_VALID(&tern->then_expr);
+        ANALYZE_EXPR_SET_VALID(tern->then_expr);
     }
     else
         tern->then_expr = tern->cond_expr;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_SET_VALID(&tern->else_expr);
+    ANALYZE_EXPR_SET_VALID(tern->else_expr);
     IF_INVALID_RET();
 
     if(type_equal(tern->then_expr->type, tern->else_expr->type))
@@ -422,33 +422,32 @@ EXIT:
     return implicit_cast(&tern->cond_expr, g_type_bool);
 }
 
-static bool analyze_unary(ASTExpr** expr_ref)
+static bool analyze_unary(ASTExpr* expr)
 {
-    ASTExpr* expr = *expr_ref;
-    ASTExprUnary* unary = &expr->expr.unary;
+    ASTExpr* inner = expr->expr.unary.inner;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    switch(unary->kind)
+    switch(expr->expr.unary.kind)
     {
     case UNARY_INVALID:
         break;
     case UNARY_ADDR_OF:
-        return analyze_addr_of(expr_ref, &unary->inner);
+        return analyze_addr_of(expr, inner);
     case UNARY_BIT_NOT:
-        ANALYZE_EXPR_OR_RET(&unary->inner);
-        return analyze_bit_not(expr, &unary->inner);
+        ANALYZE_EXPR_OR_RET(inner);
+        return analyze_bit_not(expr, &expr->expr.unary.inner);
     case UNARY_DEC:
     case UNARY_INC:
-        ANALYZE_EXPR_OR_RET(&unary->inner);
-        return analyze_incdec(expr, unary->inner);
+        ANALYZE_EXPR_OR_RET(inner);
+        return analyze_incdec(expr, inner);
     case UNARY_DEREF:
-        ANALYZE_EXPR_OR_RET(&unary->inner);
-        return analyze_deref(expr_ref, unary->inner);
+        ANALYZE_EXPR_OR_RET(inner);
+        return analyze_deref(expr, inner);
     case UNARY_LOG_NOT:
-        ANALYZE_EXPR_OR_RET(&unary->inner);
-        return analyze_log_not(expr, unary->inner);
+        ANALYZE_EXPR_OR_RET(inner);
+        return analyze_log_not(expr, inner);
     case UNARY_NEG:
-        ANALYZE_EXPR_OR_RET(&unary->inner);
-        return analyze_negate(expr, unary->inner);
+        ANALYZE_EXPR_OR_RET(inner);
+        return analyze_negate(expr, inner);
     }
     SIC_UNREACHABLE();
 }
@@ -458,22 +457,23 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     Symbol member = uaccess->member_sym;
     SIC_ASSERT(parent->type->status == STATUS_RESOLVED);
-    switch(parent->type->canonical->kind)
+    Type* t = parent->type->canonical;
+    switch(t->kind)
     {
     case TYPE_STATIC_ARRAY:
         if(member == g_sym_len)
         {
             expr->kind = EXPR_CONSTANT;
             expr->expr.constant.kind = CONSTANT_INTEGER;
-            expr->expr.constant.val.i = parent->type->array.static_len;
+            expr->expr.constant.val.i = t->array.static_len;
             expr->type = g_type_usz;
             return true;
         }
-        break;
+        goto ERR;
     case TYPE_RUNTIME_ARRAY:
     case TYPE_STRUCT:
     case TYPE_UNION: {
-        ObjectDA* members = &parent->type->user_def->struct_.members;
+        ObjectDA* members = &t->user_def->struct_.members;
         for(uint32_t i = 0; i < members->size; ++i)
             if(members->data[i]->symbol == member)
             {
@@ -484,7 +484,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
                 expr->type = members->data[i]->type;
                 return true;
             }
-        break;
+        goto ERR;
     }
     case TYPE_VOID:
     case INT_TYPES:
@@ -493,7 +493,10 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_FUNC_PTR:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-        break;
+    ERR:
+        sic_error_at(uaccess->member_loc, "Type \'%s\' has no member \'%s\'.",
+                     type_to_string(parent->type), member);
+        return NULL;
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
@@ -503,41 +506,40 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
-        SIC_UNREACHABLE();
+        break;
     }
-    sic_error_at(uaccess->member_loc, "Type \'%s\' has no member \'%s\'.",
-                 type_to_string(parent->type), member);
-    return NULL;
+
+    SIC_UNREACHABLE();
 }
 
 static bool analyze_unresolved_arrow(ASTExpr* expr)
 {
-    ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
+    ASTExpr* parent = expr->expr.unresolved_access.parent_expr;
     g_sema->ident_mask = IDENT_VAR_ONLY;
-    ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
-    ASTExpr* parent = uaccess->parent_expr;
+    ANALYZE_EXPR_OR_RET(parent);
+    Type* t = parent->type->canonical;
 
-    if(parent->type->kind != TYPE_POINTER)
+    if(t->kind != TYPE_POINTER)
     {
         sic_error_at(expr->loc, "Arrow operator can only be used on pointers.");
         return false;
     }
 
     ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
-    deref->type = parent->type->pointer_base;
+    deref->type = t->pointer_base;
     deref->loc = expr->loc;
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
-    deref->expr.unary.inner = uaccess->parent_expr;
+    deref->expr.unary.inner = parent;
     return resolve_member(expr, deref);
 }
 
 static bool analyze_unresolved_dot(ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-    g_sema->ident_mask = IDENT_ENUM;
-    ANALYZE_EXPR_OR_RET(&uaccess->parent_expr);
     ASTExpr* parent = uaccess->parent_expr;
+    g_sema->ident_mask = IDENT_ENUM;
+    ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
@@ -559,10 +561,10 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
         return false;
     }
 
-    if(parent->type->kind == TYPE_POINTER)
+    if(parent->type->canonical->kind == TYPE_POINTER)
     {
         ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
-        deref->type = parent->type->pointer_base;
+        deref->type = parent->type->canonical->pointer_base;
         deref->loc = expr->loc;
         deref->kind = EXPR_UNARY;
         deref->expr.unary.kind = UNARY_DEREF;
@@ -589,8 +591,10 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
     ASTExpr* right = *rhs;
-    bool left_is_pointer = type_is_pointer(left->type) || left->type->kind == TYPE_STATIC_ARRAY;
-    bool right_is_pointer = type_is_pointer(right->type) || right->type->kind == TYPE_STATIC_ARRAY;
+    Type* lt = left->type->canonical;
+    Type* rt = right->type->canonical;
+    bool left_is_pointer = type_is_pointer(lt);
+    bool right_is_pointer = type_is_pointer(rt);
     if(right_is_pointer)
     {
         left_is_pointer = true;
@@ -598,30 +602,19 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         *rhs = left;
         left = right;
         right = *rhs;
+        rt = lt;
     }
 
     if(left_is_pointer)
     {
-        if(!type_is_integer(right->type))
+        if(!type_is_integer(rt))
         {
             sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                          type_to_string(left->type), type_to_string(right->type));
             return false;
         }
 
-        implicit_cast(rhs, type_is_unsigned(right->type) ? g_type_uptr : g_type_iptr);
-        right = *rhs;
-
-        // This checks if the constant indexing will overflow the size of the static
-        // array. This check is not done for ds-arrays or when the index expression 
-        // is calculated at runtime. 
-        if(left->type->kind == TYPE_STATIC_ARRAY && right->kind == EXPR_CONSTANT && 
-           right->expr.constant.val.i >= left->type->array.static_len)
-        {
-            sic_diagnostic_at(expr->loc, DIAG_WARNING,
-                              "Array index will overflow the size of the array.");
-            return false;
-        }
+        implicit_cast(rhs, type_is_unsigned(rt) ? g_type_uptr : g_type_iptr);
         expr->type = left->type;
         return true;
     }
@@ -635,8 +628,21 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
     {
         expr->kind = EXPR_CONSTANT;
+        expr->const_eval = true;
+        if(left->expr.constant.kind == CONSTANT_FLOAT)
+        {
+            expr->expr.constant.kind = CONSTANT_FLOAT;
+            expr->expr.constant.val.f = left->expr.constant.val.f + right->expr.constant.val.f;
+        }
+        else
+        {
+            expr->expr.constant.kind = CONSTANT_INTEGER;
+            expr->expr.constant.val.f = left->expr.constant.val.i + right->expr.constant.val.i;
+        }
+        return true;
     }
 
+    expr->const_eval = left->const_eval && right->const_eval;
     expr->type = left->type;
     return true;
 }
@@ -808,34 +814,29 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     return !expr_is_bad(new_rhs) && analyze_assign(expr, lhs, rhs);
 }
 
-static bool analyze_addr_of(ASTExpr** expr_ref, ASTExpr** inner_ref)
+static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 {
-    ASTExpr* expr = *expr_ref;
     bool prev = g_sema->in_global_init;
     g_sema->in_global_init = false;
     g_sema->ident_mask = IDENT_FUNC;
-    ANALYZE_EXPR_OR_RET(inner_ref);
+    ANALYZE_EXPR_OR_RET(inner);
     g_sema->in_global_init = prev;
 
-    ASTExpr* inner = *inner_ref;
     if(inner->kind == EXPR_IDENT && inner->expr.ident->kind == OBJ_FUNC)
     {
-        *expr_ref = inner;
+        expr->type = inner->type;
         return true;
     }
 
     if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_DEREF)
     {
-        *expr_ref = inner->expr.unary.inner;
+        memcpy(expr, inner->expr.unary.inner, sizeof(ASTExpr));
         return true;
     }
     if(!expr_is_lvalue(inner))
         ERROR_AND_RET(expr->loc, "Cannot take address of rvalue.");
 
-    if(type_is_array(inner->type))
-        expr->type = type_pointer_to(inner->type->array.elem_type);
-    else
-        expr->type = type_pointer_to(inner->type);
+    expr->type = type_pointer_to(type_is_array(inner->type) ? inner->type->array.elem_type : inner->type);
     return true;
 }
 
@@ -845,7 +846,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
     if(!type_is_integer(in->type))
     {
         sic_error_at(expr->loc, "Invalid operand type %s.", 
-                   type_to_string(in->type));
+                     type_to_string(in->type));
         return false;
     }
 
@@ -854,22 +855,22 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
     return true;
 }
 
-static bool analyze_deref(ASTExpr** expr_ref, ASTExpr* inner)
+static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 {
     if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_ADDR_OF)
     {
-        *expr_ref = inner->expr.unary.inner;
+        memcpy(expr, inner->expr.unary.inner, sizeof(ASTExpr));
         return true;
     }
-    if(inner->type->kind == TYPE_POINTER)
+    if(inner->type->kind != TYPE_POINTER)
     {
-        (*expr_ref)->type = inner->type->pointer_base;
-        return true;
+        sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
+                     type_to_string(inner->type));
+        return false;
     }
 
-    sic_error_at((*expr_ref)->loc, "Cannot dereference non-pointer type %s.",
-                 type_to_string(inner->type));
-    return false;
+    expr->type = inner->type->pointer_base;
+    return true;
 }
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)

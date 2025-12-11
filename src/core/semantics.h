@@ -36,7 +36,7 @@ extern SemaContext* g_sema;
 
 bool     analyze_global_var(Object* global_var);
 bool     analyze_function(Object* function);
-bool     analyze_expr_no_set(ASTExpr** expr_ref);
+bool     analyze_expr_no_set(ASTExpr* expr);
 bool     analyze_cast(ASTExpr* cast);
 bool     analyze_type_obj(Object* type_obj, Type** o_type, 
                           ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
@@ -73,11 +73,11 @@ static inline bool expr_ensure_lvalue(ASTExpr* expr)
     return true;
 }
 
-static inline bool analyze_expr(ASTExpr** expr_ref)
+static inline bool analyze_expr(ASTExpr* expr)
 {
-    if(!analyze_expr_no_set(expr_ref))
+    if(!analyze_expr_no_set(expr))
     {
-        (*expr_ref)->kind = EXPR_INVALID;
+        expr->kind = EXPR_INVALID;
         return false;
     }
     return true;
