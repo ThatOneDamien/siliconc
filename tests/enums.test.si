@@ -28,9 +28,9 @@ enum Something
     D
 }
 
-/// test:   bad
+/// test:   alias
 /// action: compile
-/// result: fail
+/// result: pass
 enum Something
 {
     A,

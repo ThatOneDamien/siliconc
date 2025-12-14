@@ -555,50 +555,51 @@ static void analyze_declaration(ASTDeclaration* decl)
     }
     else if(!analyze_expr(decl->init_expr))
         goto ERR;
-
-    Type* rhs_type = decl->init_expr->type;
-    Type* rhs_ctype = rhs_type->canonical;
-    if(kind == TYPE_AUTO)
+    else
     {
-        if(rhs_type->kind == TYPE_ANON_ARRAY)
+        Type* rhs_type = decl->init_expr->type;
+        Type* rhs_ctype = rhs_type->canonical;
+        if(kind == TYPE_AUTO)
         {
-            sic_error_at(obj->loc, "Unable to deduce type of right hand expression. "
-                                   "For array literals, please declare a type.");
-            goto ERR;
-        }
-        obj->type = rhs_type;
-    }
-    else if(kind == TYPE_PS_ARRAY)
-    {
-        if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
-        {
-            if(!type_equal(obj->type->array.elem_type, rhs_ctype->array.elem_type))
+            if(rhs_type->kind == TYPE_ANON_ARRAY)
             {
-                sic_error_at(obj->loc, 
-                             "Cannot assign auto-sized array type \'%s\' to "
-                             "incompatible array type \'%s\'.",
-                             type_to_string(obj->type),
-                             type_to_string(rhs_type));
+                sic_error_at(obj->loc, "Unable to deduce type of right hand expression. "
+                             "For array literals, please declare a type.");
                 goto ERR;
             }
             obj->type = rhs_type;
         }
-        else if(rhs_type->kind == TYPE_ANON_ARRAY)
+        else if(kind == TYPE_PS_ARRAY)
         {
-            if(decl->init_expr->expr.init_list.size == 0)
+            if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
-                sic_error_at(obj->loc, "Cannot assign auto-sized array type to array literal with length 0.");
-                goto ERR;
+                if(!type_equal(obj->type->array.elem_type, rhs_ctype->array.elem_type))
+                {
+                    sic_error_at(obj->loc, 
+                                 "Cannot assign auto-sized array type \'%s\' to "
+                                 "incompatible array type \'%s\'.",
+                                 type_to_string(obj->type),
+                                 type_to_string(rhs_type));
+                    goto ERR;
+                }
+                obj->type = rhs_type;
             }
+            else if(rhs_type->kind == TYPE_ANON_ARRAY)
+            {
+                if(decl->init_expr->expr.init_list.size == 0)
+                {
+                    sic_error_at(obj->loc, "Cannot assign auto-sized array type to array literal with length 0.");
+                    goto ERR;
+                }
 
-            obj->type->kind = TYPE_STATIC_ARRAY;
-            obj->type->array.static_len = decl->init_expr->expr.init_list.max + 1;
-            implicit_cast(&decl->init_expr, obj->type);
+                obj->type->kind = TYPE_STATIC_ARRAY;
+                obj->type->array.static_len = decl->init_expr->expr.init_list.max + 1;
+                implicit_cast(&decl->init_expr, obj->type);
+            }
         }
+        else
+            implicit_cast(&decl->init_expr, obj->type);
     }
-    else
-        implicit_cast(&decl->init_expr, obj->type);
-
     push_obj(decl->obj);
     return;
 ERR:
@@ -682,11 +683,17 @@ static bool analyze_enum_obj(Object* type_obj)
         enum_->underlying = g_type_int;
     else if(!resolve_type(&enum_->underlying, RES_NORMAL, type_obj->loc, "An enum's underlying type cannot be of type"))
         return false;
-    else if(!type_is_integer(enum_->underlying))
+    else 
     {
-        sic_error_at(type_obj->loc, "Expected integral underlying type for enum.");
-        return false;
+        enum_->underlying = enum_->underlying->canonical;
+        if(!type_is_integer(enum_->underlying))
+        {
+            sic_error_at(type_obj->loc, "Underlying type for enums must be an integer type.");
+            return false;
+        }
     }
+
+    type_obj->type->canonical = type_obj->type->kind == TYPE_ENUM ? enum_->underlying : type_obj->type;
 
     uint32_t scope = push_scope();
     uint64_t last_value = -1;

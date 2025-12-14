@@ -352,13 +352,16 @@ typedef enum : uint8_t
     TOKEN_UINT,
     TOKEN_LONG,
     TOKEN_ULONG,
+    TOKEN_FLOAT,
+    TOKEN_DOUBLE,
+
+    // These have to be AFTER float and double because I use a trick
+    // in type_to_string() to get the names of the primitives.
     TOKEN_IPTR,
     TOKEN_UPTR,
     TOKEN_ISZ,
     TOKEN_USZ,
-    TOKEN_FLOAT,
-    TOKEN_DOUBLE,
-    TOKEN_TYPENAME_END = TOKEN_DOUBLE,
+    TOKEN_TYPENAME_END = TOKEN_USZ,
 
     // Compile time tokens (start with #)
 	TOKEN_CT_ALIGNOF,

@@ -1,0 +1,30 @@
+/// test:   const_eval_int
+/// action: compile
+/// result: pass
+int a = 1 + 1;
+int b = 1 - 1;
+int c = 1 * 1;
+int d = 1 / 1;
+int e = 1 % 1;
+int f = 1 << 1;
+int g = 1 >> 1;
+int h = 1 >>> 1;
+
+
+/// test:   const_eval_float
+/// action: compile
+/// result: pass
+float a = 1.0f + 1.0f;
+float b = 1.0f - 1.0f;
+float c = 1.0f * 1.0f;
+float d = 1.0f / 1.0f;
+
+/// test:   bad_int
+/// action: compile
+/// result: fail
+int a = 1 / 0;
+
+/// test:   bad_float
+/// action: compile
+/// result: fail
+float a = 1.0f / 0.0f;

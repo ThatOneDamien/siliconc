@@ -8,7 +8,7 @@ import tempfile
 import shutil
 import re
 
-TEST_ROOT = pathlib.Path(__file__).parent
+TEST_ROOT = pathlib.Path(__file__).parent.parent / 'tests'
 
 
 class TestMeta:
@@ -41,27 +41,29 @@ class TestRunner:
     def print_results(self):
         print('\n******** Result *********')
         completion_str = f'Completed {self.test_count} test(s)'
-        pass_fail_str = f'\033[31m{self.test_count - self.tests_passed}\033[0m failed, \033[32m{self.tests_passed}\033[0m passed.'
+        pass_fail_str = f'\033[32m{self.tests_passed}\033[0m passed, \033[31m{self.test_count - self.tests_passed}\033[0m failed.'
         if self.test_count == self.tests_passed:
             print_pass(completion_str, pass_fail_str)
         else:
             print_fail(completion_str, pass_fail_str)
+        print('\n')
 
 
-    def run_test_file(self, test_path: str, compiler_path: str, tmpdir):
+    def run_test_file(self, test_path: str, compiler_path: str, tmpdir, verbose: bool, case: str | None = None):
         tests = parse_test_file(test_path)
-        test_prefix = test_path[test_path.rfind('/') + 1:] + ':'
+        test_prefix = test_path[test_path.rfind('/') + 1:test_path.find('.test.si')] + ':'
         for test in tests:
-            self.test_count += 1
-            result = self.run_test(test, compiler_path, tmpdir)
-            if result.passed:
-                self.tests_passed += 1
-                print_pass(test_prefix + test.name, result.message)
-            else:
-                print_fail(test_prefix + test.name, result.message, result.details)
+            if not case or test.name.lower() == case.lower():
+                self.test_count += 1
+                result = self.run_test(test, compiler_path, tmpdir, verbose)
+                if result.passed:
+                    self.tests_passed += 1
+                    print_pass(test_prefix + test.name, result.message)
+                else:
+                    print_fail(test_prefix + test.name, result.message, result.details)
 
 
-    def run_test(self, test: TestMeta, compiler_path: str, tmpdir):
+    def run_test(self, test: TestMeta, compiler_path: str, tmpdir, verbose: bool):
         # Create tempfile with extracted source
         source_file = pathlib.Path(tmpdir) / (test.name + '.si')
         with open(source_file, 'w', encoding='utf-8') as f:
@@ -71,9 +73,12 @@ class TestRunner:
         if test.action == 'compile':
             out_obj = pathlib.Path(tmpdir) / 'a.o'
             cmd = [compiler_path, '-s', source_file, '-o', out_obj]
-            # result = subprocess.run(cmd, check=False, timeout=test.timeout, text=True)
-            result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, timeout=test.timeout, text=True)
+            result = None
+            if verbose:
+                result = subprocess.run(cmd, check=False, timeout=test.timeout, text=True)
+            else:
+                result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, timeout=test.timeout, text=True)
             return check_test_result(should_pass=test.should_pass, kind='compiler', proc_res=result)
 
         # --- Compiling and Running ---
@@ -82,7 +87,9 @@ class TestRunner:
         out_exe = pathlib.Path(tmpdir) / 'a.out'
         cmd = [compiler_path, source_file, '-o', out_exe]
         result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=test.timeout, text=True)
+                                stderr=subprocess.STDOUT, timeout=test.timeout, text=True)
+        if verbose:
+            print(result.stdout)
         test_result = check_test_result(should_pass=True, kind='compiler', proc_res=result)
         if not test_result.passed:
             return test_result
@@ -132,6 +139,11 @@ def check_test_result(should_pass: bool, kind: str, proc_res, output: str | None
             result.passed  = True
             result.message = f'{kind} failed as expected.'
             result.details = None
+    elif rc == -11:
+        result.passed  = False
+        result.message = f'{kind} encountered a segfault.'
+        result.details = proc_res.stderr
+
     else:
         result.passed  = False
         result.message = f'{kind} encountered an unknown error/signal (Code: {rc})'
@@ -209,10 +221,11 @@ def parse_test_file(test_path: str):
 
 def main():
     compiler_path = ''
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--test', help='Name of specific test to run.')
-    parser.add_argument('-g', '--group', help='Name of test group (name of directory).')
-    parser.add_argument('--release', action='count', help='Use release version of compiler executable.')
+    parser = argparse.ArgumentParser(description='Run tests for the silicon compiler.')
+    parser.add_argument('suite', nargs='?', help='The test suite/file which will be run. All cases in the file will be run unless otherwise specified with -t.')
+    parser.add_argument('--release', action='store_true', help='Use release version of compiler executable.')
+    parser.add_argument('-t', '--test', help='Specific test case within the specified test suite. Requires a suite to be specified.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Show all compiler output')
     args = parser.parse_args()
 
     if args.release:
@@ -231,30 +244,31 @@ def main():
     tester = TestRunner()
     try:
         tests = None
-        if args.test:
-            if not args.test.endswith('.test.si'):
-                args.test += '.test.si'
-            tests = TEST_ROOT.rglob(args.test)
-        elif args.group:
-            group_path = (TEST_ROOT/args.group).resolve()
-            if not group_path.exists():
-                print(f'Test group/directory \'{args.group}\' does not exist.')
+        if args.suite:
+            if not args.suite.endswith('.test.si'):
+                args.suite += '.test.si'
+            suite = TEST_ROOT / args.suite
+            if not suite.exists():
+                print(f'Test suite {args.suite} does not exist.')
                 sys.exit(1)
-            if not group_path.is_dir():
-                print(f'Test group path \'{args.group}\' is not a directory.')
-                sys.exit(1)
-            tests = group_path.rglob('*.test.si')
+            tester.run_test_file(str(suite), compiler_path, tmpdir, args.verbose, args.test)
+        elif args.test:
+            parser.error('Test argument should only be supplied if a suite is also supplied.')
         else:
-            tests = TEST_ROOT.rglob('*.test.si')
+            tests = sorted(
+                TEST_ROOT.glob('*.test.si'),
+                key=lambda p: p.name
+            )
+            for test in tests:
+                tester.run_test_file(str(test), compiler_path, tmpdir, args.verbose)
 
-        for test in tests:
-            tester.run_test_file(str(test), compiler_path, tmpdir)
     finally:
         shutil.rmtree(tmpdir)
 
     if tester.test_count == 0:
         print('No tests found.')
-        sys.exit(1)
+    else:
+        tester.print_results()
 
 
 if __name__ == '__main__':
