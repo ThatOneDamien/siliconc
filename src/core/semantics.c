@@ -446,7 +446,6 @@ static void analyze_return(ASTStmt* stmt)
                             "Function returning void should not return a value.");
             return;
         }
-        g_sema->ident_mask = IDENT_VAR_ONLY;
         implicit_cast(&ret->ret_expr, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
@@ -535,7 +534,6 @@ static void analyze_declaration(ASTDeclaration* decl)
         goto ERR;
 
     TypeKind kind = obj->type->kind;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     if(decl->init_expr == NULL)
     {
         if(kind == TYPE_AUTO)
@@ -789,8 +787,10 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
             return false;
         }
         type_obj->status = STATUS_RESOLVED;
+        type_obj->type_alias = type_reduce(type_obj->type_alias); 
         type_obj->type->status = STATUS_RESOLVED;
         type_obj->type->canonical = type_obj->type->kind == TYPE_ALIAS ? type_obj->type_alias->canonical : type_obj->type;
+
         if(o_type != NULL)
         {
             *o_type = type_obj->type;

@@ -1344,7 +1344,9 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_RUNTIME_ARRAY:
         if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
-    case TYPE_ENUM:
+    case TYPE_ALIAS_DISTINCT:
+        if(type->llvm_ref != NULL) return type->llvm_ref;
+        return type->llvm_ref = get_llvm_type(c, type->user_def->type_alias);
     case TYPE_ENUM_DISTINCT:
         if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->user_def->enum_.underlying);
@@ -1373,7 +1375,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     }
     case TYPE_INVALID:
     case TYPE_ALIAS:
-    case TYPE_ALIAS_DISTINCT:
+    case TYPE_ENUM:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:

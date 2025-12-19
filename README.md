@@ -18,17 +18,17 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Future Feature Plans (sorted from highest to lowest priority)
 - Constant folding
-- Typedef fixes (canonical typings are not used right now, typedefs are not working)
 - Bitfields
-- More test cases
-- Update README with current information about the language
 - Attributes (@packed, @inline, etc.)
 - Defer statements
+- More test cases
+- Update README with current information about the language
 - Better loops like foreach (still don't know about this)
 - Add proper dead-code checking and only add function declarations as needed to the codegen
 - Macros and constant-eval functions
 - Generics
 - Actually work on the import and module system
+- Add support for int128 and float80 (a lot of refactoring)
 - Build system
 - Optimization of compiler memory usage
 - Start on custom backend? (Lowest priority)

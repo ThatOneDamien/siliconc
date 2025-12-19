@@ -255,6 +255,10 @@ ByteSize type_size(Type* ty)
         return 8;
     case TYPE_STATIC_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.static_len;
+    case TYPE_ALIAS_DISTINCT:
+        return type_size(ty->user_def->type_alias);
+    case TYPE_ENUM_DISTINCT:
+        return type_size(ty->user_def->enum_.underlying);
     case TYPE_STRUCT:
         return ty->user_def->struct_.size;
     case TYPE_UNION:
@@ -263,9 +267,7 @@ ByteSize type_size(Type* ty)
     case TYPE_VOID:
     case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
-    case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_PS_ARRAY:
@@ -294,6 +296,10 @@ uint32_t type_alignment(Type* ty)
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:
         return type_alignment(ty->array.elem_type);
+    case TYPE_ALIAS_DISTINCT:
+        return type_alignment(ty->user_def->type_alias);
+    case TYPE_ENUM_DISTINCT:
+        return type_alignment(ty->user_def->enum_.underlying);
     case TYPE_STRUCT:
         return ty->user_def->struct_.align;
     case TYPE_UNION:
@@ -301,9 +307,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_ALIAS:
-    case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_PS_ARRAY:

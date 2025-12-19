@@ -32,11 +32,11 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 
 // Unary functions
 static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner);
+static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner_ref);
 static bool analyze_deref(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_negate(ASTExpr* expr, ASTExpr* inner);
+static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
 
 static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(ASTExpr** expr);
@@ -98,9 +98,7 @@ static bool analyze_array_access(ASTExpr* expr)
 {
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     bool valid = true;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(arr_expr);
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(expr->expr.array_access.index_expr);
     IF_INVALID_RET();
     Type* arr_t = arr_expr->type->canonical;
@@ -171,7 +169,6 @@ static bool analyze_array_init_list(ASTExpr* expr)
         InitListEntry* entry = list->data + i;
         if(entry->arr_index != NULL)
         {
-            g_sema->ident_mask = IDENT_VAR_ONLY;
             if(!implicit_cast(&entry->arr_index, g_type_ulong))
                 valid = false;
             else if(entry->arr_index->kind != EXPR_CONSTANT)
@@ -207,7 +204,6 @@ static bool analyze_array_init_list(ASTExpr* expr)
                 max = entry->const_index;
         }
 
-        g_sema->ident_mask = IDENT_VAR_ONLY;
         if(!analyze_expr(entry->init_value))
             valid = false;
         else if(!entry->init_value->const_eval)
@@ -226,12 +222,10 @@ static inline bool analyze_binary(ASTExpr* expr)
     ASTExpr** lhs = &expr->expr.binary.lhs;
     ASTExpr** rhs = &expr->expr.binary.rhs;
     BinaryOpKind kind = expr->expr.binary.kind;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(*lhs);
     if(kind == BINARY_ASSIGN)
         return analyze_assign(expr, lhs, rhs);
 
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(*rhs);
     IF_INVALID_RET();
     switch(expr->expr.binary.kind)
@@ -286,7 +280,6 @@ static inline bool analyze_binary(ASTExpr* expr)
 static bool analyze_call(ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
-    g_sema->ident_mask = IDENT_VAR_ONLY | IDENT_FUNC;
     ANALYZE_EXPR_OR_RET(call->func_expr);
     
     Type* func_type = call->func_expr->type->canonical;
@@ -352,8 +345,6 @@ static bool analyze_ident(ASTExpr* expr)
         expr->const_eval = true;
         return true;
     case OBJ_FUNC:
-        if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_FUNC))
-            ERROR_AND_RET(expr->loc, "Function identifier not allowed here, if you want the pointer use '&' before.");
         if(!analyze_function(ident)) return false;
         expr->type = ident->type;
         expr->kind = EXPR_IDENT;
@@ -361,8 +352,6 @@ static bool analyze_ident(ASTExpr* expr)
         return true;
     case OBJ_BITFIELD:
     case OBJ_ENUM:
-        if(BIT_IS_UNSET(g_sema->ident_mask, IDENT_ENUM))
-            ERROR_AND_RET(expr->loc, "Type identifier not allowed in this context, expected expression.");
         expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
         expr->expr.ident = ident;
@@ -370,7 +359,7 @@ static bool analyze_ident(ASTExpr* expr)
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
     case OBJ_UNION:
-        ERROR_AND_RET(expr->loc, "Type identifier not allowed in this context, expected expression.");
+        SIC_TODO_MSG("Type expressions.");
     case OBJ_VAR:
         if(ident->var.kind == VAR_CONST)
         {
@@ -400,16 +389,11 @@ static bool analyze_ternary(ASTExpr* expr)
 {
     ASTExprTernary* tern = &expr->expr.ternary;
     bool valid = true;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(tern->cond_expr);
     if(tern->then_expr != NULL)
-    {
-        g_sema->ident_mask = IDENT_VAR_ONLY;
         ANALYZE_EXPR_SET_VALID(tern->then_expr);
-    }
     else
         tern->then_expr = tern->cond_expr;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_SET_VALID(tern->else_expr);
     IF_INVALID_RET();
 
@@ -427,7 +411,6 @@ static bool analyze_unary(ASTExpr* expr)
 {
     ASTExpr* inner = expr->expr.unary.inner;
     UnaryOpKind kind = expr->expr.unary.kind;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     if(kind == UNARY_ADDR_OF)
         return analyze_addr_of(expr, inner);
 
@@ -447,7 +430,7 @@ static bool analyze_unary(ASTExpr* expr)
     case UNARY_LOG_NOT:
         return analyze_log_not(expr, inner);
     case UNARY_NEG:
-        return analyze_negate(expr, inner);
+        return analyze_negate(expr, &expr->expr.unary.inner);
     }
     SIC_UNREACHABLE();
 }
@@ -515,7 +498,6 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
 static bool analyze_unresolved_arrow(ASTExpr* expr)
 {
     ASTExpr* parent = expr->expr.unresolved_access.parent_expr;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     ANALYZE_EXPR_OR_RET(parent);
     Type* t = parent->type->canonical;
 
@@ -538,7 +520,6 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
-    g_sema->ident_mask = IDENT_ENUM;
     ANALYZE_EXPR_OR_RET(parent);
 
     if(parent->kind == EXPR_TYPE_IDENT)
@@ -639,6 +620,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         {
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = left->expr.constant.val.i + right->expr.constant.val.i;
+            const_int_correct(expr);
         }
         return true;
     }
@@ -683,6 +665,7 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         {
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = left->expr.constant.val.i - right->expr.constant.val.i;
+            const_int_correct(expr);
         }
         return true;
     }
@@ -713,6 +696,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         {
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = left->expr.constant.val.i * right->expr.constant.val.i;
+            const_int_correct(expr);
         }
         return true;
     }
@@ -749,6 +733,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
                 ERROR_AND_RET(expr->loc, "Right side of division evaluates to 0.");
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = left->expr.constant.val.i / rval;
+            const_int_correct(expr);
         }
         return true;
     }
@@ -781,6 +766,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         expr->const_eval = true;
         expr->expr.constant.kind = CONSTANT_INTEGER;
         expr->expr.constant.val.i = left->expr.constant.val.i % right->expr.constant.val.i;
+        const_int_correct(expr);
         return true;
     }
 
@@ -862,6 +848,7 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
             {
                 expr->expr.constant.val.i = (int64_t)left->expr.constant.val.i >> right->expr.constant.val.i;
             }
+            const_int_correct(expr);
             return true;
         }
     }
@@ -872,12 +859,12 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 
 static bool analyze_bit_op(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
-    ASTExpr* left = *lhs;
-    ASTExpr* right = *rhs;
-    if(!type_is_integer(left->type) || !type_is_integer(right->type))
+    Type* lhs_type = (*lhs)->type;
+    Type* rhs_type = (*rhs)->type;
+    if(!type_is_integer(lhs_type->canonical) || !type_is_integer(rhs_type->canonical))
     {
         sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                   type_to_string(left->type), type_to_string(right->type));
+                     type_to_string(lhs_type), type_to_string(rhs_type));
         return false;
     }
 
@@ -894,7 +881,6 @@ static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     if(!expr_ensure_lvalue(left))
         return false;
     expr->type = left->type;
-    g_sema->ident_mask = IDENT_VAR_ONLY;
     return implicit_cast(rhs, left->type);
 }
 
@@ -929,7 +915,6 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 {
     bool prev = g_sema->in_global_init;
     g_sema->in_global_init = false;
-    g_sema->ident_mask = IDENT_FUNC;
     ANALYZE_EXPR_OR_RET(inner);
     g_sema->in_global_init = prev;
 
@@ -953,16 +938,30 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
 {
-    ASTExpr* in = *inner;
-    if(!type_is_integer(in->type))
+    Type* type = (*inner)->type;
+    if(!type_is_integer(type->canonical))
     {
         sic_error_at(expr->loc, "Invalid operand type %s.", 
-                     type_to_string(in->type));
+                     type_to_string(type));
         return false;
     }
 
     promote_int_type(inner);
+    ASTExpr* in = *inner;
+
     expr->type = (*inner)->type;
+    if(in->kind == EXPR_CONSTANT)
+    {
+        SIC_ASSERT(in->expr.constant.kind == CONSTANT_INTEGER);
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        expr->expr.constant.val.i = ~in->expr.constant.val.i;
+        expr->const_eval = true;
+        const_int_correct(expr);
+        return true;
+    }
+
+    expr->const_eval = in->const_eval;
     return true;
 }
 
@@ -1006,24 +1005,27 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner)
     return implicit_cast(&expr->expr.unary.inner, g_type_bool);
 }
 
-static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
 {
-    if(!type_is_numeric(inner->type->canonical))
+    ASTExpr* inner = *inner_ref;
+    Type* type = inner->type;
+    if(!type_is_numeric(type->canonical))
     {
         sic_error_at(expr->loc, "Cannot negate non-numeric type %s.",
-                   type_to_string(inner->type));
+                     type_to_string(type));
         return false;
     }
 
-    expr->type = inner->type;
 
     if(inner->kind == EXPR_CONSTANT)
     {
         expr->kind = EXPR_CONSTANT;
+        expr->const_eval = true;
         if(inner->expr.constant.kind == CONSTANT_FLOAT)
         {
             expr->expr.constant.val.f = -inner->expr.constant.val.f;
             expr->expr.constant.kind = CONSTANT_FLOAT;
+            expr->type = inner->type;
             return true;
         }
 
@@ -1045,12 +1047,20 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
         case TYPE_SHORT:
         case TYPE_INT:
         case TYPE_LONG:
+            expr->type = inner->type;
             return true;
         default:
             SIC_UNREACHABLE();
         }
     }
 
+    if(type_is_integer(type->canonical))
+    {
+        promote_int_type(inner_ref);
+        inner = *inner_ref;
+    }
+
+    expr->type = inner->type;
     return true;
 }
 
@@ -1087,7 +1097,8 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
 
 static void promote_int_type(ASTExpr** expr)
 {
-    SIC_ASSERT(type_is_integer((*expr)->type));
+    printf("HERE %d\n", (*expr)->type->canonical->kind);
+    SIC_ASSERT(type_is_integer((*expr)->type->canonical));
     if(type_size((*expr)->type) < 4 && !implicit_cast(expr, g_type_int))
         SIC_UNREACHABLE();
 }

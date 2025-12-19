@@ -9,6 +9,13 @@ int e = 1 % 1;
 int f = 1 << 1;
 int g = 1 >> 1;
 int h = 1 >>> 1;
+int i = 1 | 1;
+int j = 1 & 1;
+int k = 1 ^ 1;
+int l = 1 || 1;
+int m = 1 && 1;
+int n = -1;
+int o = ~1;
 
 
 /// test:   const_eval_float
@@ -18,13 +25,14 @@ float a = 1.0f + 1.0f;
 float b = 1.0f - 1.0f;
 float c = 1.0f * 1.0f;
 float d = 1.0f / 1.0f;
+float e = -1.0f;
 
-/// test:   bad_int
+/// test:   int_divide_zero
 /// action: compile
 /// result: fail
 int a = 1 / 0;
 
-/// test:   bad_float
+/// test:   float_divide_zero
 /// action: compile
 /// result: fail
 float a = 1.0f / 0.0f;

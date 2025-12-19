@@ -10,13 +10,6 @@ typedef enum : uint8_t
     BLOCK_SWITCH      = BLOCK_BREAKABLE,
 } BlockContext;
 
-typedef enum : uint8_t
-{
-    IDENT_VAR_ONLY = 0,
-    IDENT_FUNC     = 1 << 0,
-    IDENT_ENUM     = 1 << 1,
-} IdentMask;
-
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
@@ -25,7 +18,6 @@ struct SemaContext
     Object*      cyclic_def;
     
     BlockContext block_context;
-    IdentMask    ident_mask;
     bool         in_ptr : 1;
     bool         in_typedef : 1;
     bool         in_global_init : 1;
