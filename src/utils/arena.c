@@ -6,6 +6,7 @@
 
 #define GLOBAL_ARENA_INIT_SIZE (64ul * 1024ul * 1024ul)
 
+extern CompilerContext g_compiler;
 MemArena g_global_arena;
 
 void global_arenas_init(void)
@@ -38,7 +39,6 @@ void arena_init(MemArena* arena, size_t capacity)
     arena->base = base;
     arena->capacity = capacity;
     arena->allocated = 0;
-    arena->last_alloced = NULL;
 }
 
 void* arena_malloc(MemArena* arena, size_t size, uint32_t align)
@@ -50,7 +50,7 @@ void* arena_malloc(MemArena* arena, size_t size, uint32_t align)
     SIC_ASSERT(arena->capacity > 0);
 
     arena->allocated = (arena->allocated + (align - 1)) & ~(align - 1);
-    void* res = arena->last_alloced = arena->base + arena->allocated;
+    void* res = arena->base + arena->allocated;
     arena->allocated += size;
     if(arena->capacity < size)
         sic_fatal_error("Ran out of memory!!! An arena with capacity %zu overflowed.", arena->capacity);
@@ -65,26 +65,35 @@ void* arena_calloc(MemArena* arena, size_t size, uint32_t align)
     return res;
 }
 
-void arena_free(MemArena* arena, const void* ptr)
+void arena_free(MemArena* arena, const void* ptr, size_t prev_size)
 {
     SIC_ASSERT(arena != NULL);
-    if(ptr == NULL || ptr != arena->last_alloced) return;
-    arena->allocated = (uintptr_t)arena->last_alloced - (uintptr_t)arena->base;
-    arena->last_alloced = NULL;
+    uintptr_t p = (uintptr_t)ptr;
+    uintptr_t end = (uintptr_t)arena->base + arena->allocated;
+    SIC_ASSERT(p >= (uintptr_t)arena->base && p < end);
+    if(ptr == NULL || p + prev_size != end) return;
+    arena->allocated -= prev_size;
 }
 
 void* arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, size_t prev_size)
 {
     SIC_ASSERT(arena != NULL);
     SIC_ASSERT(size > 0);
+    SIC_ASSERT(prev_size > 0);
     SIC_ASSERT(is_pow_of_2(align));
-    SIC_ASSERT(ptr != NULL);
-    if(ptr == arena->last_alloced)
+    uintptr_t p = (uintptr_t)ptr;
+    uintptr_t end = (uintptr_t)arena->base + arena->allocated;
+    SIC_ASSERT(ptr != NULL && p >= (uintptr_t)arena->base && p < end);
+    if(p + prev_size == end)
     {
         // Reclaim memory if at the end of the arena.
         if(prev_size >= size)
         {
             arena->allocated -= prev_size - size;
+#ifdef SI_DEBUG
+            if(g_compiler.debug_output & DEBUG_MEMORY)
+                printf("Reduced from %lu to %lu. Saved %lu bytes.\n", prev_size, size, prev_size - size);
+#endif
             return ptr;
         }
         size_t needed = size - prev_size;

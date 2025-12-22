@@ -35,14 +35,13 @@ void print_token(Token* tok)
            tok->loc.col_num);
 }
 
-void print_unit(const CompUnit* unit)
+void print_module(const Module* module)
 {
-    SIC_ASSERT(unit != NULL);
-    printf("Compilation Unit: \'%s\' (%u Funcs, %u Global Vars)\n", 
-           file_from_id(unit->file)->rel_path, 
-           unit->funcs.size, unit->vars.size);
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        print_func(unit->funcs.data[i]);
+    SIC_ASSERT(module != NULL);
+    printf("Module: \'%s\' (%u Funcs, %u Global Vars)\n", 
+           module->name, module->funcs.size, module->vars.size);
+    for(uint32_t i = 0; i < module->funcs.size; ++i)
+        print_func(module->funcs.data[i]);
 }
 
 void print_func(const Object* func)
@@ -229,9 +228,10 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                debug_type_to_str(expr->type));
         return;
     case EXPR_PS_IDENT: {
-        printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
-               expr->expr.pre_sema_ident.sym, debug_type_to_str(expr->type));
-        return;
+        SIC_TODO_MSG("Fix");
+        // printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
+        //        expr->expr.pre_sema_ident., debug_type_to_str(expr->type));
+        // return;
     }
     case EXPR_TERNARY:
         printf("Ternary ] (Type: %s)\n", debug_type_to_str(expr->type));
@@ -270,10 +270,6 @@ static void print_constant(const ASTExpr* expr)
     case CONSTANT_INTEGER:
         printf("Constant Integer val: %lu hex: 0x%lX] (Type: %s)\n",
                constant->val.i, constant->val.i, debug_type_to_str(expr->type));
-        break;
-    case CONSTANT_BOOL:
-        printf("Constant Boolean val: %s ]\n",
-               constant->val.i ? "true" : "false");
         break;
     case CONSTANT_FLOAT:
         printf("Constant Float val: %lf ] (Type: %s)\n",

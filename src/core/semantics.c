@@ -1,10 +1,7 @@
 #include "semantics.h"
 #include "utils/da.h"
 
-static void declare_global_obj(Object* global);
 static void analyze_function_body(Object* function);
-static void analyze_unit(CompUnit* unit);
-static bool analyze_main(Object* main);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
 static bool analyze_stmt_block(ASTStmt* stmt);
 static void analyze_break(ASTStmt* stmt);
@@ -25,94 +22,27 @@ static bool analyze_union_obj(Object* type_obj);
 
 SemaContext* g_sema = NULL;
 
-void semantic_declaration(CompUnit* unit)
+void analyze_module(Module* module)
 {
-    SIC_ASSERT(unit != NULL);
+    module_declare_all(module);
     SemaContext* prev = g_sema;
     SemaContext sema = {0};
     g_sema = &sema;
-    sema.unit = unit;
-    for(uint32_t i = 0; i < unit->types.size; ++i)
-        declare_global_obj(unit->types.data[i]);
+    g_sema->module = module;
 
-    for(uint32_t i = 0; i < unit->vars.size; ++i)
-        declare_global_obj(unit->vars.data[i]);
+    for(uint32_t i = 0; i < module->types.size; ++i)
+        analyze_type_obj(module->types.data[i], NULL, RES_NORMAL, (SourceLoc){}, NULL);
 
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        declare_global_obj(unit->funcs.data[i]);
+    for(uint32_t i = 0; i < module->vars.size; ++i)
+        analyze_global_var(module->vars.data[i]);
 
+    for(uint32_t i = 0; i < module->funcs.size; ++i)
+        analyze_function_body(module->funcs.data[i]);
     g_sema = prev;
-}
-
-void semantic_analysis(ModulePTRDA* modules)
-{
-    SIC_ASSERT(modules != NULL);
-    for(uint32_t i = 0; i < modules->size; ++i)
-    {
-        Module* mod = modules->data[i];
-        analyze_unit(mod->unit);
 #ifdef SI_DEBUG
-        if(g_args.debug_output & DEBUG_SEMA)
-            print_unit(mod->unit);
+    if(g_compiler.debug_output & DEBUG_SEMA)
+        print_module(module);
 #endif
-    }
-}
-
-bool expr_is_lvalue(ASTExpr* expr)
-{
-    switch(expr->kind)
-    {
-    case EXPR_ARRAY_ACCESS:
-    case EXPR_MEMBER_ACCESS:
-        return true;
-    case EXPR_IDENT:
-        return expr->expr.ident->kind == OBJ_VAR;
-    case EXPR_UNARY:
-        return expr->expr.unary.kind == UNARY_DEREF;
-    default:
-        return false;
-    }
-}
-
-static void declare_global_obj(Object* global)
-{
-    HashMap* priv = &g_sema->unit->priv_symbols;
-    HashMap* pub  = &g_sema->unit->module->public_symbols;
-    Object* other = hashmap_get(priv, global->symbol);
-    if(other == NULL)
-        other = hashmap_get(pub, global->symbol);
-
-    if(other != NULL)
-        sic_error_redef(global, other);
-
-    if(global->visibility == VIS_PRIVATE)
-        hashmap_put(priv, global->symbol, global);
-    else
-        hashmap_put(pub, global->symbol, global);
-
-    if(global->symbol == g_sym_main && !analyze_main(global))
-    {
-        global->status = STATUS_RESOLVED;
-        global->kind = OBJ_INVALID;
-    }
-}
-
-static void analyze_unit(CompUnit* unit)
-{
-    SemaContext* prev = g_sema;
-    SemaContext sema = {0};
-    g_sema = &sema;
-    g_sema->unit = unit;
-
-    for(uint32_t i = 0; i < unit->types.size; ++i)
-        analyze_type_obj(unit->types.data[i], NULL, RES_NORMAL, (SourceLoc){}, NULL);
-
-    for(uint32_t i = 0; i < unit->vars.size; ++i)
-        analyze_global_var(unit->vars.data[i]);
-
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        analyze_function_body(unit->funcs.data[i]);
-    g_sema = prev;
 }
 
 bool analyze_function(Object* function)
@@ -246,52 +176,6 @@ bool analyze_global_var(Object* global_var)
 
     global_var->status = STATUS_RESOLVED;
     return true;
-}
-
-static bool analyze_main(Object* main)
-{
-    if(main->kind != OBJ_FUNC)
-    {
-        sic_error_at(main->loc, "Symbol 'main' is reserved for entry function.");
-        return false;
-    }
-
-    if(g_compiler.main_function != NULL)
-    {
-        sic_error_redef(main, g_compiler.main_function);
-        return false;
-    }
-
-    FuncSignature* sig = main->func.signature;
-    TypeKind rt_kind = sig->ret_type->kind;
-    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
-        goto BAD_SIG;
-
-    if(sig->params.size >= 1 && sig->params.data[0]->type->kind != TYPE_INT)
-        goto BAD_SIG;
-
-    Type* second;
-    if(sig->params.size >= 2)
-    {
-        second = sig->params.data[1]->type;
-        if(second->kind != TYPE_POINTER)
-            goto BAD_SIG;
-        second = second->pointer_base;
-        if(second->kind != TYPE_POINTER)
-            goto BAD_SIG;
-        second = second->pointer_base;
-        if(second->kind != TYPE_CHAR)
-            goto BAD_SIG;
-    }
-
-    g_compiler.main_function = main;
-    return true;
-
-BAD_SIG:
-    sic_error_at(main->loc, "The signature of the main function is invalid. "
-                            "The return type should be 'int' or 'void', with "
-                            "optional parameters 'int, char**'.");
-    return false;
 }
 
 static void analyze_stmt(ASTStmt* stmt, bool add_scope)

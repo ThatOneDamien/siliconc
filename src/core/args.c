@@ -3,67 +3,86 @@
 
 #include <string.h>
 
-CLIArgs g_args = {0};
-
 static void print_help(void);
-
 
 void process_args(int argc, char* argv[])
 {
     for(int i = 1; i < argc; i++)
     {
-        if(argv[i][0] != '-') // Not an argument, only an input file.
+        char* arg = argv[i];
+        if(arg[0] != '-') // Not an argument, only an input file.
         {
-            da_append(&g_args.input_files, argv[i]);
+            switch(get_filetype(arg))
+            {
+            case FT_SI:
+                if(g_compiler.input_file < g_compiler.sources.size)
+                    sic_fatal_error("Only 1 entry file may be provided.");
+                g_compiler.input_file = source_file_add_or_get(argv[i], &g_compiler.top_module);
+                continue;
+            case FT_OBJ:
+                da_append(&g_compiler.linker_inputs, arg);
+                continue;
+            case FT_LLVM_IR:
+            case FT_ASM:
+            case FT_SHARED:
+            case FT_STATIC:
+                SIC_TODO();
+            case FT_UNKNOWN:
+            default:
+                sic_fatal_error("Input file \'%s\' has invalid extension.", arg);
+            }
             continue;
         }
 
-        if(argv[i][1] == '\0') // Gcc accepts the argument '-' to mean
+        arg++;
+
+        if(arg[0] == '\0') // Gcc accepts the argument '-' to mean
             continue;          // take the input from stdin, but sic won't use that.
 
-        char* arg = argv[i] + 1;
         if(strcmp(arg, "c") == 0)
         {
-            if(g_args.mode != MODE_NONE)
+            if(g_compiler.mode != MODE_NONE)
                 sic_fatal_error("Provided multiple mode arguments.");
-            g_args.mode = MODE_COMPILE;
+            g_compiler.mode = MODE_COMPILE;
         }
         else if(strcmp(arg, "s") == 0)
         {
-            if(g_args.mode != MODE_NONE)
+            if(g_compiler.mode != MODE_NONE)
                 sic_fatal_error("Provided multiple mode arguments.");
-            g_args.mode = MODE_ASSEMBLE;
+            g_compiler.mode = MODE_ASSEMBLE;
         }
         else if(strcmp(arg, "o") == 0)
         {
-            if(i == argc - 1)
+            if(i == argc - 1 || argv[i + 1][0] == '-')
                 sic_fatal_error("Missing filename after -o.");
             i++;
-            g_args.output_file = argv[i];
+            g_compiler.output_file_name = argv[i];
         }
         else if(strcmp(arg, "Werror") == 0)
-            g_args.werror = true;
+            g_compiler.werror = true;
         else if(strcmp(arg, "emit-ir") == 0)
-            g_args.emit_ir = true;
+            g_compiler.emit_ir = true;
         else if(strcmp(arg, "emit-asm") == 0)
-            g_args.emit_asm = true;
+            g_compiler.emit_asm = true;
         else if(strcmp(arg, "-help") == 0)
             print_help();
         else if(strcmp(arg, "###") == 0)
-            g_args.hash_hash_hash = true;
+            g_compiler.hash_hash_hash = true;
 #ifdef SI_DEBUG
         else if(arg[0] == 'v')
         {
             while(*(++arg) != '\0')
             {
                 if(arg[0] == 'l')
-                    g_args.debug_output |= DEBUG_LEXER;
+                    g_compiler.debug_output |= DEBUG_LEXER;
                 else if(arg[0] == 'p')
-                    g_args.debug_output |= DEBUG_PARSER;
+                    g_compiler.debug_output |= DEBUG_PARSER;
                 else if(arg[0] == 's')
-                    g_args.debug_output |= DEBUG_SEMA;
+                    g_compiler.debug_output |= DEBUG_SEMA;
                 else if(arg[0] == 'c')
-                    g_args.debug_output |= DEBUG_CODEGEN;
+                    g_compiler.debug_output |= DEBUG_CODEGEN;
+                else if(arg[0] == 'm')
+                    g_compiler.debug_output |= DEBUG_MEMORY;
             }
         }
 #endif
@@ -72,18 +91,13 @@ void process_args(int argc, char* argv[])
     }
 
 
-    if(g_args.input_files.size == 0)
-        sic_fatal_error("No input files provided.");
-
-    if(g_args.mode == MODE_NONE)
-        g_args.mode = MODE_LINK;
-    else if(g_args.mode != MODE_LINK && g_args.output_file != NULL && g_args.input_files.size > 1)
-        sic_fatal_error("Cannot provide multiple input files to '-c' or '-s' when '-o' is used.");
+    if(g_compiler.mode == MODE_NONE)
+        g_compiler.mode = MODE_LINK;
 
 
     // TODO: Make this customizable through options
-    g_args.target = TARGET_x86_64;
-    g_args.ir_kind = IR_LLVM;
+    g_compiler.target = TARGET_x86_64;
+    g_compiler.ir_kind = IR_LLVM;
 }
 
 static void print_help(void)

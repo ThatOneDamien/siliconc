@@ -384,7 +384,7 @@ static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner,
     {
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
-        cast->expr.constant.kind = CONSTANT_BOOL;
+        cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->const_eval = true;
         return;
     }
@@ -441,7 +441,7 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner,
     {
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (inner->expr.constant.val.f != 0.0);
-        cast->expr.constant.kind = CONSTANT_BOOL;
+        cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->const_eval = true;
         return;
     }
@@ -473,7 +473,7 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner,
     {
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
-        cast->expr.constant.kind = CONSTANT_BOOL;
+        cast->expr.constant.kind = CONSTANT_INTEGER;
         return;
     }
 

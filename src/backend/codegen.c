@@ -5,7 +5,7 @@
 
 void gen_ir()
 {
-    switch(g_args.ir_kind)
+    switch(g_compiler.ir_kind)
     {
     case IR_LLVM: {
         llvm_codegen();

@@ -8,13 +8,16 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler = {.top_module = {.name = "default"}};
+CompilerContext g_compiler = {.top_module = {.name = "root"}};
 
-static void compile(const SourceFile* input);
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
-static void print_debug_stats() { printf("\nMemory Allocated: %zu bytes\n", g_global_arena.allocated); }
+static void print_debug_stats() 
+{
+    if(g_compiler.debug_output & DEBUG_MEMORY)
+        printf("\nMemory Allocated: %zu bytes\n", g_global_arena.allocated); 
+}
 #endif // SI_DEBUG
 
 int main(int argc, char* argv[])
@@ -30,55 +33,37 @@ int main(int argc, char* argv[])
     atexit(print_debug_stats);
 #endif
 
-    if(g_args.ir_kind == IR_LLVM)
+    if(g_compiler.ir_kind == IR_LLVM)
         llvm_initialize();
 
-    for(uint32_t i = 0; i < g_args.input_files.size; ++i)
+    if(g_compiler.input_file < g_compiler.sources.size)
     {
-        const char* input_path = g_args.input_files.data[i]; 
-        
-        switch(get_filetype(input_path))
+        parse_source_file(g_compiler.input_file);
+
+#ifdef SI_DEBUG
+        if(g_compiler.debug_output & DEBUG_PARSER)
         {
-        case FT_SI:
-            compile(source_file_add_or_get(input_path));
-            continue;
-        case FT_LLVM_IR:
-        case FT_ASM:
-            SIC_TODO();
-            continue;
-        case FT_OBJ:
-            if(g_args.mode == MODE_LINK)
-                da_append(&g_compiler.linker_inputs, input_path);
-            else
-                fprintf(stderr, "Object file \'%s\' was ignored because \'-c\' or \'-s\' was provided.\n", input_path);
-            continue;
-        case FT_UNKNOWN:
-        case FT_SHARED:
-        case FT_STATIC:
-            sic_fatal_error("Input file \'%s\' has invalid extension.", input_path);
+            print_module(&g_compiler.top_module);
+            printf("\n\n");
         }
-        SIC_UNREACHABLE();
-    }
+#endif
+        analyze_module(&g_compiler.top_module);
 
-    semantic_analysis(&g_compiler.modules_to_compile);
-
-    if(g_error_cnt > 0)
-    {
-        fprintf(stderr, "sic: ");
+        if(g_error_cnt > 0)
+        {
+            fprintf(stderr, "sic: ");
+            if(g_warning_cnt > 0)
+                fprintf(stderr, "%d warning(s), and ", g_warning_cnt);
+            fprintf(stderr, "%d error(s) generated. Compilation terminated.\n", g_error_cnt); 
+            exit(EXIT_FAILURE);
+        }
         if(g_warning_cnt > 0)
-            fprintf(stderr, "%d warning(s), and ", g_warning_cnt);
-        fprintf(stderr, "%d error(s) generated. Compilation terminated.\n", g_error_cnt); 
-        exit(EXIT_FAILURE);
+            fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
+
+        gen_ir();
     }
-    if(g_warning_cnt > 0)
-        fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
 
-    if(g_compiler.modules_to_compile.size == 0)
-        exit(EXIT_SUCCESS);
-
-    gen_ir();
-
-    if(g_args.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
+    if(g_compiler.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
         exit(EXIT_SUCCESS);
 
 
@@ -98,7 +83,7 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-dynamic-linker");
     da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
     da_append(&cmd, "-o");
-    da_append(&cmd, g_args.output_file ? (char*)g_args.output_file : "a.out");
+    da_append(&cmd, g_compiler.output_file_name ? g_compiler.output_file_name : "a.out");
 
     // CRT Object files
     da_append(&cmd, str_format("%s/Scrt1.o", crt_path));
@@ -128,7 +113,7 @@ int main(int argc, char* argv[])
 
 void run_subprocess(const char** cmd)
 {
-    if(g_args.hash_hash_hash)
+    if(g_compiler.hash_hash_hash)
     {
         for(const char** c = cmd; *c != NULL; ++c)
             printf("%s ", *c);
@@ -137,7 +122,7 @@ void run_subprocess(const char** cmd)
     if(fork() == 0)
     {
         execvp(cmd[0], (char**)cmd);
-        fprintf(stderr, "failed to execute subprocess \'%s\': %s\n", cmd[0], strerror(errno));
+        sic_diagnostic(DIAG_ERROR, "Failed to execute subprocess \'%s\': %s\n", cmd[0], strerror(errno));
         _exit(EXIT_FAILURE);
     }
 
@@ -146,23 +131,6 @@ void run_subprocess(const char** cmd)
         ;
     if(status != EXIT_SUCCESS)
         exit(status);
-}
-
-static void compile(const SourceFile* input)
-{
-    CompUnit* unit = CALLOC_STRUCT(CompUnit);
-    unit->file = input->id;
-
-    parse_unit(unit);
-
-#ifdef SI_DEBUG
-    if(g_args.debug_output & DEBUG_PARSER)
-    {
-        print_unit(unit);
-        printf("\n\n");
-    }
-#endif
-    semantic_declaration(unit);
 }
 
 static void resolve_dependency_paths(char** crt, char** gcclib)

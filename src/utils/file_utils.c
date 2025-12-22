@@ -45,7 +45,7 @@ void get_current_dir()
         sic_fatal_error("Failed to get current working directory.");
 }
 
-SourceFile* source_file_add_or_get(const char* path)
+FileId source_file_add_or_get(const char* path, Module* module)
 {
     SIC_ASSERT(path != NULL);
 
@@ -59,16 +59,16 @@ SourceFile* source_file_add_or_get(const char* path)
     {
         SourceFile* file = g_compiler.sources.data + i;
         if(strcmp(abs_path, file->abs_path) == 0)
-            return file;
+            return i;
     }
 
     da_reserve(&g_compiler.sources, g_compiler.sources.size + 1);
-    SourceFile* file = g_compiler.sources.data + g_compiler.sources.size;
+    FileId id = g_compiler.sources.size++;
+    SourceFile* file = g_compiler.sources.data + id;
     file->abs_path = str_dup(abs_path);
     file->rel_path = is_abs ? file->abs_path : normalize_rel_path(file->abs_path);
-    file->src  = NULL;
-    file->id   = g_compiler.sources.size;
-    g_compiler.sources.size++;
+    file->src      = NULL;
+    file->module   = module;
 
     int fd = open(abs_path, O_RDONLY);
 
@@ -99,7 +99,7 @@ SourceFile* source_file_add_or_get(const char* path)
         buf[size + 1] = '\0';
     }
 
-    return file;
+    return id;
 ERR:
     if(fd != -1)
         close(fd);

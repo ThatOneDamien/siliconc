@@ -93,6 +93,21 @@ bool analyze_expr_no_set(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
+bool expr_is_lvalue(ASTExpr* expr)
+{
+    switch(expr->kind)
+    {
+    case EXPR_ARRAY_ACCESS:
+    case EXPR_MEMBER_ACCESS:
+        return true;
+    case EXPR_IDENT:
+        return expr->expr.ident->kind == OBJ_VAR;
+    case EXPR_UNARY:
+        return expr->expr.unary.kind == UNARY_DEREF;
+    default:
+        return false;
+    }
+}
 
 static bool analyze_array_access(ASTExpr* expr)
 {
@@ -328,10 +343,10 @@ static bool analyze_call(ASTExpr* expr)
 
 static bool analyze_ident(ASTExpr* expr)
 {
-    Symbol sym = expr->expr.pre_sema_ident.sym;
-    Object* ident = find_obj(sym);
+    Object* ident = find_obj(&expr->expr.pre_sema_ident);
     if(ident == NULL)
-        ERROR_AND_RET(expr->loc, "Reference to undefined symbol \'%s\'.", sym);
+        // FIXME: Show the symbol name. After the path was added i.e. std::something it doesnt show right.
+        ERROR_AND_RET(expr->loc, "Reference to undefined symbol.");
 
     switch(ident->kind)
     {

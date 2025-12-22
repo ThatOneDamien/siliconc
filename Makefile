@@ -1,7 +1,7 @@
 CC       ?= clang
 CXX      ?= clang++
 CFLAGS   := -Wall -Wextra -Werror -std=c11 `llvm-config --cflags`
-LD_FLAGS := `llvm-config --cxxflags --ldflags --libs engine --system-libs`
+LD_FLAGS := `llvm-config --ldflags --libs engine`
 INC      = -Isrc
 
 BUILD_DIR ?= build
@@ -37,10 +37,10 @@ $(BUILD_DIR)/sic: $(RELEASE_OBJS)
 
 $(DEBUG_OBJS): $(INT_DIR)/debug/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
-	@echo 'Making $@ (debug)'
+	@echo 'Compiling $< (debug)'
 	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -DSI_DEBUG -ggdb -o $@ -c $<
 
 $(RELEASE_OBJS): $(INT_DIR)/release/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
-	@echo 'Making $@ (release)'
+	@echo 'Compiling $< (release)'
 	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -O3 -o $@ -c $<

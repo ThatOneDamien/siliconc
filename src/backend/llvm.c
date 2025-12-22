@@ -9,7 +9,6 @@ typedef struct CodegenContext CodegenContext;
 typedef struct GenValue       GenValue;
 struct CodegenContext
 {
-    const CompUnit*      unit;
     const char*          llvm_filename;
     const char*          asm_filename;
     const char*          obj_filename;
@@ -17,7 +16,7 @@ struct CodegenContext
 
 
     LLVMTargetMachineRef target_machine;
-    LLVMModuleRef        module_ref;
+    LLVMModuleRef        llvm_module;
     LLVMBuilderRef       builder;
     LLVMValueRef         alloca_ref;
     LLVMValueRef         swap_ref;
@@ -42,7 +41,8 @@ struct GenValue
 };
 
 
-static void     gen_unit(CodegenContext* c, CompUnit* unit);
+static void     gen_source_file(CodegenContext* c, SourceFile* file);
+static void     gen_module(CodegenContext* c, Module* module);
 static void     emit_llvm_ir(CodegenContext* c);
 static void     emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
 static void     emit_global_var(CodegenContext* c, Object* global);
@@ -114,22 +114,20 @@ void llvm_initialize()
 
 void llvm_codegen()
 {
-    ModulePTRDA* modules = &g_compiler.modules_to_compile;
     SIC_ASSERT(s_initialized);
-    SIC_ASSERT(modules != NULL);
-    SIC_ASSERT(modules->size != 0);
+    SIC_ASSERT(g_compiler.sources.size > 0);
 
     CodegenContext c = {0};
     c.ptr_type = LLVMPointerType(LLVMInt8Type(), 0);
     c.builder = LLVMCreateBuilder();
 
-    for(uint32_t i = 0; i < modules->size; ++i)
-        gen_unit(&c, modules->data[i]->unit);
+    for(uint32_t i = 0; i < g_compiler.sources.size; ++i)
+        gen_source_file(&c, g_compiler.sources.data + i);
 
     LLVMDisposeBuilder(c.builder);
 }
 
-static void gen_unit(CodegenContext* c, CompUnit* unit)
+static void gen_source_file(CodegenContext* c, SourceFile* file)
 {
     // TODO: Change this from being hardcoded.
     const char* target_triple = "x86_64-pc-linux-gnu";
@@ -140,57 +138,67 @@ static void gen_unit(CodegenContext* c, CompUnit* unit)
     if(c->target_machine == NULL)
         sic_fatal_error("LLVM failed to create target machine, maybe check target triple?");
 
-    SourceFile* file = file_from_id(unit->file);
-    c->module_ref = LLVMModuleCreateWithNameInContext(file->rel_path, s_context);
-    LLVMSetSourceFileName(c->module_ref, file->rel_path, strlen(file->rel_path));
-    LLVMSetModuleDataLayout(c->module_ref, LLVMCreateTargetDataLayout(c->target_machine));
-    LLVMSetTarget(c->module_ref, target_triple);
-    c->unit = unit;
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-        get_llvm_ref(c, unit->funcs.data[i]);
+    c->llvm_module = LLVMModuleCreateWithNameInContext(file->rel_path, s_context);
+    LLVMSetSourceFileName(c->llvm_module, file->rel_path, strlen(file->rel_path));
+    LLVMSetModuleDataLayout(c->llvm_module, LLVMCreateTargetDataLayout(c->target_machine));
+    LLVMSetTarget(c->llvm_module, target_triple);
+    gen_module(c, file->module);
 
-    for(uint32_t i = 0; i < unit->vars.size; ++i)
-        emit_global_var(c, unit->vars.data[i]);
-
-    for(uint32_t i = 0; i < unit->funcs.size; ++i)
-    {
-        c->cur_bb = NULL;
-        emit_function_body(c, unit->funcs.data[i]);
-    }
-
-    if(g_args.emit_ir)
+    if(g_compiler.emit_ir)
     {
         c->llvm_filename = convert_ext_to(file->rel_path, FT_LLVM_IR);
         emit_llvm_ir(c);
     }
 
-    if(g_args.mode == MODE_COMPILE)
+    if(g_compiler.mode == MODE_COMPILE)
     {
-        c->asm_filename = g_args.output_file == NULL ? 
+        c->asm_filename = g_compiler.output_file_name == NULL ? 
                             convert_ext_to(file->rel_path, FT_ASM) : 
-                            g_args.output_file;
+                            g_compiler.output_file_name;
         emit_file(c, c->asm_filename, LLVMAssemblyFile);
         return;
     }
 
-    if(g_args.emit_asm)
+    if(g_compiler.emit_asm)
     {
         c->asm_filename = convert_ext_to(file->rel_path, FT_ASM);
         emit_file(c, c->asm_filename, LLVMAssemblyFile);
     }
 
-    if(g_args.mode > MODE_ASSEMBLE)
+    if(g_compiler.mode > MODE_ASSEMBLE)
         c->obj_filename = create_tempfile(FT_OBJ);
-    else if(g_args.mode == MODE_ASSEMBLE)
-        c->obj_filename = g_args.output_file == NULL ? 
+    else if(g_compiler.mode == MODE_ASSEMBLE)
+        c->obj_filename = g_compiler.output_file_name == NULL ? 
                             convert_ext_to(file->rel_path, FT_OBJ) : 
-                            g_args.output_file;
+                            g_compiler.output_file_name;
 
     emit_file(c, c->obj_filename, LLVMObjectFile);
     da_append(&g_compiler.linker_inputs, c->obj_filename);
     LLVMDisposeTargetMachine(c->target_machine);
-    LLVMDisposeModule(c->module_ref);
+    LLVMDisposeModule(c->llvm_module);
 
+}
+
+static void gen_module(CodegenContext* c, Module* module)
+{
+    for(uint32_t i = 0; i < module->funcs.size; ++i)
+        get_llvm_ref(c, module->funcs.data[i]);
+
+    for(uint32_t i = 0; i < module->vars.size; ++i)
+        emit_global_var(c, module->vars.data[i]);
+
+    for(uint32_t i = 0; i < module->funcs.size; ++i)
+    {
+        c->cur_bb = NULL;
+        emit_function_body(c, module->funcs.data[i]);
+    }
+    
+    for(uint32_t i = 0; i < module->submodules.size; ++i)
+    {
+        Module* mod = module->submodules.data[i];
+        if(mod->is_inline)
+            gen_module(c, mod);
+    }
 }
 
 static void emit_global_var(CodegenContext* c, Object* global)
@@ -253,7 +261,7 @@ static void emit_function_body(CodegenContext* c, Object* function)
 
     if(LLVMVerifyFunction(function->llvm_ref, LLVMPrintMessageAction))
     {
-        LLVMDumpModule(c->module_ref);
+        LLVMDumpModule(c->llvm_module);
         putc('\n', stderr);
         sic_fatal_error("Failed.");
     }
@@ -605,7 +613,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
     result->kind = GEN_VAL_ADDRESS;
     if(expr->const_eval)
     {
-        LLVMValueRef global = LLVMAddGlobal(c->module_ref, get_llvm_type(c, expr->type), "__anon.const");
+        LLVMValueRef global = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, expr->type), "__anon.const");
         LLVMSetGlobalConstant(global, true);
         LLVMSetLinkage(global, LLVMPrivateLinkage);
         LLVMSetUnnamedAddress(global, LLVMGlobalUnnamedAddr);
@@ -905,16 +913,12 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
     case CONSTANT_INTEGER:
         result->value = LLVMConstInt(get_llvm_type(c, expr->type), constant->val.i, false);
         return;
-    case CONSTANT_BOOL:
-        SIC_ASSERT(constant->val.i <= 1);
-        result->value = LLVMConstInt(LLVMInt1Type(), constant->val.i, false);
-        return;
     case CONSTANT_FLOAT:
         result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->val.f);
         return;
     case CONSTANT_STRING: {
         LLVMValueRef str = LLVMConstString(constant->val.str, constant->val.str_len, false);
-        LLVMValueRef global_string = LLVMAddGlobal(c->module_ref, LLVMTypeOf(str), ".str");
+        LLVMValueRef global_string = LLVMAddGlobal(c->llvm_module, LLVMTypeOf(str), ".str");
         LLVMSetGlobalConstant(global_string, true);
         LLVMSetLinkage(global_string, LLVMPrivateLinkage);
         LLVMSetUnnamedAddress(global_string, LLVMGlobalUnnamedAddr);
@@ -954,7 +958,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
             else
                 str = constant->val.str;
             LLVMValueRef strref = LLVMConstString(str, size, true);
-            FREE(str); // Will only free if it was JUST allocated, no worries.
+            FREE(str, size); // Attempt to free if we can.
             return strref;
         }
 
@@ -1292,20 +1296,20 @@ static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
 static void emit_llvm_ir(CodegenContext* c)
 {
     char* error;
-    if(LLVMVerifyModule(c->module_ref, LLVMPrintMessageAction, &error))
+    if(LLVMVerifyModule(c->llvm_module, LLVMPrintMessageAction, &error))
     {
         if(error != NULL && *error != '\0')
             error = "No error supplied.";
         sic_fatal_error("Failed to verify LLVM-IR module: %s", error);
     }
-    if(LLVMPrintModuleToFile(c->module_ref, c->llvm_filename, &error))
+    if(LLVMPrintModuleToFile(c->llvm_module, c->llvm_filename, &error))
         sic_fatal_error("Failed to emit LLVM IR: \'%s\'", error);
 }
 
 static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type)
 {
     char* error;
-    if(LLVMTargetMachineEmitToFile(c->target_machine, c->module_ref, out_path, llvm_file_type, &error))
+    if(LLVMTargetMachineEmitToFile(c->target_machine, c->llvm_module, out_path, llvm_file_type, &error))
         sic_fatal_error("LLVM failed to emit file \'%s\': %s", out_path, error);
 }
 
@@ -1408,17 +1412,17 @@ static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
 
 static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
 {
-    if(obj->llvm_ref != NULL && LLVMGetGlobalParent(obj->llvm_ref) == c->module_ref)
+    if(obj->llvm_ref != NULL && LLVMGetGlobalParent(obj->llvm_ref) == c->llvm_module)
         return obj->llvm_ref;
     switch(obj->kind)
     {
     case OBJ_FUNC: {
-        return obj->llvm_ref = LLVMAddFunction(c->module_ref, obj->symbol, get_llvm_func_type(c, obj->type));
+        return obj->llvm_ref = LLVMAddFunction(c->llvm_module, obj->symbol, get_llvm_func_type(c, obj->type));
     }
     case OBJ_VAR:
         if(obj->var.kind != VAR_GLOBAL)
             return obj->llvm_ref;
-        return obj->llvm_ref = LLVMAddGlobal(c->module_ref, get_llvm_type(c, obj->type), obj->symbol);
+        return obj->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, obj->type), obj->symbol);
     case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_BITFIELD:
@@ -1512,7 +1516,7 @@ static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, UNUSED void *context)
 	}
     (void)severity;
 #ifdef SI_DEBUG
-    if(g_args.debug_output & DEBUG_CODEGEN)
+    if(g_compiler.debug_output & DEBUG_CODEGEN)
         printf("[DEBUG] %s\033[0m: %s\n", severity, desc);
 #endif
 	LLVMDisposeMessage(desc);

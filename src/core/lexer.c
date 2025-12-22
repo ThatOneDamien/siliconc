@@ -61,23 +61,23 @@ const uint8_t g_hex_char_to_val[256] = {
     ['F'] = 16, ['f'] = 16,
 };
 
-void lexer_init_unit(Lexer* l, CompUnit* unit)
+Lexer lexer_from_source(FileId fileid)
 {
-    SIC_ASSERT(l != NULL);
-    SIC_ASSERT(unit != NULL);
-    SourceFile* file = file_from_id(unit->file);
-    l->unit       = unit;
-    l->cur_pos    = file->src;
-    l->cur_line   = 1;
-    l->line_start = l->cur_pos;
-    memset(&l->la_buf, 0, sizeof(LookAhead));
-    l->la_buf.cur = 1;
+    SourceFile* file = file_from_id(fileid);
+    Lexer l;
+    l.module     = file->module;
+    l.cur_pos    = file->src;
+    l.cur_line   = 1;
+    l.line_start = l.cur_pos;
+    memset(&l.la_buf, 0, sizeof(LookAhead));
+    l.la_buf.cur = 1;
     for(size_t i = 0; i < LOOK_AHEAD_SIZE - 1; ++i)
     {
-        lexer_advance(l);
-        l->la_buf.buf[i].loc.file = unit->file;
+        lexer_advance(&l);
+        l.la_buf.buf[i].loc.file = fileid;
     }
-    l->la_buf.buf[LOOK_AHEAD_SIZE - 1].loc.file = unit->file;
+    l.la_buf.buf[LOOK_AHEAD_SIZE - 1].loc.file = fileid;
+    return l;
 }
 
 void lexer_advance(Lexer* l)
@@ -497,10 +497,8 @@ static inline void extract_string_literal(Lexer* l, Token* t)
     t->str.len = sb.size;
     da_append(&sb, '\0');
 
-    // The line below will attempt to shrink the dynamic array to perfectly fit
-    // what we need. This is a simple check which sees if it was the last thing
-    // allocated in the arena, and if so, reclaims the end of the array. See 'arena_realloc'.
-    t->str.val = REALLOC(sb.data, sb.size, sizeof(char), sb.capacity); 
+    da_compact(&sb);
+    t->str.val = sb.data; 
     t->kind = TOKEN_STRING_LITERAL;
 }
 
@@ -525,10 +523,8 @@ static inline void extract_raw_string_literal(Lexer* l, Token* t)
     t->str.len = sb.size;
     da_append(&sb, '\0');
 
-    // The line below will attempt to shrink the dynamic array to perfectly fit
-    // what we need. This is a simple check which sees if it was the last thing
-    // allocated in the arena, and if so, reclaims the end of the array. See 'arena_realloc'.
-    t->str.val = REALLOC(sb.data, sb.size, sizeof(char), sb.capacity); 
+    da_compact(&sb);
+    t->str.val = sb.data; 
     t->kind = TOKEN_STRING_LITERAL;
 }
 
@@ -870,7 +866,7 @@ static inline void lexer_error_at_current(Lexer* l, Token* t, const char* msg, .
     va_list va;
     va_start(va, msg);
     SourceLoc loc;
-    loc.file = l->unit->file;
+    loc.file = l->la_buf.buf[0].loc.file;
     loc.col_num  = get_col(l);
     loc.line_num = l->cur_line;
     loc.len = 1;

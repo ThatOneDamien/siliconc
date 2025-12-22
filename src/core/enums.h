@@ -90,7 +90,6 @@ typedef enum : uint8_t
 {
     CONSTANT_INVALID = 0,
     CONSTANT_INTEGER,
-    CONSTANT_BOOL,
     CONSTANT_FLOAT,
     CONSTANT_STRING,
     CONSTANT_POINTER,
@@ -102,7 +101,8 @@ typedef enum : uint8_t
     DEBUG_LEXER   = (1 << 0),
     DEBUG_PARSER  = (1 << 1),
     DEBUG_SEMA    = (1 << 2),
-    DEBUG_CODEGEN = (1 << 3)
+    DEBUG_CODEGEN = (1 << 3),
+    DEBUG_MEMORY  = (1 << 4),
 } DebugOutput;
 
 typedef enum : uint8_t
@@ -159,7 +159,7 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
-    VIS_PRIVATE,     // Accessible only to compilation unit
+    VIS_PRIVATE,     // Accessible only within the module
     VIS_PUBLIC,      // Accessible to all modules that import this module
 
     VIS_DEFAULT = VIS_PRIVATE,

@@ -16,12 +16,13 @@ struct ExprParseRule
 };
 
 // Top-level grammar
-static void parse_imports(Lexer* l);
 static bool parse_top_level(Lexer* l);
-static bool parse_namespace(Lexer* l, Namespace* out, bool as_prefix);
-static bool function_declaration(Lexer* l, Visibility vis);
+static bool parse_module_path(Lexer* l, ModulePath* out);
+static bool parse_function_decl(Lexer* l, Visibility vis);
+static bool parse_import(Lexer* l, Visibility vis);
+static bool parse_module_decl(Lexer* l, Visibility vis);
 static bool parse_func_params(Lexer* l, bool allow_unnamed, ObjectDA* params, bool* is_var_args);
-static bool global_var_declaration(Lexer* l, Visibility vis, bool is_const);
+static bool parse_global_var_decl(Lexer* l, Visibility vis);
 
 // Types
 static Visibility  parse_visibility(Lexer* l);
@@ -113,50 +114,18 @@ static ExprParseRule expr_rules[__TOKEN_COUNT];
 #define NOP_STMT     (&s_nop_stmt)
 #define DEFAULT_EXPR (&s_default_expr)
 
-void parse_unit(CompUnit* unit)
+void parse_source_file(FileId fileid)
 {
-    SIC_ASSERT(unit != NULL);
-    Lexer lex;
-    Lexer* l = &lex;
-    Module* module;
-    lexer_init_unit(l, unit);
-
-    // FIXME: This is temporary.
-    module = &g_compiler.top_module;
-    unit->module = module;
-
-    parse_imports(l);
+    Lexer lex = lexer_from_source(fileid);
+    Lexer* const l = &lex;
 
     while(!tok_equal(l, TOKEN_EOF))
     {
         if(!parse_top_level(l))
             recover_top_level(l);
     }
-
-    if(unit->vars.size + unit->types.size + unit->funcs.size > 0)
-    {
-        module->unit = unit;
-        if(!module->used)
-        {
-            da_append(&g_compiler.modules_to_compile, module);
-            module->used = true;
-        }
-    }
 }
 
-static void parse_imports(Lexer* l)
-{
-    while(try_consume(l, TOKEN_IMPORT))
-    {
-        Namespace n;
-        if(!parse_namespace(l, &n, false) ||
-           !consume(l, TOKEN_SEMI))
-        {
-            recover_top_level(l);
-            continue;
-        }
-    }
-}
 
 static bool parse_top_level(Lexer* l)
 {
@@ -171,16 +140,19 @@ static bool parse_top_level(Lexer* l)
         advance(l);
         type = parse_bitfield_decl(l, vis);
         break;
-    case TOKEN_CONST:
-        advance(l);
-        return global_var_declaration(l, vis, true);
     case TOKEN_ENUM:
         advance(l);
         type = parse_enum_decl(l, vis);
         break;
     case TOKEN_FN:
         advance(l);
-        return function_declaration(l, vis);
+        return parse_function_decl(l, vis);
+    case TOKEN_IMPORT:
+        advance(l);
+        return parse_import(l, vis);
+    case TOKEN_MODULE:
+        advance(l);
+        return parse_module_decl(l, vis);
     case TOKEN_STRUCT:
         kind = OBJ_STRUCT;
         FALLTHROUGH;
@@ -193,46 +165,31 @@ static bool parse_top_level(Lexer* l)
         type = parse_typedef(l, vis);
         break;
     default: 
-        return global_var_declaration(l, vis, false);
+        return parse_global_var_decl(l, vis);
     }
 
     if(type == NULL)
         return false;
-    da_append(&l->unit->types, type);
+    da_append(&l->module->types, type);
     return true;
 }
 
-static bool parse_namespace(Lexer* l, Namespace* out, bool as_prefix)
+static bool parse_module_path(Lexer* l, ModulePath* out)
 {
-    if(!tok_equal(l, TOKEN_IDENT) || (as_prefix && peek_next(l)->kind != TOKEN_NAMESPACE)) return true;
-    scratch_clear();
-    while(true)
+    do
     {
         if(!tok_equal(l, TOKEN_IDENT))
-            ERROR_AND_RET(false, "Expected a module name or identifier.");
-        if(peek_next(l)->kind != TOKEN_NAMESPACE)
-            break;
-        scratch_appendn(peek(l)->sym, peek(l)->loc.len);
-        scratch_appendn("::", 2);
+            ERROR_AND_RET(false, "Expected an identifier.");
+        da_reserve(out, out->size + 1);
+        out->data[out->size++] = (SymbolLoc){ .sym = peek(l)->sym, .loc = peek(l)->loc };
         advance(l);
-        advance(l);
-    }
+    } while(try_consume(l, TOKEN_NAMESPACE));
 
-    if(!as_prefix)
-    {
-        scratch_appendn(peek(l)->sym, peek(l)->loc.len);
-        advance(l);
-    }
-    else
-        g_scratch.len -= 2; // Remove the extra ::
-    
-    TokenKind kind = TOKEN_IDENT;
-    out->module = sym_map_addn(scratch_string(), g_scratch.len, &kind);
-    out->len = g_scratch.len;
+    da_compact(out);
     return true;
 }
 
-static bool function_declaration(Lexer* l, Visibility vis)
+static bool parse_function_decl(Lexer* l, Visibility vis)
 {
     CONSUME_OR_RET(TOKEN_IDENT, false);
     Object* func = new_obj(peek_prev(l), OBJ_FUNC, vis);
@@ -249,7 +206,7 @@ static bool function_declaration(Lexer* l, Visibility vis)
     else if(!parse_decl_type(l, false, &comps->signature->ret_type))
         return false;
 
-    da_append(&l->unit->funcs, func);
+    da_append(&l->module->funcs, func);
 
     if(try_consume(l, TOKEN_SEMI))
         return true;
@@ -259,12 +216,53 @@ static bool function_declaration(Lexer* l, Visibility vis)
     return true;
 }
 
+static bool parse_import(Lexer* l, UNUSED Visibility vis)
+{
+
+    ModulePath path = {0};
+    if(!parse_module_path(l, &path))
+        return false;
+    for(uint32_t i = 0; i < path.size; ++i)
+    {
+        printf("%s\n", path.data[i].sym);
+    }
+    CONSUME_OR_RET(TOKEN_SEMI, false);
+    return true;
+}
+
+static bool parse_module_decl(Lexer* l, UNUSED Visibility vis)
+{
+    CONSUME_OR_RET(TOKEN_IDENT, false);
+    Module* parent = l->module;
+    Symbol mod_name = peek_prev(l)->sym;
+    SourceLoc mod_loc = peek_prev(l)->loc;
+    if(try_consume(l, TOKEN_LBRACE))
+    {
+        l->module = module_add_submodule(parent, mod_name, mod_loc, true);
+        while(!try_consume(l, TOKEN_RBRACE))
+        {
+            if(tok_equal(l, TOKEN_EOF))
+            {
+                l->module = parent;
+                ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
+            }
+
+            if(!parse_top_level(l))
+                recover_top_level(l);
+        }
+        l->module = parent;
+        return true;
+    }
+    CONSUME_OR_RET(TOKEN_SEMI, false);
+    return true;
+}
+
 static bool parse_func_params(Lexer* l, bool allow_unnamed, ObjectDA* params, bool* is_var_args)
 {
-    while(!tok_equal(l, TOKEN_RPAREN))
+    while(!try_consume(l, TOKEN_RPAREN))
     {
         if(tok_equal(l, TOKEN_EOF))
-            ERROR_AND_RET(false, "Encountered end of file, expected '}'.");
+            ERROR_AND_RET(false, "Encountered end of file, expected ')'.");
         
         if(params->size > 0)
             CONSUME_OR_RET(TOKEN_COMMA, false);
@@ -299,26 +297,24 @@ static bool parse_func_params(Lexer* l, bool allow_unnamed, ObjectDA* params, bo
         da_append(params, p);
     }
     
-    advance(l);
+    da_compact(params);
     *is_var_args = false;
     return true;
 }
 
-static bool global_var_declaration(Lexer* l, Visibility vis, bool is_const)
+static bool parse_global_var_decl(Lexer* l, Visibility vis)
 {
     Type* type;
     if(!parse_decl_type(l, false, &type))
         return false;
     CONSUME_OR_RET(TOKEN_IDENT, false);
-    Object* var = new_var(peek_prev(l), is_const ? VAR_CONST : VAR_GLOBAL, vis, type);
+    Object* var = new_var(peek_prev(l), VAR_GLOBAL, vis, type);
 
     if(try_consume(l, TOKEN_ASSIGN))
         ASSIGN_EXPR_OR_RET(var->var.initial_val, false);
-    else if(is_const)
-        ERROR_AND_RET(false, "Constant variable must be assigned a value.");
 
     CONSUME_OR_RET(TOKEN_SEMI, false);
-    da_append(&l->unit->vars, var);
+    da_append(&l->module->vars, var);
     return true;
 }
 
@@ -377,6 +373,7 @@ static Object* parse_enum_decl(Lexer* l, Visibility vis)
             EXPECT_OR_RET(TOKEN_RBRACE, NULL);
     }
 
+    da_compact(members);
     return obj;
     
 }
@@ -417,6 +414,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis)
         CONSUME_OR_RET(TOKEN_SEMI, obj);
     }
 
+    da_compact(members);
     return obj;
 }
 
@@ -452,6 +450,7 @@ static Object* parse_bitfield_decl(Lexer* l, Visibility vis)
         CONSUME_OR_RET(TOKEN_SEMI, obj);
     }
 
+    da_compact(members);
     return obj;
 }
 
@@ -476,85 +475,69 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
 {
     *type = NULL;
     Type* ty = NULL;
-    bool ambiguous = true; 
 
-    // First we see if there is a builtin type or typeof, which
-    // confirms that this is a type.
-    while(true)
+    TokenKind kind = peek(l)->kind;
+    switch(kind)
     {
-        TokenKind kind = peek(l)->kind;
-        switch(kind)
+    case TOKEN_VOID:
+    case TOKEN_BOOL:
+    case TOKEN_CHAR:
+    case TOKEN_UBYTE:
+    case TOKEN_BYTE:
+    case TOKEN_USHORT:
+    case TOKEN_SHORT:
+    case TOKEN_UINT:
+    case TOKEN_INT:
+    case TOKEN_ULONG:
+    case TOKEN_LONG:
+    case TOKEN_IPTR:
+    case TOKEN_UPTR:
+    case TOKEN_ISZ:
+    case TOKEN_USZ:
+    case TOKEN_FLOAT:
+    case TOKEN_DOUBLE:
+        ty = type_from_token(kind);
+        advance(l);
+        goto TYPE_SUFFIX;
+    case TOKEN_AUTO:
+        ty = g_type_auto;
+        advance(l);
+        goto TYPE_SUFFIX;
+    case TOKEN_FN:
+        if(!allow_func)
         {
-        case TOKEN_VOID:
-        case TOKEN_BOOL:
-        case TOKEN_CHAR:
-        case TOKEN_UBYTE:
-        case TOKEN_BYTE:
-        case TOKEN_USHORT:
-        case TOKEN_SHORT:
-        case TOKEN_UINT:
-        case TOKEN_INT:
-        case TOKEN_ULONG:
-        case TOKEN_LONG:
-        case TOKEN_IPTR:
-        case TOKEN_UPTR:
-        case TOKEN_ISZ:
-        case TOKEN_USZ:
-        case TOKEN_FLOAT:
-        case TOKEN_DOUBLE:
-            if(ty != NULL)
-                ERROR_AND_RET(false, "Two or more data types in type prefix");
-            ty = type_from_token(kind);
-            ambiguous = false;
-            advance(l);
-            continue;
-        case TOKEN_AUTO:
-            if(ty != NULL)
-                ERROR_AND_RET(false, "Cannot combine auto with previous type specifier.");
-            ty = g_type_auto;
-            ambiguous = false;
-            advance(l);
-            continue;
-        case TOKEN_FN:
-            if(ty != NULL)
-                ERROR_AND_RET(false, "Cannot combine fn with previous type specifier.");
-            if(!allow_func)
-                ERROR_AND_RET(false, "Function pointer types must first be assigned to a "
-                                     "typedef before use (i.e. typedef cb = fn () -> void;).");
-            advance(l);
-            CONSUME_OR_RET(TOKEN_LPAREN, false);
-            FuncSignature* sig = CALLOC_STRUCT(FuncSignature);
-            if(!parse_func_params(l, true, &sig->params, &sig->is_var_arg))
-                return false;
-            if(!try_consume(l, TOKEN_ARROW))
-                sig->ret_type = g_type_void;
-            else if(!parse_decl_type(l, false, &sig->ret_type))
-                return false;
-            ty = type_func_ptr(sig);
-            goto TYPE_SUFFIX;
-        case TOKEN_CT_TYPEOF:
-            if(ty != NULL)
-                ERROR_AND_RET(false, "Cannot combine #typeof with previous type specifier.");
-            ambiguous = false;
-            advance(l);
-            CONSUME_OR_RET(TOKEN_LPAREN, false);
-            ty = CALLOC_STRUCT(Type);
-            ty->kind = TYPE_TYPEOF;
-            ty->canonical = ty;
-            ASSIGN_EXPR_OR_RET(ty->type_of, false);
-            CONSUME_OR_RET(TOKEN_RPAREN, false);
-            continue;
-        default:
-            break;
+            ERROR_AND_RET(false, "Function pointer types must first be assigned to a "
+                                 "typedef before use (i.e. typedef cb = fn () -> void;).");
         }
+        advance(l);
+        CONSUME_OR_RET(TOKEN_LPAREN, false);
+        FuncSignature* sig = CALLOC_STRUCT(FuncSignature);
+        if(!parse_func_params(l, true, &sig->params, &sig->is_var_arg))
+            return false;
+        if(!try_consume(l, TOKEN_ARROW))
+            sig->ret_type = g_type_void;
+        else if(!parse_decl_type(l, false, &sig->ret_type))
+            return false;
+        ty = type_func_ptr(sig);
+        goto TYPE_SUFFIX;
+    case TOKEN_CT_TYPEOF:
+        advance(l);
+        CONSUME_OR_RET(TOKEN_LPAREN, false);
+        ty = CALLOC_STRUCT(Type);
+        ty->kind = TYPE_TYPEOF;
+        ty->canonical = ty;
+        ASSIGN_EXPR_OR_RET(ty->type_of, false);
+        CONSUME_OR_RET(TOKEN_RPAREN, false);
+        goto TYPE_SUFFIX;
+    default:
         break;
     }
 
     // If we didnt find a builtin type, and the token kind is not
     // an identifier, this is not a type but maybe an expression.
-    if(ty == NULL && !tok_equal(l, TOKEN_IDENT))
+    if(!tok_equal(l, TOKEN_IDENT))
     {
-        if(ambiguous && expr != NULL)
+        if(expr != NULL)
         {
             *expr = parse_expr(l);
             return !expr_is_bad(*expr);
@@ -563,13 +546,20 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         return false;
     }
 
-    if(ambiguous && expr != NULL)
+    ModulePath ident_path = {0};
+    if(!parse_module_path(l, &ident_path))
+        return false;
+
+    // This can be either an expression or a type.
+    // Imagine this example:
+    //    something[1]
+    // This can either be an array called 'something' being accessed
+    // at index 1, or an array type of size 1 with element type 'something'.
+    // We don't know during parse time whether something is a type or not.
+    if(expr != NULL)
     {
-        SourceLoc ident_loc = peek(l)->loc;
-        Symbol ident_sym = peek(l)->sym;
         ASTExpr* temp_buf[64];
         uint32_t dims = 0;
-        advance(l);
         while(try_consume(l, TOKEN_LBRACKET))
         {
             if(dims > 63)
@@ -582,8 +572,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
                 // Automatically sized array, definitely a type.
                 ty = CALLOC_STRUCT(Type);
                 ty->kind = TYPE_PS_USER;
-                ty->unresolved.sym = ident_sym;
-                ty->unresolved.loc = ident_loc;
+                ty->unresolved = ident_path;
                 for(uint32_t i = 0; i < dims; ++i)
                     ty = type_array_of(ty, temp_buf[i]);
                 ty = type_array_of(ty, NULL);
@@ -600,8 +589,7 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         {
             ty = CALLOC_STRUCT(Type);
             ty->kind = TYPE_PS_USER;
-            ty->unresolved.sym = ident_sym;
-            ty->unresolved.loc = ident_loc;
+            ty->unresolved = ident_path;
             for(uint32_t i = 0; i < dims; ++i)
                 ty = type_array_of(ty, temp_buf[i]);
         }
@@ -609,8 +597,8 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         {
             ASTExpr* cur = CALLOC_STRUCT(ASTExpr);
             cur->kind = EXPR_PS_IDENT;
-            cur->loc = ident_loc;
-            cur->expr.pre_sema_ident.sym = ident_sym;
+            cur->loc = ident_path.data[0].loc;
+            cur->expr.pre_sema_ident = ident_path;
             for(uint32_t i = 0; i < dims; ++i)
             {
                 ASTExpr* next = CALLOC_STRUCT(ASTExpr);
@@ -623,12 +611,11 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
             return !expr_is_bad(*expr = parse_expr_with_prec(l, PREC_ASSIGN, cur));
         }
     }
-    else if(ty == NULL)
+    else
     {
         ty = CALLOC_STRUCT(Type);
         ty->kind = TYPE_PS_USER;
-        ty->unresolved.sym = peek(l)->sym;
-        ty->unresolved.loc = peek(l)->loc;
+        ty->unresolved = ident_path;
         advance(l);
     }
 
@@ -1022,6 +1009,7 @@ static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
             return BAD_EXPR;
     }
 
+    da_compact(args);
     return call;
 }
 
@@ -1123,6 +1111,7 @@ static ASTExpr* parse_struct_init_list(Lexer* l)
         if(!try_consume(l, TOKEN_COMMA))
             break;
     }
+    da_compact(list);
 OUTER:
     CONSUME_OR_RET(TOKEN_RBRACE, BAD_EXPR);
     return expr;
@@ -1150,6 +1139,7 @@ static ASTExpr* parse_array_init_list(Lexer* l)
             break;
     }
 
+    da_compact(list);
     CONSUME_OR_RET(TOKEN_RBRACKET, BAD_EXPR);
     expr->type = g_type_anon_arr;
     return expr;
@@ -1165,10 +1155,8 @@ static ASTExpr* parse_invalid(UNUSED Lexer* l)
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_PS_IDENT);
-    if(!parse_namespace(l, &expr->expr.pre_sema_ident.ns, true))
+    if(!parse_module_path(l, &expr->expr.pre_sema_ident))
         return BAD_EXPR;
-    expr->expr.pre_sema_ident.sym = peek(l)->sym;
-    advance(l);
     return expr;
 }
 
@@ -1364,7 +1352,7 @@ static ASTExpr* parse_default_expr(Lexer* l)
 
 static ASTExpr* parse_bool_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_BOOL);
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
@@ -1417,7 +1405,7 @@ static inline bool expect(Lexer* l, TokenKind kind)
 static inline void advance(Lexer* l)
 {
 #ifdef SI_DEBUG
-    if(g_args.debug_output & DEBUG_LEXER)
+    if(g_compiler.debug_output & DEBUG_LEXER)
         print_token(peek(l));
 #endif
     lexer_advance(l);

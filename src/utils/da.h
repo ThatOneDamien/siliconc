@@ -88,3 +88,13 @@
         (da)->size = (new_size);        \
     } while(0)
 
+#define da_compact(da)                                                  \
+    do                                                                  \
+    {                                                                   \
+        if((da)->size == 0) break;                                      \
+        (da)->data = REALLOC((da)->data,                                \
+                             (da)->size * sizeof(*((da)->data)),        \
+                             8,                                         \
+                             (da)->capacity * sizeof(*((da)->data)));   \
+        (da)->capacity = (da)->size;                                    \
+    } while(0)

@@ -13,7 +13,7 @@ typedef enum : uint8_t
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
-    CompUnit*    unit;
+    Module*      module;
     Object*      cur_func;
     Object*      cyclic_def;
     
@@ -30,15 +30,12 @@ bool     analyze_global_var(Object* global_var);
 bool     analyze_function(Object* function);
 bool     analyze_expr_no_set(ASTExpr* expr);
 bool     analyze_cast(ASTExpr* cast);
-bool     analyze_type_obj(Object* type_obj, Type** o_type, 
-                          ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
-
+bool     analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool     implicit_cast(ASTExpr** expr_to_cast, Type* desired);
 void     implicit_cast_varargs(ASTExpr** expr_to_cast);
-bool     resolve_type(Type** type_ref, ResolutionFlags flags, 
-                      SourceLoc err_loc, const char* err_str);
+bool     resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 void     push_obj(Object* obj);
-Object*  find_obj(Symbol symbol);
+Object*  find_obj(ModulePath* path);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
 bool     expr_is_lvalue(ASTExpr* expr);

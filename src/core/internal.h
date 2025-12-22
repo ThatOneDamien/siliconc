@@ -4,8 +4,6 @@
 #include "utils/da.h"
 #include "utils/lib.h"
 
-// Compiler globals
-extern CLIArgs         g_args;
 extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
@@ -50,8 +48,8 @@ BinaryOpKind tok_to_binary_op(TokenKind kind);
 UnaryOpKind  tok_to_unary_op(TokenKind kind);
 
 // Lexer functions
-void lexer_init_unit(Lexer* l, CompUnit* unit);
-void lexer_advance(Lexer* l);
+Lexer lexer_from_source(FileId fileid);
+void  lexer_advance(Lexer* l);
 static inline Token* lexer_peek(Lexer* l)
 {
     return l->la_buf.buf + l->la_buf.cur;
@@ -79,11 +77,14 @@ static inline bool token_is_keyword(TokenKind kind)
 }
 
 // Parser functions
-void parse_unit(CompUnit* unit);
+void parse_source_file(FileId fileid);
+
+// Module functions
+void    module_declare_all(Module* module);
+Module* module_add_submodule(Module* parent, Symbol name, SourceLoc loc, bool is_inline);
 
 // Semantic analysis functions
-void semantic_declaration(CompUnit* unit);
-void semantic_analysis(ModulePTRDA* modules);
+void analyze_module(Module* module);
 void perform_cast(ASTExpr* cast);
 
 // Symbol map functions
@@ -217,7 +218,7 @@ static inline bool type_is_bad(Type* type)
 #ifdef SI_DEBUG
 
 void print_token(Token* tok);
-void print_unit(const CompUnit* unit);
+void print_module(const Module* module);
 void print_func(const Object* func);
 void print_stmt(const ASTStmt* stmt);
 void print_expr(const ASTExpr* expr);

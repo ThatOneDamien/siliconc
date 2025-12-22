@@ -164,15 +164,17 @@ static bool resolve_user(Type** type_ref, ResolutionFlags flags,
                          SourceLoc err_loc, const char* err_str)
 {
     Type* user_ty = *type_ref;
-    Object* type_obj = find_obj(user_ty->unresolved.sym);
+    Object* type_obj = find_obj(&user_ty->unresolved);
     if(type_obj == NULL)
     {
-        sic_error_at(user_ty->unresolved.loc, "Unknown typename.");
+        // FIXME: Incorrect now
+        sic_error_at(user_ty->unresolved.data[0].loc, "Unknown typename.");
         return false;
     }
     if(!obj_is_type(type_obj))
     {
-        sic_error_at(user_ty->unresolved.loc, "Symbol does not refer to a typename.");
+        // FIXME: Incorrect now
+        sic_error_at(user_ty->unresolved.data[0].loc, "Symbol does not refer to a typename.");
         return false;
     }
     user_ty->visibility = type_obj->visibility;

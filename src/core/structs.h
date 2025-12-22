@@ -26,11 +26,11 @@ typedef struct SourceLoc        SourceLoc;
 typedef struct Token            Token;
 typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
+typedef struct SymbolLoc        SymbolLoc;
 
 // Type Structs
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
-typedef struct TypeUnresolved   TypeUnresolved;
 typedef struct Type             Type;
 
 // Dynamic Array Structs
@@ -39,12 +39,11 @@ typedef struct ObjectDA         ObjectDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTCaseDA        ASTCaseDA;
 typedef struct ASTDeclDA        ASTDeclDA;
-typedef struct CompUnitDA       CompUnitDA;
 typedef struct SourceFileDA     SourceFileDA;
-typedef struct ModulePTRDA      ModulePTRDA;
+typedef struct ModuleDA         ModuleDA;
 
 // AST Structs
-typedef struct Namespace        Namespace;
+typedef struct ModulePath       ModulePath;
 typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
@@ -81,9 +80,7 @@ typedef struct Object           Object;
 
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
-typedef struct CompUnit         CompUnit;
 typedef struct Module           Module;
-typedef struct CLIArgs          CLIArgs;
 typedef struct CompilerContext  CompilerContext;
 
 struct HashEntry
@@ -104,7 +101,6 @@ struct HashMap
 struct MemArena
 {
     uint8_t* base;
-    uint8_t* last_alloced;
     size_t   capacity;
     size_t   allocated;
 };
@@ -150,11 +146,24 @@ struct LookAhead
 
 struct Lexer
 {
-    CompUnit*   unit;
+    Module*     module;
     const char* line_start;
     const char* cur_pos;
     uint32_t    cur_line;
     LookAhead   la_buf;
+};
+
+struct SymbolLoc
+{
+    Symbol    sym;
+    SourceLoc loc;
+};
+
+struct ModulePath
+{
+    SymbolLoc* data;
+    uint32_t   size;
+    uint32_t   capacity;
 };
 
 struct TypeArray
@@ -173,12 +182,6 @@ struct TypeBuiltin
     ByteSize byte_size;
 };
 
-struct TypeUnresolved
-{
-    SourceLoc loc;
-    Symbol    sym;
-};
-
 struct Type
 {
     TypeKind      kind;
@@ -190,13 +193,13 @@ struct Type
 
     union
     {
-        TypeArray      array;
-        TypeBuiltin    builtin;
-        FuncSignature* func_ptr;
-        Type*          pointer_base;
-        ASTExpr*       type_of;
-        TypeUnresolved unresolved;
-        Object*        user_def;
+        TypeArray       array;
+        TypeBuiltin     builtin;
+        FuncSignature*  func_ptr;
+        Type*           pointer_base;
+        ASTExpr*        type_of;
+        ModulePath      unresolved;
+        Object*         user_def;
     };
 };
 
@@ -235,13 +238,6 @@ struct ASTDeclDA
     uint32_t        size;
 };
 
-struct CompUnitDA
-{
-    CompUnit** data;
-    uint32_t   capacity;
-    uint32_t   size;
-};
-
 struct SourceFileDA
 {
     SourceFile* data;
@@ -249,18 +245,13 @@ struct SourceFileDA
     uint32_t    size;
 };
 
-struct ModulePTRDA
+struct ModuleDA
 {
     Module** data;
     uint32_t capacity;
     uint32_t size;
 };
 
-struct Namespace
-{
-    Symbol   module;
-    uint32_t len;
-};
 
 struct ASTExprAAccess
 {
@@ -330,12 +321,6 @@ struct ASTExprMAccess
     uint32_t member_idx;
 };
 
-struct ASTExprPreIdent
-{
-    Namespace ns;
-    Symbol    sym;
-};
-
 struct ASTExprTernary
 {
     ASTExpr* cond_expr;
@@ -374,7 +359,7 @@ struct ASTExpr
         Object*         ident;
         InitList        init_list;
         ASTExprMAccess  member_access;
-        ASTExprPreIdent pre_sema_ident;
+        ModulePath      pre_sema_ident;
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
@@ -543,37 +528,41 @@ struct SourceFile
     const char* abs_path;
     const char* rel_path;
     const char* src;
-    FileId      id;
-};
-
-struct CompUnit
-{
-    FileId   file;
-    Module*  module;
-    HashMap  priv_symbols;
-    ObjectDA funcs;
-    ObjectDA types;
-    ObjectDA vars;
+    Module*     module;
 };
 
 struct Module
 {
-    Symbol      name;
-    CompUnit*   unit;
-    ModulePTRDA submodules;
-    HashMap     public_symbols;
-    bool        used;
+    Symbol     name;
+    SourceLoc  loc;
+    Module*    parent;
+    ModuleDA   submodules;
+    ModuleDA   imports;
+    ObjectDA   funcs;
+    ObjectDA   types;
+    ObjectDA   vars;
+    HashMap    module_map;
+    HashMap    symbol_map;
+    Visibility visibility;
+    bool       is_inline;
+    bool       has_declared;
 };
 
-struct CLIArgs
+struct CompilerContext
 {
-    StringDA      input_files;
-    char*         output_file;
+    FileId        input_file;
+    const char*   output_file_name;
 
     CompileMode   mode;
     CompileTarget target;
     IRTarget      ir_kind;
 
+    SourceFileDA sources;
+    StringDA     linker_inputs;
+    Module       top_module;
+    Object*      main_function;
+
+    // Flags
     bool          emit_ir : 1;
     bool          emit_asm : 1;
     bool          hash_hash_hash : 1;
@@ -581,13 +570,4 @@ struct CLIArgs
 #ifdef SI_DEBUG
     DebugOutput   debug_output;
 #endif
-};
-
-struct CompilerContext
-{
-    SourceFileDA sources;
-    StringDA     linker_inputs;
-    Module       top_module;
-    ModulePTRDA  modules_to_compile;
-    Object*      main_function;
 };

@@ -38,19 +38,43 @@ void push_obj(Object* obj)
     s_obj_stack.data[--s_obj_stack.stack_bottom] = obj;
 }
 
-Object* find_obj(Symbol symbol)
+Object* find_obj(ModulePath* path)
 {
+    Module* mod = g_sema->module;
     Object* o;
-    for(uint32_t i = s_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
+    Symbol actual;
+    if(path->size == 1)
     {
-        o = s_obj_stack.data[i];
-        if(o->symbol == symbol)
-            return o;
+        actual = path->data[0].sym;
+        for(uint32_t i = s_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
+        {
+            o = s_obj_stack.data[i];
+            if(o->symbol == actual)
+                return o;
+        }
     }
-    o = hashmap_get(&g_sema->unit->priv_symbols, symbol);
-    if(o != NULL)
-        return o;
-    return hashmap_get(&g_sema->unit->module->public_symbols, symbol);
+    else
+    {
+        actual = path->data[path->size - 1].sym;
+        for(uint32_t i = 0; i < path->size - 1; ++i)
+        {
+            for(uint32_t j = 0; j < mod->submodules.size; ++j)
+            {
+                Module* other = mod->submodules.data[j];
+                if(other->name == path->data[i].sym)
+                {
+                    mod = other;
+                    goto NEXT;
+                }
+            }
+            sic_error_at(path->data[i].loc, "Module \'%s\' does not contain submodule \'%s\'.",
+                         mod->name, path->data[i].sym);
+            return NULL;
+        NEXT:;
+        }
+        module_declare_all(mod);
+    }
+    return hashmap_get(&mod->symbol_map, actual);
 }
 
 uint32_t push_scope()
