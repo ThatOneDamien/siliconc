@@ -24,7 +24,7 @@ SemaContext* g_sema = NULL;
 
 void analyze_module(Module* module)
 {
-    module_declare_all(module);
+    // module_declare_all(module);
     SemaContext* prev = g_sema;
     SemaContext sema = {0};
     g_sema = &sema;
@@ -59,6 +59,7 @@ bool analyze_function(Object* function)
     ObjectDA* params = &sig->params;
     bool success = true;
     function->status = STATUS_RESOLVING;
+    bool prev = g_sema->in_global_init;
     g_sema->in_global_init = true;
 
     if(!resolve_type(&sig->ret_type, RES_ALLOW_VOID, function->loc, "Function cannot have return type"))
@@ -96,6 +97,7 @@ bool analyze_function(Object* function)
         }
     }
 
+    g_sema->in_global_init = prev;
     function->status = STATUS_RESOLVED;
     func_type->status = STATUS_RESOLVED;
 
@@ -106,6 +108,191 @@ bool analyze_function(Object* function)
     }
 
     return success;
+}
+
+bool resolve_import(Module* module, Object* import)
+{
+    if(import->status == STATUS_RESOLVED) return import->kind != OBJ_INVALID;
+    if(import->status == STATUS_RESOLVING)
+    {
+        set_cyclic_def(import);
+        return false;
+    }
+
+    import->status = STATUS_RESOLVING;
+
+
+    // TODO: Check external modules as well. They arent added yet, but when they are
+    // add them here.
+    ModulePath* path = &import->unresolved_import;
+    Module* mod = &g_compiler.top_module;
+    // if(!module_declare_all(mod))
+    // {
+    //     check_cyclic_def(import, import->loc);
+    //     return false;
+    // }
+        
+    for(uint32_t i = 0; i < path->size - 1; ++i)
+    {
+        for(uint32_t j = 0; j < mod->imports.size; ++j)
+        {
+            Object* other_import = mod->imports.data[j];
+            if((other_import->symbol == NULL || other_import->symbol == path->data[i].sym) &&
+               !resolve_import(mod, other_import))
+            {
+                check_cyclic_def(import, import->loc);
+                return false;
+            }
+        }
+
+        Object* next = hashmap_get(&mod->module_ns, path->data[i].sym);
+        if(next == NULL)
+        {
+            sic_error_at(path->data[i].loc, "Module \'%s\' does not exist in the current module.",
+                         path->data[i].sym);
+            return false;
+        }
+        if(next->visibility == VIS_PRIVATE)
+        {
+            sic_error_at(path->data[i].loc, "Module \'%s\' is marked as private and is not accessible from module \'%s\'.",
+                         path->data[i].sym, mod->name);
+            return false;
+        }
+        mod = next->kind == OBJ_IMPORT ? next->import->module : next->module;
+        // if(!module_declare_all(mod))
+        // {
+        //     check_cyclic_def(import, import->loc);
+        //     return false;
+        // }
+    }
+
+    if(import->symbol == NULL)
+    {
+        import->status = STATUS_RESOLVED;
+        for(uint32_t i = 0; i < mod->symbol_ns.bucket_cnt; ++i)
+        {
+            HashEntry* entry = mod->symbol_ns.buckets + i;
+            if(entry->key != NULL)
+            {
+                Object* prev = hashmap_get(&module->symbol_ns, entry->key);
+                if(prev != NULL)
+                {
+                    sic_error_redef(import, prev);
+                    import->kind = OBJ_INVALID;
+                    return false;
+                }
+                // TODO: Create new import here for each one. Technically this is incorrect.
+                hashmap_put(&module->symbol_ns, entry->key, entry->value);
+            }
+        }
+
+        for(uint32_t i = 0; i < mod->module_ns.bucket_cnt; ++i)
+        {
+            HashEntry* entry = mod->module_ns.buckets + i;
+            if(entry->key != NULL)
+            {
+                Object* prev = hashmap_get(&module->module_ns, entry->key);
+                if(prev != NULL)
+                {
+                    sic_error_redef(import, prev);
+                    import->kind = OBJ_INVALID;
+                    return false;
+                }
+                // TODO: Create new import here for each one. Technically this is incorrect.
+                hashmap_put(&module->module_ns, entry->key, entry->value);
+            }
+        }
+
+    }
+
+    for(uint32_t i = 0; i < mod->imports.size; ++i)
+    {
+        Object* other_import = mod->imports.data[i];
+        if((other_import->symbol == NULL || other_import->symbol == import->symbol) &&
+           !resolve_import(mod, other_import))
+        {
+            check_cyclic_def(import, import->loc);
+            return false;
+        }
+    }
+
+    import->status = STATUS_RESOLVED;
+
+    Object* o = hashmap_get(&mod->module_ns, path->data[path->size - 1].sym);
+    if(o != NULL)
+    {
+        Object* prev = hashmap_get(&module->module_ns, import->symbol);
+        if(prev != NULL)
+        {
+            sic_error_redef(import, prev);
+            import->kind = OBJ_INVALID;
+            return false;
+        }
+        import->import = o;
+        hashmap_put(&module->module_ns, import->symbol, import);
+    }
+
+    o = hashmap_get(&mod->symbol_ns, path->data[path->size - 1].sym);
+    if(o != NULL)
+    {
+        Object* prev = hashmap_get(&module->symbol_ns, import->symbol);
+        if(prev != NULL)
+        {
+            sic_error_redef(import, prev);
+            import->kind = OBJ_INVALID;
+            return false;
+        }
+        import->import = o;
+        hashmap_put(&module->symbol_ns, import->symbol, import);
+    }
+
+    return true;
+}
+
+static UNUSED bool analyze_main(Object* main)
+{
+    if(main->kind != OBJ_FUNC)
+    {
+        sic_error_at(main->loc, "Symbol 'main' is reserved for entry function.");
+        return false;
+    }
+
+    if(g_compiler.main_function != NULL)
+    {
+        sic_error_redef(main, g_compiler.main_function);
+        return false;
+    }
+
+    FuncSignature* sig = main->func.signature;
+    TypeKind rt_kind = sig->ret_type->kind;
+    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
+        goto BAD_SIG;
+
+    if(sig->params.size >= 1 && sig->params.data[0]->type->kind != TYPE_INT)
+        goto BAD_SIG;
+
+    Type* second;
+    if(sig->params.size >= 2)
+    {
+        second = sig->params.data[1]->type;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_CHAR)
+            goto BAD_SIG;
+    }
+
+    g_compiler.main_function = main;
+    return true;
+
+BAD_SIG:
+    sic_error_at(main->loc, "The signature of the main function is invalid. "
+                            "The return type should be 'int' or 'void', with "
+                            "optional parameters 'int, char**'.");
+    return false;
 }
 
 static void analyze_function_body(Object* function)
@@ -544,6 +731,8 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
     case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
     case OBJ_VAR:
         SIC_UNREACHABLE();
     }

@@ -5,6 +5,11 @@
 
 #include <float.h>
 
+// FIXME: HUGE Fix needed for the locations of expressions, statements, etc.
+//        Right now I have been focused more on features than accurate error
+//        messages, but I NEED to make locations span the entirety of the
+//        expression/statement.
+
 typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
 typedef ASTExpr* (*ExprInfixFunc)(Lexer*, ASTExpr*);
 typedef struct ExprParseRule ExprParseRule;
@@ -91,11 +96,15 @@ static inline bool     try_consume(Lexer* l, TokenKind kind);
 static inline bool     consume(Lexer* l, TokenKind kind);
 static inline void     recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count);
 static inline void     recover_top_level(Lexer* l);
+
 static inline Object*  new_obj(Token* t, ObjKind kind, Visibility vis);
 static inline Object*  new_var(Token* t, VarKind kind, Visibility vis, Type* type);
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind);
+static inline void     declare_module_obj(Module* module, Object* global);
+static Module*         add_submodule(Module* parent, Symbol name, SourceLoc loc, 
+                                     Visibility visibility, bool is_inline);
 
 static ASTStmt s_bad_stmt = {0};
 static ASTExpr s_bad_expr = {0};
@@ -171,6 +180,7 @@ static bool parse_top_level(Lexer* l)
     if(type == NULL)
         return false;
     da_append(&l->module->types, type);
+    declare_module_obj(l->module, type);
     return true;
 }
 
@@ -178,11 +188,9 @@ static bool parse_module_path(Lexer* l, ModulePath* out)
 {
     do
     {
-        if(!tok_equal(l, TOKEN_IDENT))
-            ERROR_AND_RET(false, "Expected an identifier.");
+        CONSUME_OR_RET(TOKEN_IDENT, false);
         da_reserve(out, out->size + 1);
-        out->data[out->size++] = (SymbolLoc){ .sym = peek(l)->sym, .loc = peek(l)->loc };
-        advance(l);
+        out->data[out->size++] = (SymbolLoc){ .sym = peek_prev(l)->sym, .loc = peek_prev(l)->loc };
     } while(try_consume(l, TOKEN_NAMESPACE));
 
     da_compact(out);
@@ -207,6 +215,7 @@ static bool parse_function_decl(Lexer* l, Visibility vis)
         return false;
 
     da_append(&l->module->funcs, func);
+    declare_module_obj(l->module, func);
 
     if(try_consume(l, TOKEN_SEMI))
         return true;
@@ -216,21 +225,57 @@ static bool parse_function_decl(Lexer* l, Visibility vis)
     return true;
 }
 
-static bool parse_import(Lexer* l, UNUSED Visibility vis)
+static bool parse_import(Lexer* l, Visibility vis)
 {
-
     ModulePath path = {0};
-    if(!parse_module_path(l, &path))
-        return false;
-    for(uint32_t i = 0; i < path.size; ++i)
+
+    while(true)
     {
-        printf("%s\n", path.data[i].sym);
+        if(try_consume(l, TOKEN_LBRACE))
+        {
+            da_compact(&path);
+            SIC_TODO();
+        }
+        if(try_consume(l, TOKEN_ASTERISK))
+        {
+            da_reserve(&path, path.size + 1);
+            path.data[path.size++] = (SymbolLoc){ .sym = NULL, .loc = peek_prev(l)->loc };
+            da_compact(&path);
+            Object* import = CALLOC_STRUCT(Object);
+            import->loc = peek_prev(l)->loc;
+            import->kind = OBJ_IMPORT;
+            import->visibility = vis;
+            import->unresolved_import = path;
+            da_append(&l->module->imports, import);
+            break;
+        }
+
+        CONSUME_OR_RET(TOKEN_IDENT, false);
+        da_reserve(&path, path.size + 1);
+        path.data[path.size++] = (SymbolLoc){ .sym = peek_prev(l)->sym, .loc = peek_prev(l)->loc };
+        if(try_consume(l, TOKEN_NAMESPACE))
+            continue;
+
+        if(try_consume(l, TOKEN_AS))
+            CONSUME_OR_RET(TOKEN_IDENT, false);
+
+        da_compact(&path);
+        Object* import = CALLOC_STRUCT(Object);
+        import->symbol = peek_prev(l)->sym;
+        import->loc = peek_prev(l)->loc;
+        import->kind = OBJ_IMPORT;
+        import->visibility = vis;
+        import->unresolved_import = path;
+        da_append(&l->module->imports, import);
+        break;
     }
+
+
     CONSUME_OR_RET(TOKEN_SEMI, false);
     return true;
 }
 
-static bool parse_module_decl(Lexer* l, UNUSED Visibility vis)
+static bool parse_module_decl(Lexer* l, Visibility vis)
 {
     CONSUME_OR_RET(TOKEN_IDENT, false);
     Module* parent = l->module;
@@ -238,7 +283,7 @@ static bool parse_module_decl(Lexer* l, UNUSED Visibility vis)
     SourceLoc mod_loc = peek_prev(l)->loc;
     if(try_consume(l, TOKEN_LBRACE))
     {
-        l->module = module_add_submodule(parent, mod_name, mod_loc, true);
+        l->module = add_submodule(parent, mod_name, mod_loc, vis, true);
         while(!try_consume(l, TOKEN_RBRACE))
         {
             if(tok_equal(l, TOKEN_EOF))
@@ -315,6 +360,7 @@ static bool parse_global_var_decl(Lexer* l, Visibility vis)
 
     CONSUME_OR_RET(TOKEN_SEMI, false);
     da_append(&l->module->vars, var);
+    declare_module_obj(l->module, var);
     return true;
 }
 
@@ -616,7 +662,6 @@ static bool parse_decl_type_or_expr(Lexer* l, bool allow_func, Type** type, ASTE
         ty = CALLOC_STRUCT(Type);
         ty->kind = TYPE_PS_USER;
         ty->unresolved = ident_path;
-        advance(l);
     }
 
 TYPE_SUFFIX:
@@ -1433,6 +1478,33 @@ static inline bool consume(Lexer* l, TokenKind kind)
     return false;
 }
 
+static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
+{
+    while(true)
+    {
+        TokenKind kind = peek(l)->kind;
+        if(kind == TOKEN_EOF)
+            return;
+        for(size_t i = 0; i < count; ++i)
+            if(kind == stopping_kinds[i])
+                return;
+        advance(l);
+    }
+}
+
+static inline void recover_top_level(Lexer* l)
+{
+    advance(l);
+    Token* t = peek(l);
+    while(t->kind != TOKEN_EOF && 
+          (t->loc.col_num > 1 || 
+           (t->kind != TOKEN_IDENT && !token_is_keyword(t->kind))))
+    {
+        advance(l);
+        t = peek(l);
+    }
+}
+
 static inline Object* new_obj(Token* t, ObjKind kind, Visibility vis)
 {
     SIC_ASSERT(t->kind == TOKEN_IDENT);
@@ -1484,32 +1556,47 @@ static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
 
 }
 
-static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
+static inline void declare_module_obj(Module* module, Object* global)
 {
-    while(true)
-    {
-        TokenKind kind = peek(l)->kind;
-        if(kind == TOKEN_EOF)
-            return;
-        for(size_t i = 0; i < count; ++i)
-            if(kind == stopping_kinds[i])
-                return;
-        advance(l);
-    }
+    HashMap* map = &module->symbol_ns;
+    Object* other = hashmap_get(map, global->symbol);
+
+    if(other != NULL)
+        sic_error_redef(global, other);
+
+    hashmap_put(map, global->symbol, global);
 }
 
-static inline void recover_top_level(Lexer* l)
+
+static Module* add_submodule(Module* parent, Symbol name, SourceLoc loc, 
+                             Visibility visibility, bool is_inline)
 {
-    advance(l);
-    Token* t = peek(l);
-    while(t->kind != TOKEN_EOF && 
-          (t->loc.col_num > 1 || 
-           (t->kind != TOKEN_IDENT && !token_is_keyword(t->kind))))
+    Object* prev;
+    if((prev = hashmap_get(&parent->module_ns, name)) != NULL)
     {
-        advance(l);
-        t = peek(l);
+        sic_diagnostic_at(loc, DIAG_ERROR, "Module with name \'%s\' already exists.", name);
+        sic_diagnostic_at(prev->loc, DIAG_NOTE, "Previous definition here.");
+        return prev->module;
     }
+
+    Module* new_mod = CALLOC_STRUCT(Module);
+    new_mod->name = name;
+    new_mod->loc = loc;
+    new_mod->parent = parent;
+    new_mod->is_inline = is_inline;
+    new_mod->visibility = visibility;
+    Object* mod_ref = CALLOC_STRUCT(Object);
+    mod_ref->symbol = name;
+    mod_ref->loc = loc;
+    mod_ref->kind = OBJ_MODULE;
+    mod_ref->visibility = visibility;
+    mod_ref->status = STATUS_RESOLVED;
+    mod_ref->module = new_mod;
+    da_append(&parent->submodules, new_mod);
+    hashmap_put(&parent->module_ns, name, mod_ref);
+    return new_mod;
 }
+
 
 static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_INVALID]         = { parse_invalid, NULL, PREC_NONE },

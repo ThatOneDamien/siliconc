@@ -1,6 +1,11 @@
 #pragma once
 #include "internal.h"
 
+// I do minus 1 here to keep the stack_top and stack_bottom members
+// on the same page as the end of the data array so that there will
+// be less cache misses hopefully.
+#define OBJ_STACK_SIZE ((1 << 16) - 1)
+
 typedef enum : uint8_t
 {
     BLOCK_REGULAR     = 0,
@@ -24,7 +29,16 @@ struct SemaContext
     bool         check_lvalue : 1;
 };
 
+typedef struct ObjStack ObjStack;
+struct ObjStack
+{
+    Object*  data[OBJ_STACK_SIZE];
+    uint32_t stack_top;
+    uint32_t stack_bottom;
+};
+
 extern SemaContext* g_sema;
+extern ObjStack     g_obj_stack;
 
 bool     analyze_global_var(Object* global_var);
 bool     analyze_function(Object* function);
@@ -79,6 +93,8 @@ static inline bool obj_is_type(Object* obj)
     case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
     case OBJ_VAR:
         return false;
     case OBJ_INVALID:

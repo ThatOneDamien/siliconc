@@ -1427,6 +1427,8 @@ static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
     case OBJ_ENUM_VALUE:
     case OBJ_BITFIELD:
     case OBJ_ENUM:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
     case OBJ_STRUCT:
     case OBJ_TYPE_ALIAS:
     case OBJ_UNION:

@@ -344,9 +344,7 @@ static bool analyze_call(ASTExpr* expr)
 static bool analyze_ident(ASTExpr* expr)
 {
     Object* ident = find_obj(&expr->expr.pre_sema_ident);
-    if(ident == NULL)
-        // FIXME: Show the symbol name. After the path was added i.e. std::something it doesnt show right.
-        ERROR_AND_RET(expr->loc, "Reference to undefined symbol.");
+    if(ident == NULL) return false;
 
     switch(ident->kind)
     {
@@ -396,6 +394,9 @@ static bool analyze_ident(ASTExpr* expr)
         return true;
     case OBJ_INVALID:
         return false;
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
+        break;
     }
     SIC_UNREACHABLE();
 }

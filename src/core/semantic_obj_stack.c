@@ -1,19 +1,6 @@
 #include "semantics.h"
 
-// I do minus 1 here to keep the stack_top and stack_bottom members
-// on the same page as the end of the data array so that there will
-// be less cache misses hopefully.
-#define OBJ_STACK_SIZE ((1 << 16) - 1)
-
-typedef struct ObjStack ObjStack;
-struct ObjStack
-{
-    Object*  data[OBJ_STACK_SIZE];
-    uint32_t stack_top;
-    uint32_t stack_bottom;
-};
-
-static ObjStack s_obj_stack = { 
+ObjStack g_obj_stack = { 
     .stack_top = OBJ_STACK_SIZE, 
     .stack_bottom = OBJ_STACK_SIZE,
 };
@@ -21,71 +8,78 @@ static ObjStack s_obj_stack = {
 void push_obj(Object* obj)
 {
     if(obj->symbol == NULL) return;
-    for(uint32_t i = s_obj_stack.stack_bottom; i < s_obj_stack.stack_top; ++i)
+    for(uint32_t i = g_obj_stack.stack_bottom; i < g_obj_stack.stack_top; ++i)
     {
-        Object* other = s_obj_stack.data[i];
+        Object* other = g_obj_stack.data[i];
         if(other->symbol == obj->symbol)
         {
             sic_error_redef(obj, other);
             return;
         }
     }
-    if(s_obj_stack.stack_bottom <= 0)
+    if(g_obj_stack.stack_bottom <= 0)
     {
-        sic_fatal_error("Exceeded maximum defined object count at one time.");
+        sic_fatal_error("Object count in scope has exceeded the capacity of the object stack (%d).", OBJ_STACK_SIZE);
         return;
     }
-    s_obj_stack.data[--s_obj_stack.stack_bottom] = obj;
+    g_obj_stack.data[--g_obj_stack.stack_bottom] = obj;
 }
 
 Object* find_obj(ModulePath* path)
 {
     Module* mod = g_sema->module;
     Object* o;
-    Symbol actual;
-    if(path->size == 1)
+    SymbolLoc last = path->data[path->size - 1];
+    if(!g_sema->in_global_init && path->size == 1)
     {
-        actual = path->data[0].sym;
-        for(uint32_t i = s_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
+        for(uint32_t i = g_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
         {
-            o = s_obj_stack.data[i];
-            if(o->symbol == actual)
+            o = g_obj_stack.data[i];
+            if(o->symbol == last.sym)
                 return o;
         }
     }
     else
     {
-        actual = path->data[path->size - 1].sym;
         for(uint32_t i = 0; i < path->size - 1; ++i)
         {
-            for(uint32_t j = 0; j < mod->submodules.size; ++j)
+            Object* next = hashmap_get(&mod->module_ns, path->data[i].sym);
+            if(next == NULL)
             {
-                Module* other = mod->submodules.data[j];
-                if(other->name == path->data[i].sym)
-                {
-                    mod = other;
-                    goto NEXT;
-                }
+                // TODO: Make the message display the full path of the module.
+                sic_error_at(path->data[i].loc, "Module \'%s\' does not exist in the current module.",
+                             mod->name);
+                return NULL;
             }
-            sic_error_at(path->data[i].loc, "Module \'%s\' does not contain submodule \'%s\'.",
-                         mod->name, path->data[i].sym);
-            return NULL;
-        NEXT:;
+            if(next->visibility == VIS_PRIVATE)
+            {
+                // TODO: Make the message display the full path of the module.
+                sic_error_at(path->data[i].loc, "Module \'%s\' is marked as private and is not accessible from current module.",
+                             path->data[i].sym);
+                return NULL;
+            }
+            mod = next->kind == OBJ_IMPORT ? next->import->module : next->module;
         }
-        module_declare_all(mod);
     }
-    return hashmap_get(&mod->symbol_map, actual);
+    o = hashmap_get(&mod->symbol_ns, last.sym);
+    if(o == NULL)
+    {
+        sic_error_at(last.loc, "Reference to undefined symbol \'%s\'.", last.sym);
+        return NULL;
+    }
+    // TODO: Check visibility rules.
+    return o->kind == OBJ_IMPORT ? o->import : o;
 }
 
 uint32_t push_scope()
 {
-    uint32_t prev = s_obj_stack.stack_top;
-    s_obj_stack.stack_top = s_obj_stack.stack_bottom;
+    uint32_t prev = g_obj_stack.stack_top;
+    g_obj_stack.stack_top = g_obj_stack.stack_bottom;
     return prev;
 }
 
 void pop_scope(uint32_t old)
 {
-    s_obj_stack.stack_bottom = s_obj_stack.stack_top;
-    s_obj_stack.stack_top = old;
+    g_obj_stack.stack_bottom = g_obj_stack.stack_top;
+    g_obj_stack.stack_top = old;
 }

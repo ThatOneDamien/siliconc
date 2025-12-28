@@ -165,12 +165,7 @@ static bool resolve_user(Type** type_ref, ResolutionFlags flags,
 {
     Type* user_ty = *type_ref;
     Object* type_obj = find_obj(&user_ty->unresolved);
-    if(type_obj == NULL)
-    {
-        // FIXME: Incorrect now
-        sic_error_at(user_ty->unresolved.data[0].loc, "Unknown typename.");
-        return false;
-    }
+    if(type_obj == NULL) return false;
     if(!obj_is_type(type_obj))
     {
         // FIXME: Incorrect now

@@ -22,7 +22,7 @@ void hashmap_reserve(HashMap* map, uint32_t entry_cnt)
         rehash(map, new_cap);
 }
 
-void hashmap_put(HashMap* map, Symbol key, void* val)
+void hashmap_put(HashMap* map, Symbol key, Object* val)
 {
     SIC_ASSERT(map != NULL);
     SIC_ASSERT(key != NULL);
@@ -44,7 +44,7 @@ void hashmap_put(HashMap* map, Symbol key, void* val)
         entry->value = val;
 }
 
-void* hashmap_get(HashMap* map, Symbol key)
+Object* hashmap_get(HashMap* map, Symbol key)
 {
     SIC_ASSERT(map != NULL);
     SIC_ASSERT(key != NULL);
@@ -83,7 +83,7 @@ static void rehash(HashMap* map, uint32_t new_cap)
 {
     HashMap temp_map;
     temp_map.bucket_cnt = new_cap;
-    temp_map.buckets    = CALLOC_STRUCTS(HashEntry, new_cap);
+    temp_map.buckets    = CALLOC_STRUCTS(HashEntry, new_cap); 
     temp_map.entry_cnt  = map->entry_cnt;
     temp_map.max_load   = new_cap * LOAD_FACTOR_HI / LOAD_FACTOR_C;
     if(map->buckets != NULL)

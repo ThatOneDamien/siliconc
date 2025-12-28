@@ -87,7 +87,7 @@ struct HashEntry
 {
     Symbol     key;
     uint64_t   hash;
-    void*      value;
+    Object*    value;
 };
 
 struct HashMap
@@ -502,6 +502,10 @@ struct ObjVar
     VarKind  kind;
 };
 
+// TODO: Optimization should be possible to make the average Object instance smaller.
+//       If it is possible, it would be done by making the shared resources a separate
+//       header struct called Object, then the other union kinds would be their own structs
+//       with the header to start.
 struct Object
 {
     Symbol        symbol;
@@ -516,8 +520,11 @@ struct Object
         ObjEnum      enum_;      // Components of enum typedef
         ObjEnumValue enum_val;   // Components of value in enum
         ObjFunc      func;       // Components of function
+        Object*      import;     // Imported object
+        Module*      module;     // Module reference
         ObjStruct    struct_;    // Components of bitfield, struct, or union
-        Type*        type_alias;
+        Type*        type_alias; // Typedef alias
+        ModulePath   unresolved_import;
         ObjVar       var;        // Components of variable
     };
 
@@ -535,17 +542,17 @@ struct Module
 {
     Symbol     name;
     SourceLoc  loc;
-    Module*    parent;
-    ModuleDA   submodules;
-    ModuleDA   imports;
-    ObjectDA   funcs;
-    ObjectDA   types;
-    ObjectDA   vars;
-    HashMap    module_map;
-    HashMap    symbol_map;
     Visibility visibility;
     bool       is_inline;
     bool       has_declared;
+    Module*    parent;
+    ModuleDA   submodules;
+    ObjectDA   imports;
+    ObjectDA   funcs;
+    ObjectDA   types;
+    ObjectDA   vars;
+    HashMap    module_ns; // Namespace of modules
+    HashMap    symbol_ns; // Namespace of types, functions, variables
 };
 
 struct CompilerContext

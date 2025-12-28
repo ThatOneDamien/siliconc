@@ -173,6 +173,8 @@ typedef enum : uint8_t
     OBJ_ENUM,
     OBJ_ENUM_VALUE,
     OBJ_FUNC,
+    OBJ_IMPORT,
+    OBJ_MODULE,
     OBJ_STRUCT,
     OBJ_TYPE_ALIAS,
     OBJ_UNION,

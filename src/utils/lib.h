@@ -79,10 +79,10 @@ struct ScratchBuffer
 };
 
 // hash.c - Hashmap functions
-void  hashmap_reserve(HashMap* map, uint32_t entry_cnt);
-void  hashmap_put(HashMap* map, Symbol key, void* val);
-void* hashmap_get(HashMap* map, Symbol key);
-void  hashmap_clear(HashMap* map);
+void    hashmap_reserve(HashMap* map, uint32_t entry_cnt);
+void    hashmap_put(HashMap* map, Symbol key, Object* val);
+Object* hashmap_get(HashMap* map, Symbol key);
+void    hashmap_clear(HashMap* map);
 
 // arena.c - Arena functions
 extern MemArena g_global_arena;

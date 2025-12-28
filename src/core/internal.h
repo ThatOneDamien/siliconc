@@ -79,10 +79,6 @@ static inline bool token_is_keyword(TokenKind kind)
 // Parser functions
 void parse_source_file(FileId fileid);
 
-// Module functions
-void    module_declare_all(Module* module);
-Module* module_add_submodule(Module* parent, Symbol name, SourceLoc loc, bool is_inline);
-
 // Semantic analysis functions
 void analyze_module(Module* module);
 void perform_cast(ASTExpr* cast);
