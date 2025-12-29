@@ -168,8 +168,7 @@ static bool resolve_user(Type** type_ref, ResolutionFlags flags,
     if(type_obj == NULL) return false;
     if(!obj_is_type(type_obj))
     {
-        // FIXME: Incorrect now
-        sic_error_at(user_ty->unresolved.data[0].loc, "Symbol does not refer to a typename.");
+        sic_error_at(user_ty->unresolved.data[user_ty->unresolved.size - 1].loc, "Symbol does not refer to a typename.");
         return false;
     }
     user_ty->visibility = type_obj->visibility;

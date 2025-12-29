@@ -348,8 +348,6 @@ static bool analyze_ident(ASTExpr* expr)
 
     switch(ident->kind)
     {
-    case OBJ_ALIAS_EXPR:
-        SIC_TODO();
     case OBJ_ENUM_VALUE:
         expr->type = ident->type;
         expr->kind = EXPR_CONSTANT;
@@ -777,11 +775,13 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     expr->type = left->type;
     if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
     {
-        // TODO: Check for 0 on the right.
+        uint64_t rval = right->expr.constant.val.i;
+        if(rval == 0)
+            ERROR_AND_RET(expr->loc, "Right side of modulo evaluates to 0.");
         expr->kind = EXPR_CONSTANT;
         expr->const_eval = true;
         expr->expr.constant.kind = CONSTANT_INTEGER;
-        expr->expr.constant.val.i = left->expr.constant.val.i % right->expr.constant.val.i;
+        expr->expr.constant.val.i = left->expr.constant.val.i % rval;
         const_int_correct(expr);
         return true;
     }

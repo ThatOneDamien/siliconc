@@ -47,8 +47,10 @@ bool     analyze_cast(ASTExpr* cast);
 bool     analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool     implicit_cast(ASTExpr** expr_to_cast, Type* desired);
 void     implicit_cast_varargs(ASTExpr** expr_to_cast);
+bool     resolve_import(Module* module, Object* import);
 bool     resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 void     push_obj(Object* obj);
+Module*  find_module(Module* start, SymbolLoc symloc, bool allow_private);
 Object*  find_obj(ModulePath* path);
 uint32_t push_scope();
 void     pop_scope(uint32_t old);
@@ -90,7 +92,6 @@ static inline bool obj_is_type(Object* obj)
 {
     switch(obj->kind)
     {
-    case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_IMPORT:

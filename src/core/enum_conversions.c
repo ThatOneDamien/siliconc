@@ -55,7 +55,6 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_ASHR_ASSIGN]     = ">>>=",
     [TOKEN_SHL_ASSIGN]      = "<<=",
 
-    [TOKEN_ALIAS]           = "alias",
     [TOKEN_AS]              = "as",
     [TOKEN_AUTO]            = "auto",
     [TOKEN_BITFIELD]        = "bitfield",

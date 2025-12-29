@@ -143,8 +143,6 @@ static bool parse_top_level(Lexer* l)
     Object* type;
     switch(peek(l)->kind)
     {
-    case TOKEN_ALIAS:
-        SIC_TODO();
     case TOKEN_BITFIELD:
         advance(l);
         type = parse_bitfield_decl(l, vis);

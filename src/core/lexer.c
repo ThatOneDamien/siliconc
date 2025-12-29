@@ -687,6 +687,8 @@ static inline bool extract_num_suffix(Lexer* l, bool* is_float)
 
 static inline bool escaped_char(const char** pos, uint32_t* value)
 {
+    // TODO: Make this have specific errors for each issue instead of
+    // just saying 'invalid escape sequence'.
     const char* p = *pos;
     bool success = true;
     switch(*(p++))
@@ -706,8 +708,18 @@ static inline bool escaped_char(const char** pos, uint32_t* value)
     case 'n': // Line Feed/New Line
         *value = 0x0A;
         break;
-    case 'o': // Arbitrary Octal Value
-        SIC_TODO_MSG("Octal escape sequences.");
+    case 'o': { // Arbitrary Octal Value
+        if(!c_is_octal(p[0]) || !c_is_octal(p[1]) || !c_is_octal(p[2]) ||
+           p[0] - '0' > 3)
+        {
+            success = false;
+            break;
+        }
+
+        *value = ((p[0] - '0') << 6) | ((p[1] - '0') << 3) | (p[2] - '0');
+        p += 3;
+        break;
+    }
     case 'r': // Carriage Return
         *value = 0x0D;
         break;

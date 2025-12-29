@@ -413,7 +413,11 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner,
 {
     if(inner->kind == EXPR_CONSTANT)
     {
-        SIC_TODO();
+        cast->kind = EXPR_CONSTANT;
+        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->const_eval = true;
+        return;
     }
 
     cast->expr.cast.kind = CAST_INT_TO_PTR;

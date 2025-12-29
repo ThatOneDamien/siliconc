@@ -25,13 +25,35 @@ void push_obj(Object* obj)
     g_obj_stack.data[--g_obj_stack.stack_bottom] = obj;
 }
 
+Module* find_module(Module* start, SymbolLoc symloc, bool allow_private)
+{
+    Object* next = hashmap_get(&start->module_ns, symloc.sym);
+    if(next == NULL)
+    {
+        // TODO: Make the message display the full path of the module.
+        sic_error_at(symloc.loc, "Module \'%s\' does not exist in the current module.",
+                     start->name);
+        return NULL;
+    }
+    if(!allow_private && next->visibility == VIS_PRIVATE)
+    {
+        // TODO: Make the message display the full path of the module.
+        sic_error_at(symloc.loc, "Module \'%s\' is marked as private and is not accessible from current module.",
+                     symloc.sym);
+        return NULL;
+    }
+    return next->kind == OBJ_IMPORT ? next->import->module : next->module;
+}
+
 Object* find_obj(ModulePath* path)
 {
     Module* mod = g_sema->module;
     Object* o;
     SymbolLoc last = path->data[path->size - 1];
+    bool allow_private;
     if(!g_sema->in_global_init && path->size == 1)
     {
+        allow_private = true;
         for(uint32_t i = g_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
         {
             o = g_obj_stack.data[i];
@@ -41,30 +63,26 @@ Object* find_obj(ModulePath* path)
     }
     else
     {
-        for(uint32_t i = 0; i < path->size - 1; ++i)
+        allow_private = false;
+        if((mod = find_module(mod, path->data[0], true)) == NULL)
+            return NULL;
+        for(uint32_t i = 1; i < path->size - 1; ++i)
         {
-            Object* next = hashmap_get(&mod->module_ns, path->data[i].sym);
-            if(next == NULL)
-            {
-                // TODO: Make the message display the full path of the module.
-                sic_error_at(path->data[i].loc, "Module \'%s\' does not exist in the current module.",
-                             mod->name);
+            if((mod = find_module(mod, path->data[0], false)) == NULL)
                 return NULL;
-            }
-            if(next->visibility == VIS_PRIVATE)
-            {
-                // TODO: Make the message display the full path of the module.
-                sic_error_at(path->data[i].loc, "Module \'%s\' is marked as private and is not accessible from current module.",
-                             path->data[i].sym);
-                return NULL;
-            }
-            mod = next->kind == OBJ_IMPORT ? next->import->module : next->module;
         }
     }
     o = hashmap_get(&mod->symbol_ns, last.sym);
     if(o == NULL)
     {
         sic_error_at(last.loc, "Reference to undefined symbol \'%s\'.", last.sym);
+        return NULL;
+    }
+
+    if(!allow_private && o->visibility == VIS_PRIVATE)
+    {
+        sic_error_at(last.loc, "Symbol \'%s\' is marked private. Mark it as public if "
+                               "you wish to use it externally.", last.sym);
         return NULL;
     }
     // TODO: Check visibility rules.

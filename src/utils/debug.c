@@ -153,8 +153,6 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         return;
     case STMT_SWITCH:
         return;
-    case STMT_TYPE_DECL:
-        SIC_TODO();
     case STMT_WHILE:
         print_expr_at_depth(stmt->stmt.while_.cond, depth + 1, "cond");
         print_stmt_at_depth(stmt->stmt.while_.body, depth + 1, "body");
@@ -301,7 +299,6 @@ static const char* s_stmt_type_strs[] = {
     [STMT_SINGLE_DECL] = "Single Declaration",
     [STMT_SWAP]        = "Swap Statement",
     [STMT_SWITCH]      = "Switch Statement",
-    [STMT_TYPE_DECL]   = "Type Declaration",
     [STMT_WHILE]       = "While Loop",
 };
 

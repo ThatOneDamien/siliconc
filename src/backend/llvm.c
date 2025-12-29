@@ -329,7 +329,6 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         emit_while(c, stmt);
         return;
     case STMT_INVALID:
-    case STMT_TYPE_DECL:
         break;
     }
     SIC_UNREACHABLE();
@@ -592,6 +591,7 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_CT_SIZEOF:
         break;
     }
+    printf("%s\n", expr->expr.pre_sema_ident.data[0].sym);
     SIC_UNREACHABLE();
 }
 
@@ -1423,7 +1423,6 @@ static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
         if(obj->var.kind != VAR_GLOBAL)
             return obj->llvm_ref;
         return obj->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, obj->type), obj->symbol);
-    case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_BITFIELD:
     case OBJ_ENUM:

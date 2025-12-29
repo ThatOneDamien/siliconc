@@ -24,7 +24,11 @@ SemaContext* g_sema = NULL;
 
 void analyze_module(Module* module)
 {
-    // module_declare_all(module);
+    for(uint32_t i = 0; i < module->submodules.size; ++i)
+        analyze_module(module->submodules.data[i]);
+
+    for(uint32_t i = 0; i < module->imports.size; ++i)
+        resolve_import(module, module->imports.data[i]);
     SemaContext* prev = g_sema;
     SemaContext sema = {0};
     g_sema = &sema;
@@ -126,11 +130,6 @@ bool resolve_import(Module* module, Object* import)
     // add them here.
     ModulePath* path = &import->unresolved_import;
     Module* mod = &g_compiler.top_module;
-    // if(!module_declare_all(mod))
-    // {
-    //     check_cyclic_def(import, import->loc);
-    //     return false;
-    // }
         
     for(uint32_t i = 0; i < path->size - 1; ++i)
     {
@@ -145,29 +144,21 @@ bool resolve_import(Module* module, Object* import)
             }
         }
 
-        Object* next = hashmap_get(&mod->module_ns, path->data[i].sym);
-        if(next == NULL)
-        {
-            sic_error_at(path->data[i].loc, "Module \'%s\' does not exist in the current module.",
-                         path->data[i].sym);
+        if((mod = find_module(mod, path->data[i], false)) == NULL)
             return false;
-        }
-        if(next->visibility == VIS_PRIVATE)
-        {
-            sic_error_at(path->data[i].loc, "Module \'%s\' is marked as private and is not accessible from module \'%s\'.",
-                         path->data[i].sym, mod->name);
-            return false;
-        }
-        mod = next->kind == OBJ_IMPORT ? next->import->module : next->module;
-        // if(!module_declare_all(mod))
-        // {
-        //     check_cyclic_def(import, import->loc);
-        //     return false;
-        // }
     }
 
     if(import->symbol == NULL)
     {
+        for(uint32_t i = 0; i < mod->imports.size; ++i)
+        {
+            Object* other_import = mod->imports.data[i];
+            if(!resolve_import(mod, other_import))
+            {
+                check_cyclic_def(import, import->loc);
+                return false;
+            }
+        }
         import->status = STATUS_RESOLVED;
         for(uint32_t i = 0; i < mod->symbol_ns.bucket_cnt; ++i)
         {
@@ -181,28 +172,41 @@ bool resolve_import(Module* module, Object* import)
                     import->kind = OBJ_INVALID;
                     return false;
                 }
-                // TODO: Create new import here for each one. Technically this is incorrect.
-                hashmap_put(&module->symbol_ns, entry->key, entry->value);
+
+                Object* new = CALLOC_STRUCT(Object);
+                new->loc = import->loc;
+                new->kind = OBJ_IMPORT;
+                new->visibility = import->visibility;
+                new->status = STATUS_RESOLVED;
+                new->import = entry->value->kind == OBJ_IMPORT ? entry->value->import : entry->value;
+                hashmap_put(&module->symbol_ns, entry->key, new);
             }
         }
 
         for(uint32_t i = 0; i < mod->module_ns.bucket_cnt; ++i)
         {
             HashEntry* entry = mod->module_ns.buckets + i;
-            if(entry->key != NULL)
+            if(entry->key != NULL && entry->value->visibility == VIS_PUBLIC)
             {
-                Object* prev = hashmap_get(&module->module_ns, entry->key);
-                if(prev != NULL)
+                Object* old = hashmap_get(&module->module_ns, entry->key);
+                if(old != NULL)
                 {
-                    sic_error_redef(import, prev);
+                    sic_diagnostic_at(import->loc, DIAG_ERROR, "Module with name \'%s\' already exists.", entry->key);
+                    sic_diagnostic_at(entry->value->loc, DIAG_NOTE, "Previous definition here.");
                     import->kind = OBJ_INVALID;
                     return false;
                 }
-                // TODO: Create new import here for each one. Technically this is incorrect.
-                hashmap_put(&module->module_ns, entry->key, entry->value);
+
+                Object* new = CALLOC_STRUCT(Object);
+                new->loc = import->loc;
+                new->kind = OBJ_IMPORT;
+                new->visibility = import->visibility;
+                new->status = STATUS_RESOLVED;
+                new->import = entry->value->kind == OBJ_IMPORT ? entry->value->import : entry->value;
+                hashmap_put(&module->module_ns, entry->key, new);
             }
         }
-
+        return true;
     }
 
     for(uint32_t i = 0; i < mod->imports.size; ++i)
@@ -417,8 +421,6 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_SWITCH:
         analyze_switch(stmt);
         return;
-    case STMT_TYPE_DECL:
-        SIC_TODO();
     case STMT_WHILE:
         analyze_while(stmt);
         return;
@@ -728,7 +730,6 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
         break;
     case OBJ_INVALID:
         return false;
-    case OBJ_ALIAS_EXPR:
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_IMPORT:

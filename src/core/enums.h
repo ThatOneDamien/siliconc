@@ -168,7 +168,6 @@ typedef enum : uint8_t
 typedef enum : uint8_t
 {
     OBJ_INVALID = 0,
-    OBJ_ALIAS_EXPR,
     OBJ_BITFIELD,
     OBJ_ENUM,
     OBJ_ENUM_VALUE,
@@ -231,7 +230,6 @@ typedef enum : uint8_t
     STMT_SINGLE_DECL,
     STMT_SWAP,
     STMT_SWITCH,
-    STMT_TYPE_DECL,
     STMT_WHILE,
 
     // STMT_CT_IF,
@@ -307,9 +305,8 @@ typedef enum : uint8_t
     TOKEN_SHL_ASSIGN,       // <<=
 
     // Keywords
-    TOKEN_ALIAS,
-    TOKEN_KEYWORD_START = TOKEN_ALIAS,
     TOKEN_AS,
+    TOKEN_KEYWORD_START = TOKEN_AS,
     TOKEN_AUTO,
     TOKEN_BITFIELD,
     TOKEN_BREAK,
