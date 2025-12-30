@@ -10,6 +10,7 @@
 //        messages, but I NEED to make locations span the entirety of the
 //        expression/statement.
 
+
 typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
 typedef ASTExpr* (*ExprInfixFunc)(Lexer*, ASTExpr*);
 typedef struct ExprParseRule ExprParseRule;
@@ -102,9 +103,7 @@ static inline Object*  new_var(Token* t, VarKind kind, Visibility vis, Type* typ
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind);
-static inline void     declare_module_obj(Module* module, Object* global);
-static Module*         add_submodule(Module* parent, Symbol name, SourceLoc loc, 
-                                     Visibility visibility, bool is_inline);
+static inline void     declare_obj_in_module(Module* module, Object* global);
 
 static ASTStmt s_bad_stmt = {0};
 static ASTExpr s_bad_expr = {0};
@@ -178,7 +177,7 @@ static bool parse_top_level(Lexer* l)
     if(type == NULL)
         return false;
     da_append(&l->module->types, type);
-    declare_module_obj(l->module, type);
+    declare_obj_in_module(l->module, type);
     return true;
 }
 
@@ -213,7 +212,7 @@ static bool parse_function_decl(Lexer* l, Visibility vis)
         return false;
 
     da_append(&l->module->funcs, func);
-    declare_module_obj(l->module, func);
+    declare_obj_in_module(l->module, func);
 
     if(try_consume(l, TOKEN_SEMI))
         return true;
@@ -279,9 +278,35 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
     Module* parent = l->module;
     Symbol mod_name = peek_prev(l)->sym;
     SourceLoc mod_loc = peek_prev(l)->loc;
+    Object* prev;
+    if((prev = hashmap_get(&parent->module_ns, mod_name)) != NULL)
+    {
+        sic_diagnostic_at(mod_loc, DIAG_ERROR, "Module with name \'%s\' already exists.", mod_name);
+        sic_diagnostic_at(prev->loc, DIAG_NOTE, "Previous definition here.");
+        return prev->module;
+    }
+
+    Module* new_mod = CALLOC_STRUCT(Module);
+    new_mod->name = mod_name;
+    new_mod->loc = mod_loc;
+    new_mod->parent = parent;
+    new_mod->visibility = vis;
+
+    Object* mod_ref = CALLOC_STRUCT(Object);
+    mod_ref->symbol = mod_name;
+    mod_ref->loc = mod_loc;
+    mod_ref->kind = OBJ_MODULE;
+    mod_ref->visibility = vis;
+    mod_ref->status = STATUS_RESOLVED;
+    mod_ref->module = new_mod;
+
+    da_append(&parent->submodules, new_mod);
+    hashmap_put(&parent->module_ns, mod_name, mod_ref);
+
     if(try_consume(l, TOKEN_LBRACE))
     {
-        l->module = add_submodule(parent, mod_name, mod_loc, vis, true);
+        new_mod->is_inline = true;
+        l->module = new_mod;
         while(!try_consume(l, TOKEN_RBRACE))
         {
             if(tok_equal(l, TOKEN_EOF))
@@ -296,7 +321,11 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
         l->module = parent;
         return true;
     }
+    
     CONSUME_OR_RET(TOKEN_SEMI, false);
+    l->module = new_mod;
+    parse_source_file(find_and_open_module_path(new_mod));
+    l->module = parent;
     return true;
 }
 
@@ -358,7 +387,7 @@ static bool parse_global_var_decl(Lexer* l, Visibility vis)
 
     CONSUME_OR_RET(TOKEN_SEMI, false);
     da_append(&l->module->vars, var);
-    declare_module_obj(l->module, var);
+    declare_obj_in_module(l->module, var);
     return true;
 }
 
@@ -1554,7 +1583,7 @@ static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
 
 }
 
-static inline void declare_module_obj(Module* module, Object* global)
+static inline void declare_obj_in_module(Module* module, Object* global)
 {
     HashMap* map = &module->symbol_ns;
     Object* other = hashmap_get(map, global->symbol);
@@ -1563,36 +1592,6 @@ static inline void declare_module_obj(Module* module, Object* global)
         sic_error_redef(global, other);
 
     hashmap_put(map, global->symbol, global);
-}
-
-
-static Module* add_submodule(Module* parent, Symbol name, SourceLoc loc, 
-                             Visibility visibility, bool is_inline)
-{
-    Object* prev;
-    if((prev = hashmap_get(&parent->module_ns, name)) != NULL)
-    {
-        sic_diagnostic_at(loc, DIAG_ERROR, "Module with name \'%s\' already exists.", name);
-        sic_diagnostic_at(prev->loc, DIAG_NOTE, "Previous definition here.");
-        return prev->module;
-    }
-
-    Module* new_mod = CALLOC_STRUCT(Module);
-    new_mod->name = name;
-    new_mod->loc = loc;
-    new_mod->parent = parent;
-    new_mod->is_inline = is_inline;
-    new_mod->visibility = visibility;
-    Object* mod_ref = CALLOC_STRUCT(Object);
-    mod_ref->symbol = name;
-    mod_ref->loc = loc;
-    mod_ref->kind = OBJ_MODULE;
-    mod_ref->visibility = visibility;
-    mod_ref->status = STATUS_RESOLVED;
-    mod_ref->module = new_mod;
-    da_append(&parent->submodules, new_mod);
-    hashmap_put(&parent->module_ns, name, mod_ref);
-    return new_mod;
 }
 
 

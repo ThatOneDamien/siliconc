@@ -36,7 +36,7 @@ int main(int argc, char* argv[])
     if(g_compiler.ir_kind == IR_LLVM)
         llvm_initialize();
 
-    if(g_compiler.input_file < g_compiler.sources.size)
+    if(g_compiler.input_file != FILE_NULL)
     {
         parse_source_file(g_compiler.input_file);
 

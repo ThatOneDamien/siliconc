@@ -67,7 +67,6 @@ FileId source_file_add_or_get(const char* path, Module* module)
     SourceFile* file = g_compiler.sources.data + id;
     file->abs_path = str_dup(abs_path);
     file->rel_path = is_abs ? file->abs_path : normalize_rel_path(file->abs_path);
-    file->src      = NULL;
     file->module   = module;
 
     int fd = open(abs_path, O_RDONLY);
@@ -99,11 +98,42 @@ FileId source_file_add_or_get(const char* path, Module* module)
         buf[size + 1] = '\0';
     }
 
-    return id;
+    return id + 1;
 ERR:
     if(fd != -1)
         close(fd);
     sic_fatal_error("Failed to read source file \'%s\'", path);
+}
+
+FileId find_and_open_module_path(Module* module)
+{
+    // FIXME: Check overflow of buffer.
+    const char* base_path = file_from_id(g_compiler.input_file)->rel_path;
+    char path[PATH_MAX];
+    size_t len = 0;
+    for(size_t i = 0; base_path[i] != '\0'; ++i)
+        if(base_path[i] == '/')
+            len = i + 1;
+    memcpy(path, base_path, len);
+    ModuleDA stack = {0};
+    Module* temp = module;
+    while(temp->parent != NULL)
+    {
+        da_append(&stack, temp);
+        temp = temp->parent;
+    }
+
+    for(uint32_t i = stack.size - 1; i < stack.size; --i)
+    {
+        size_t next_len = strlen(stack.data[i]->name);
+        memcpy(path + len, stack.data[i]->name, next_len);
+        len += next_len;
+        path[len++] = '/';
+    }
+
+    memcpy(path + len, "mod.si", sizeof("mod.si"));
+    FREE(stack.data, stack.capacity * sizeof(Module*));
+    return source_file_add_or_get(path, module);
 }
 
 const char* convert_ext_to(const char* path, FileType desired)

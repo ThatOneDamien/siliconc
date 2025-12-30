@@ -95,6 +95,9 @@ void*  arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, si
 void   global_arenas_init(void);
 
 // error.c - Error functions
+// TODO: Add specialized inline error functions for specific cases, similar to sic_error_redef.
+//       This will just make it easier to repeat similar error messages without manually typing
+//       things which could result in differing messages for the same issue.
 extern int g_error_cnt;
 extern int g_warning_cnt;
 

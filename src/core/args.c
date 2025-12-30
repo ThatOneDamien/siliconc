@@ -15,7 +15,7 @@ void process_args(int argc, char* argv[])
             switch(get_filetype(arg))
             {
             case FT_SI:
-                if(g_compiler.input_file < g_compiler.sources.size)
+                if(g_compiler.input_file != FILE_NULL)
                     sic_fatal_error("Only 1 entry file may be provided.");
                 g_compiler.input_file = source_file_add_or_get(argv[i], &g_compiler.top_module);
                 continue;

@@ -4,4 +4,4 @@ compile_commands.json
 a.out
 *.ll
 *.s
-tester.si
+sandbox

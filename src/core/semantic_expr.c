@@ -1113,7 +1113,6 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
 
 static void promote_int_type(ASTExpr** expr)
 {
-    printf("HERE %d\n", (*expr)->type->canonical->kind);
     SIC_ASSERT(type_is_integer((*expr)->type->canonical));
     if(type_size((*expr)->type) < 4 && !implicit_cast(expr, g_type_int))
         SIC_UNREACHABLE();
