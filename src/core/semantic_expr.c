@@ -15,6 +15,8 @@ static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
 static bool analyze_unresolved_dot(ASTExpr* expr);
+static bool analyze_ct_alignof(ASTExpr* expr);
+static bool analyze_ct_offsetof(ASTExpr* expr);
 static bool analyze_ct_sizeof(ASTExpr* expr);
 
 // Binary functions
@@ -49,6 +51,8 @@ bool analyze_expr_no_set(ASTExpr* expr)
     expr->evaluated = true;
     switch(expr->kind)
     {
+    case EXPR_INVALID:
+        return false;
     case EXPR_ARRAY_ACCESS:
         return analyze_array_access(expr);
     case EXPR_ARRAY_INIT_LIST:
@@ -57,6 +61,8 @@ bool analyze_expr_no_set(ASTExpr* expr)
         return analyze_binary(expr);
     case EXPR_CAST:
         return analyze_cast(expr);
+    case EXPR_CONSTANT:
+        return true;
     case EXPR_DEFAULT:
         ERROR_AND_RET(expr->loc, "Keyword \'default\' not allowed in this context.");
     case EXPR_FUNC_CALL:
@@ -66,10 +72,8 @@ bool analyze_expr_no_set(ASTExpr* expr)
         return analyze_expr(inner) && 
                analyze_incdec(expr, inner);
     }
-    case EXPR_PS_IDENT:
-        return analyze_ident(expr);
     case EXPR_STRUCT_INIT_LIST:
-        break;
+        SIC_TODO();
     case EXPR_TERNARY:
         return analyze_ternary(expr);
     case EXPR_UNARY:
@@ -78,10 +82,12 @@ bool analyze_expr_no_set(ASTExpr* expr)
         return analyze_unresolved_arrow(expr);
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(expr);
-    case EXPR_CONSTANT:
-        return resolve_type(&expr->type, RES_NORMAL, expr->loc, "Constant cannot be of type");
-    case EXPR_INVALID:
-        return false;
+    case EXPR_UNRESOLVED_IDENT:
+        return analyze_ident(expr);
+    case EXPR_CT_ALIGNOF:
+        return analyze_ct_alignof(expr);
+    case EXPR_CT_OFFSETOF:
+        return analyze_ct_offsetof(expr);
     case EXPR_CT_SIZEOF:
         return analyze_ct_sizeof(expr);
     case EXPR_IDENT:
@@ -133,7 +139,7 @@ static bool analyze_array_access(ASTExpr* expr)
     Type* elem_t = expr->type = type_pointer_base(arr_t);
     if(type_reduce(elem_t)->kind == TYPE_VOID)
         ERROR_AND_RET(expr->loc, "Cannot access element of void array. Consider casting to another type.");
-    if(!implicit_cast(&expr->expr.array_access.index_expr, g_type_usz))
+    if(!implicit_cast(&expr->expr.array_access.index_expr, g_type_usize))
         return false;
 
     ASTExpr* index_expr = expr->expr.array_access.index_expr;
@@ -316,8 +322,8 @@ static bool analyze_call(ASTExpr* expr)
     bool valid = true;
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
-        Object* param = sig->params.data[i];
-        if(!implicit_cast(call->args.data + i, param->type))
+        ObjVar* param = sig->params.data[i];
+        if(!implicit_cast(call->args.data + i, param->type_loc.type))
         {
             valid = false;
             continue;
@@ -336,8 +342,7 @@ static bool analyze_call(ASTExpr* expr)
     }
 
 
-    expr->type = sig->ret_type;
-
+    expr->type = sig->ret_type.type;
     return valid;
 }
 
@@ -348,19 +353,23 @@ static bool analyze_ident(ASTExpr* expr)
 
     switch(ident->kind)
     {
-    case OBJ_ENUM_VALUE:
-        expr->type = ident->type;
+    case OBJ_ENUM_VALUE: {
+        ObjEnumValue* enum_val = obj_as_enum_value(ident);
+        expr->type = enum_val->enum_type;
         expr->kind = EXPR_CONSTANT;
         expr->expr.constant.kind = CONSTANT_INTEGER;
-        expr->expr.constant.val.i = ident->enum_val.const_val;
+        expr->expr.constant.val.i = enum_val->const_value;
         expr->const_eval = true;
         return true;
-    case OBJ_FUNC:
-        if(!analyze_function(ident)) return false;
-        expr->type = ident->type;
+    }
+    case OBJ_FUNC: {
+        ObjFunc* func = obj_as_func(ident);
+        if(!analyze_function(func)) return false;
+        expr->type = func->func_type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
         return true;
+    }
     case OBJ_BITFIELD:
     case OBJ_ENUM:
         expr->type = g_type_invalid;
@@ -368,28 +377,30 @@ static bool analyze_ident(ASTExpr* expr)
         expr->expr.ident = ident;
         return true;
     case OBJ_STRUCT:
-    case OBJ_TYPE_ALIAS:
+    case OBJ_TYPEDEF:
     case OBJ_UNION:
         SIC_TODO_MSG("Type expressions.");
-    case OBJ_VAR:
-        if(ident->var.kind == VAR_CONST)
+    case OBJ_VAR: {
+        ObjVar* var = obj_as_var(ident);
+        if(var->kind == VAR_CONST)
         {
-            analyze_global_var(ident);
+            analyze_global_var(var);
             if(ident->kind == OBJ_INVALID)
                 return false;
         }
 
-        if(g_sema->in_global_init && ident->var.kind == VAR_GLOBAL &&
-           !analyze_global_var(ident))
+        if(g_sema->in_global_init && var->kind == VAR_GLOBAL &&
+           !analyze_global_var(var))
         {
             return false;
         }
 
 
-        expr->type = ident->type;
+        expr->type = var->type_loc.type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
         return true;
+    }
     case OBJ_INVALID:
         return false;
     case OBJ_IMPORT:
@@ -452,7 +463,7 @@ static bool analyze_unary(ASTExpr* expr)
 static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-    Symbol member = uaccess->member_sym;
+    Symbol member = uaccess->member.sym;
     SIC_ASSERT(parent->type->status == STATUS_RESOLVED);
     Type* t = parent->type->canonical;
     switch(t->kind)
@@ -463,22 +474,23 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
             expr->kind = EXPR_CONSTANT;
             expr->expr.constant.kind = CONSTANT_INTEGER;
             expr->expr.constant.val.i = t->array.static_len;
-            expr->type = g_type_usz;
+            expr->type = g_type_usize;
             return true;
         }
         goto ERR;
     case TYPE_RUNTIME_ARRAY:
+        SIC_TODO();
     case TYPE_STRUCT:
     case TYPE_UNION: {
-        ObjectDA* members = &t->user_def->struct_.members;
-        for(uint32_t i = 0; i < members->size; ++i)
-            if(members->data[i]->symbol == member)
+        const ObjVarDA members = t->struct_->members;
+        for(uint32_t i = 0; i < members.size; ++i)
+            if(members.data[i]->header.symbol == member)
             {
                 expr->kind = EXPR_MEMBER_ACCESS;
                 expr->expr.member_access.parent_expr = parent;
-                expr->expr.member_access.member = members->data[i];
+                expr->expr.member_access.member = members.data[i];
                 expr->expr.member_access.member_idx = i;
-                expr->type = members->data[i]->type;
+                expr->type = members.data[i]->type_loc.type;
                 return true;
             }
         goto ERR;
@@ -491,7 +503,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
     ERR:
-        sic_error_at(uaccess->member_loc, "Type \'%s\' has no member \'%s\'.",
+        sic_error_at(uaccess->member.loc, "Type \'%s\' has no member \'%s\'.",
                      type_to_string(parent->type), member);
         return NULL;
     case TYPE_INVALID:
@@ -538,19 +550,20 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
-        ObjectDA* values = &parent->expr.ident->enum_.values;
-        for(uint32_t i = 0; i < values->size; ++i)
-            if(values->data[i]->symbol == uaccess->member_sym)
+        ObjEnum* enum_ = obj_as_enum(parent->expr.ident);
+        const ObjEnumValueDA values = enum_->values;
+        for(uint32_t i = 0; i < values.size; ++i)
+            if(values.data[i]->header.symbol == uaccess->member.sym)
             {
                 expr->const_eval = true;
                 expr->kind = EXPR_CONSTANT;
-                expr->type = parent->expr.ident->type;
+                expr->type = enum_->type_ref;
                 expr->expr.constant.kind = CONSTANT_INTEGER;
-                expr->expr.constant.val.i = values->data[i]->enum_val.const_val;
+                expr->expr.constant.val.i = values.data[i]->const_value;
                 return true;
             }
-        sic_error_at(uaccess->member_loc, "Enum \'%s\' has no value \'%s\'.",
-                     parent->expr.ident->symbol, uaccess->member_sym);
+        sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
+                     parent->expr.ident->symbol, uaccess->member.sym);
         return false;
     }
 
@@ -568,13 +581,35 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     return resolve_member(expr, parent);
 }
 
+static bool analyze_ct_alignof(ASTExpr* expr)
+{
+    if(!resolve_type(&expr->expr.ct_alignof.type, RES_NORMAL, expr->expr.ct_sizeof.loc, "Cannot get alignment of unresolved type"))
+        return false;
+
+    ByteSize align = type_alignment(expr->expr.ct_alignof.type);
+    expr->type = g_type_usize;
+    expr->kind = EXPR_CONSTANT;
+    expr->expr.constant.kind = CONSTANT_INTEGER;
+    expr->expr.constant.val.i = align;
+    return true;
+}
+
+static bool analyze_ct_offsetof(ASTExpr* expr)
+{
+    if(!resolve_type(&expr->expr.ct_offsetof.struct_.type, RES_ALLOW_ALL, LOC_NULL, NULL))
+    {
+
+    }
+    return true;
+}
+
 static bool analyze_ct_sizeof(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_sizeof_type, RES_NORMAL, expr->loc, "Cannot take get size of type"))
+    if(!resolve_type(&expr->expr.ct_sizeof.type, RES_NORMAL, expr->expr.ct_sizeof.loc, "Cannot get size of unresolved type"))
         return false;
     
-    uint32_t size = type_size(expr->expr.ct_sizeof_type);
-    expr->type = g_type_usz;
+    uint32_t size = type_size(expr->expr.ct_sizeof.type);
+    expr->type = g_type_usize;
     expr->kind = EXPR_CONSTANT;
     expr->expr.constant.kind = CONSTANT_INTEGER;
     expr->expr.constant.val.i = size;

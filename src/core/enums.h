@@ -71,14 +71,6 @@ typedef enum : uint8_t
     CAST_REINTERPRET,
 } CastKind;
 
-typedef enum : uint8_t
-{
-    MODE_NONE = 0,   // NULL Mode
-    MODE_COMPILE,    // Compile
-    MODE_ASSEMBLE,   // Compile + Assemble
-    MODE_LINK        // Compile + Assemble + Link
-} CompileMode;
-
 // Could be expanded later to support multiple architectures.
 typedef enum : uint8_t
 {
@@ -127,15 +119,18 @@ typedef enum : uint8_t
     EXPR_IDENT,
     EXPR_MEMBER_ACCESS,
     EXPR_POSTFIX,
-    EXPR_PS_IDENT,
     EXPR_STRUCT_INIT_LIST,
     EXPR_TERNARY,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
-    EXPR_UNRESOLVED_ARR,
-    EXPR_UNRESOLVED_DOT,
     EXPR_ZEROED_OUT,
 
+    EXPR_UNRESOLVED_ARR,
+    EXPR_UNRESOLVED_DOT,
+    EXPR_UNRESOLVED_IDENT,
+
+    EXPR_CT_ALIGNOF,
+    EXPR_CT_OFFSETOF,
     EXPR_CT_SIZEOF,
 } ExprKind;
 
@@ -175,10 +170,20 @@ typedef enum : uint8_t
     OBJ_IMPORT,
     OBJ_MODULE,
     OBJ_STRUCT,
-    OBJ_TYPE_ALIAS,
+    OBJ_TYPEDEF,
     OBJ_UNION,
     OBJ_VAR,
 } ObjKind;
+
+typedef enum : uint8_t
+{
+    OPTIMIZE_NONE,
+    OPTIMIZE_LIGHT,
+    OPTIMIZE_NORMAL,
+    OPTIMIZE_AGGRESSIVE,
+    OPTIMIZE_SIZE,
+    OPTIMIZE_SIZE_AGGRESSIVE,
+} OptimizationLevel;
 
 typedef enum : uint8_t
 {
@@ -203,6 +208,7 @@ typedef enum
     RES_ALLOW_VOID       = 1 << 0,
     RES_ALLOW_AUTO       = 1 << 1,
     RES_ALLOW_AUTO_ARRAY = 1 << 2,
+    RES_ALLOW_ALL        = 0xF,
 } ResolutionFlags;
 
 typedef enum : uint8_t
@@ -357,9 +363,9 @@ typedef enum : uint8_t
     // in type_to_string() to get the names of the primitives.
     TOKEN_IPTR,
     TOKEN_UPTR,
-    TOKEN_ISZ,
-    TOKEN_USZ,
-    TOKEN_TYPENAME_END = TOKEN_USZ,
+    TOKEN_ISIZE,
+    TOKEN_USIZE,
+    TOKEN_TYPENAME_END = TOKEN_USIZE,
 
     // Compile time tokens (start with #)
 	TOKEN_CT_ALIGNOF,
@@ -464,3 +470,12 @@ typedef enum : uint8_t
             TYPE_FLOAT:       \
             case TYPE_DOUBLE
                 
+#define SEMA_ONLY_EXPRS                 \
+            EXPR_INVALID:               \
+            case EXPR_TYPE_IDENT:       \
+            case EXPR_UNRESOLVED_ARR:   \
+            case EXPR_UNRESOLVED_DOT:   \
+            case EXPR_UNRESOLVED_IDENT: \
+            case EXPR_CT_ALIGNOF:       \
+            case EXPR_CT_OFFSETOF:      \
+            case EXPR_CT_SIZEOF

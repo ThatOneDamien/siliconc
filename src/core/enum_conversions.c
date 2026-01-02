@@ -101,8 +101,8 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_DOUBLE]          = "double",
     [TOKEN_IPTR]            = "iptr",
     [TOKEN_UPTR]            = "uptr",
-    [TOKEN_ISZ]             = "isz",
-    [TOKEN_USZ]             = "usz",
+    [TOKEN_ISIZE]           = "isize",
+    [TOKEN_USIZE]           = "usize",
 
 	[TOKEN_CT_ALIGNOF]      = "#alignof",
 	[TOKEN_CT_ASSERT]       = "#assert",

@@ -32,15 +32,19 @@ typedef struct SymbolLoc        SymbolLoc;
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
 typedef struct Type             Type;
+typedef struct TypeLoc          TypeLoc;
 
 // Dynamic Array Structs
 typedef struct StringDA         StringDA;
 typedef struct ObjectDA         ObjectDA;
+typedef struct ObjEnumValueDA   ObjEnumValueDA;
+typedef struct ObjFuncDA        ObjFuncDA;
+typedef struct ObjImportDA      ObjImportDA;
+typedef struct ObjModuleDA      ObjModuleDA;
+typedef struct ObjVarDA         ObjVarDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTCaseDA        ASTCaseDA;
-typedef struct ASTDeclDA        ASTDeclDA;
 typedef struct SourceFileDA     SourceFileDA;
-typedef struct ModuleDA         ModuleDA;
 
 // AST Structs
 typedef struct ModulePath       ModulePath;
@@ -57,10 +61,10 @@ typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
+typedef struct ASTExprCTOffset  ASTExprCTOffset;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTBlock         ASTBlock;
 typedef struct ASTCase          ASTCase;
-typedef struct ASTDeclaration   ASTDeclaration;
 typedef struct ASTFor           ASTFor;
 typedef struct ASTIf            ASTIf;
 typedef struct ASTReturn        ASTReturn;
@@ -71,16 +75,18 @@ typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
+typedef struct Object           Object;
 typedef struct ObjEnum          ObjEnum;
 typedef struct ObjEnumValue     ObjEnumValue;
 typedef struct ObjFunc          ObjFunc;
+typedef struct ObjImport        ObjImport;
+typedef struct ObjModule        ObjModule;
 typedef struct ObjStruct        ObjStruct;
+typedef struct ObjTypedef       ObjTypedef;
 typedef struct ObjVar           ObjVar;
-typedef struct Object           Object;
 
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
-typedef struct Module           Module;
 typedef struct CompilerContext  CompilerContext;
 
 struct HashEntry
@@ -146,7 +152,7 @@ struct LookAhead
 
 struct Lexer
 {
-    Module*     module;
+    ObjModule*  module;
     const char* line_start;
     const char* cur_pos;
     uint32_t    cur_line;
@@ -199,8 +205,16 @@ struct Type
         Type*           pointer_base;
         ASTExpr*        type_of;
         ModulePath      unresolved;
-        Object*         user_def;
+        ObjEnum*        enum_;
+        ObjStruct*      struct_;
+        ObjTypedef*     typedef_;
     };
+};
+
+struct TypeLoc
+{
+    Type*     type;
+    SourceLoc loc;
 };
 
 struct StringDA
@@ -217,6 +231,41 @@ struct ObjectDA
     uint32_t size;
 };
 
+struct ObjEnumValueDA
+{
+    ObjEnumValue** data;
+    uint32_t       capacity;
+    uint32_t       size;
+};
+
+struct ObjFuncDA
+{
+    ObjFunc** data;
+    uint32_t  capacity;
+    uint32_t  size;
+};
+
+struct ObjImportDA
+{
+    ObjImport** data;
+    uint32_t    capacity;
+    uint32_t    size;
+};
+
+struct ObjModuleDA
+{
+    ObjModule** data;
+    uint32_t    capacity;
+    uint32_t    size;
+};
+
+struct ObjVarDA
+{
+    ObjVar** data;
+    uint32_t  capacity;
+    uint32_t  size;
+};
+
 struct ASTExprDA
 {
     ASTExpr** data;
@@ -231,13 +280,6 @@ struct ASTCaseDA
     uint32_t size;
 };
 
-struct ASTDeclDA
-{
-    ASTDeclaration* data;
-    uint32_t        capacity;
-    uint32_t        size;
-};
-
 struct SourceFileDA
 {
     SourceFile* data;
@@ -245,12 +287,6 @@ struct SourceFileDA
     uint32_t    size;
 };
 
-struct ModuleDA
-{
-    Module** data;
-    uint32_t capacity;
-    uint32_t size;
-};
 
 
 struct ASTExprAAccess
@@ -317,7 +353,7 @@ struct ASTExprConstant
 struct ASTExprMAccess
 {
     ASTExpr* parent_expr;
-    Object*  member;
+    ObjVar*  member;
     uint32_t member_idx;
 };
 
@@ -337,8 +373,13 @@ struct ASTExprUnary
 struct ASTExprUAccess
 {
     ASTExpr*  parent_expr;
-    Symbol    member_sym;
-    SourceLoc member_loc;
+    SymbolLoc member;
+};
+
+struct ASTExprCTOffset
+{
+    TypeLoc   struct_;
+    SymbolLoc member;
 };
 
 struct ASTExpr
@@ -364,7 +405,9 @@ struct ASTExpr
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
 
-        Type*           ct_sizeof_type;
+        TypeLoc         ct_alignof;
+        TypeLoc         ct_sizeof;
+        ASTExprCTOffset ct_offsetof;
     } expr;
 };
 
@@ -378,12 +421,6 @@ struct ASTCase
     ASTExpr* expr;
     ASTStmt* body;
     void*    llvm_block_ref;
-};
-
-struct ASTDeclaration
-{
-    Object*  obj;
-    ASTExpr* init_expr;
 };
 
 struct ASTFor
@@ -433,54 +470,96 @@ struct ASTStmt
 
     union
     {
-        ASTBlock       block;
-        ASTExpr*       expr;
-        ASTFor         for_;
-        ASTIf          if_;
-        ASTDeclDA      multi_decl;
-        ASTReturn      return_;
-        ASTDeclaration single_decl;
-        ASTSwap        swap;
-        ASTSwitch      switch_;
-        ASTWhile       while_;
+        ASTBlock  block;
+        ASTExpr*  expr;
+        ASTFor    for_;
+        ASTIf     if_;
+        ObjVarDA  multi_decl;
+        ASTReturn return_;
+        ObjVar*   single_decl;
+        ASTSwap   swap;
+        ASTSwitch switch_;
+        ASTWhile  while_;
     } stmt;
 };
 
 struct FuncSignature
 {
-    Type*    ret_type;
-    ObjectDA params;
+    TypeLoc  ret_type;
+    ObjVarDA params;
     bool     is_var_arg;
+};
+
+struct Object
+{
+    Symbol        symbol;
+    SourceLoc     loc;
+    ObjKind       kind;
+    Visibility    visibility;
+    ResolveStatus status;
+    void*         llvm_ref;
 };
 
 struct ObjEnum
 {
-    ObjectDA values;
-    Type*    underlying;
-    uint32_t min_idx;
-    uint32_t max_idx;
+    Object         header;
+    ObjEnumValueDA values;
+    Type*          type_ref;
+    TypeLoc        underlying;
+    uint32_t       min_idx;
+    uint32_t       max_idx;
 };
 
 struct ObjEnumValue
 {
+    Object   header;
+    Type*    enum_type;
     union
     {
-        ASTExpr* value;
-        uint64_t const_val;
+        ASTExpr* raw_value;
+        uint64_t const_value;
     };
 };
 
 struct ObjFunc
 {
-    FuncSignature* signature;
+    Object         header;
+    FuncSignature  signature;
+    Type*          func_type;
     ASTStmt*       body;
     uint32_t       swap_stmt_align;
     uint32_t       swap_stmt_size;
 };
 
+struct ObjImport
+{
+    Object  header;
+    union
+    {
+        Object*    resolved;
+        ModulePath unresolved;
+    };
+};
+
+struct ObjModule
+{
+    Object      header;
+    bool        is_inline;
+    ObjModule*  parent;
+    ObjModuleDA submodules;
+    ObjFuncDA   funcs;
+    ObjImportDA imports;
+    ObjectDA    types;
+    ObjVarDA    vars;
+    HashMap     module_ns; // Namespace of modules
+    HashMap     symbol_ns; // Namespace of types, functions, variables
+};
+
 struct ObjStruct
 {
-    ObjectDA members;
+    Object   header;
+    Type*    type_ref;
+    ObjVarDA members;
     union
     {
         struct
@@ -492,89 +571,75 @@ struct ObjStruct
     };
 };
 
+struct ObjTypedef
+{
+    Object  header;
+    Type*   type_ref;
+    TypeLoc alias;
+};
+
 struct ObjVar
 {
-    union
-    {
-        ASTExpr*      initial_val; // Initial value for global and const vars.
-        ConstantValue default_val; // Default value for parameters (TODO: struct members)
-    };
-    VarKind  kind;
+    Object    header;
+    TypeLoc   type_loc;
+    ASTExpr*  initial_val;
+    VarKind   kind;
 };
+
+
 
 // TODO: Optimization should be possible to make the average Object instance smaller.
 //       If it is possible, it would be done by making the shared resources a separate
 //       header struct called Object, then the other union kinds would be their own structs
 //       with the header to start.
-struct Object
-{
-    Symbol        symbol;
-    SourceLoc     loc;
-    ObjKind       kind;
-    Visibility    visibility;
-    ResolveStatus status;
-    void*         llvm_ref;
-    Type*         type;
-    union
-    {
-        ObjEnum      enum_;      // Components of enum typedef
-        ObjEnumValue enum_val;   // Components of value in enum
-        ObjFunc      func;       // Components of function
-        Object*      import;     // Imported object
-        Module*      module;     // Module reference
-        ObjStruct    struct_;    // Components of bitfield, struct, or union
-        Type*        type_alias; // Typedef alias
-        ModulePath   unresolved_import;
-        ObjVar       var;        // Components of variable
-    };
-
-};
+// struct Object
+// {
+//     union
+//     {
+//         ObjEnum      enum_;      // Components of enum typedef
+//         ObjEnumValue enum_val;   // Components of value in enum
+//         ObjFunc      func;       // Components of function
+//         Object*      import;     // Imported object
+//         Module*      module;     // Module reference
+//         ObjStruct    struct_;    // Components of bitfield, struct, or union
+//         Type*        type_alias; // Typedef alias
+//         ModulePath   unresolved_import;
+//         ObjVar       var;        // Components of variable
+//     };
+//
+// };
 
 struct SourceFile
 {
     const char* abs_path;
     const char* rel_path;
     const char* src;
-    Module*     module;
-};
-
-struct Module
-{
-    Symbol     name;
-    SourceLoc  loc;
-    Visibility visibility;
-    bool       is_inline;
-    bool       has_declared;
-    Module*    parent;
-    ModuleDA   submodules;
-    ObjectDA   imports;
-    ObjectDA   funcs;
-    ObjectDA   types;
-    ObjectDA   vars;
-    HashMap    module_ns; // Namespace of modules
-    HashMap    symbol_ns; // Namespace of types, functions, variables
+    ObjModule*  module;
 };
 
 struct CompilerContext
 {
-    FileId        input_file;
-    const char*   output_file_name;
+    SourceFileDA sources;
+    StringDA     linker_inputs;
+    ObjModule    top_module;
 
-    CompileMode   mode;
+    // Compiler CLI arguments/flags
+    FileId        input_file;
+    const char*   link_name;
+    const char*   out_dir;
+
     CompileTarget target;
     IRTarget      ir_kind;
 
-    SourceFileDA sources;
-    StringDA     linker_inputs;
-    Module       top_module;
-    Object*      main_function;
-
-    // Flags
+    bool          emit_link : 1;
+    bool          emit_obj : 1;
     bool          emit_ir : 1;
+    bool          emit_bc : 1;
     bool          emit_asm : 1;
-    bool          hash_hash_hash : 1;
     bool          werror : 1;
 #ifdef SI_DEBUG
     DebugOutput   debug_output;
 #endif
 };
+
+#define LOC_NULL (SourceLoc){0}

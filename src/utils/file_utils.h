@@ -4,8 +4,8 @@
 #define FILE_NULL ((FileId)0)
 
 void        get_current_dir();
-FileId      source_file_add_or_get(const char* path, Module* module);
-FileId      find_and_open_module_path(Module* module);
+FileId      source_file_add_or_get(const char* path, ObjModule* module);
+FileId      find_and_open_module_path(ObjModule* module);
 const char* convert_ext_to(const char* path, FileType desired);
 bool        file_exists(const char* path);
 const char* create_tempfile(FileType ft);

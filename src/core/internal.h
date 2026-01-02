@@ -22,8 +22,8 @@ extern Type* const g_type_long;
 extern Type* const g_type_ulong;
 extern Type* const g_type_iptr;
 extern Type* const g_type_uptr;
-extern Type* const g_type_isz;
-extern Type* const g_type_usz;
+extern Type* const g_type_isize;
+extern Type* const g_type_usize;
 extern Type* const g_type_float;
 extern Type* const g_type_double;
 extern Type* const g_type_anon_arr;
@@ -80,7 +80,7 @@ static inline bool token_is_keyword(TokenKind kind)
 void parse_source_file(FileId fileid);
 
 // Semantic analysis functions
-void analyze_module(Module* module);
+void analyze_module(ObjModule* module);
 void perform_cast(ASTExpr* cast);
 
 // Symbol map functions
@@ -104,8 +104,8 @@ Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
 Type*       type_reduce(Type* t);
 bool        type_equal(Type* t1, Type* t2);
-uint32_t    type_size(Type* ty);
-uint32_t    type_alignment(Type* ty);
+ByteSize    type_size(Type* ty);
+ByteSize    type_alignment(Type* ty);
 const char* type_to_string(Type* type);
 static inline bool type_is_builtin(Type* ty)
 {
@@ -207,15 +207,61 @@ static inline bool type_is_bad(Type* type)
     return type->kind == TYPE_INVALID;
 }
 
+static inline ObjEnum* obj_as_enum(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_ENUM);
+    return (ObjEnum*)o;
+}
+
+static inline ObjEnumValue* obj_as_enum_value(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_ENUM_VALUE);
+    return (ObjEnumValue*)o;
+}
+
+static inline ObjFunc* obj_as_func(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_FUNC);
+    return (ObjFunc*)o;
+}
+
+static inline ObjImport* obj_as_import(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_IMPORT);
+    return (ObjImport*)o;
+}
+
+static inline ObjModule* obj_as_module(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_MODULE);
+    return (ObjModule*)o;
+}
+
+static inline ObjStruct* obj_as_struct(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_STRUCT);
+    return (ObjStruct*)o;
+}
+
+static inline ObjTypedef* obj_as_typedef(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_TYPEDEF);
+    return (ObjTypedef*)o;
+}
+
+static inline ObjVar* obj_as_var(Object* o)
+{
+    SIC_ASSERT(o->kind == OBJ_VAR);
+    return (ObjVar*)o;
+}
 
 // Debug printing functions
-// NOTE: These functions are only enabled when in debug mode, in release these are not compiled.
 
 #ifdef SI_DEBUG
 
 void print_token(Token* tok);
-void print_module(const Module* module);
-void print_func(const Object* func);
+void print_module(const ObjModule* module);
+void print_func(const ObjFunc* func);
 void print_stmt(const ASTStmt* stmt);
 void print_expr(const ASTExpr* expr);
 

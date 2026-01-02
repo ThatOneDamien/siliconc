@@ -2,7 +2,7 @@
 
 static bool resolve_array(Type* arr_ty, ResolutionFlags flags,
                           SourceLoc err_loc, const char* err_str);
-static bool resolve_func_ptr(Type* func_ty, SourceLoc err_loc);
+static bool resolve_func_ptr(Type* func_ty);
 static bool resolve_typeof(Type** type_ref, Type* typeof);
 static bool resolve_user(Type** type_ref, ResolutionFlags flags,
                          SourceLoc err_loc, const char* err_str);
@@ -43,7 +43,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
     }
     case TYPE_FUNC_PTR:
         if(type->status == STATUS_RESOLVED) return true;
-        if(!resolve_func_ptr(type, err_loc)) break;
+        if(!resolve_func_ptr(type)) break;
         type->status = STATUS_RESOLVED;
         return true;
     case TYPE_STATIC_ARRAY:
@@ -54,12 +54,21 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         return true;
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
+        if(type->status == STATUS_RESOLVED) return true;
+        if(!analyze_typedef(type->typedef_, type_ref, flags, err_loc, err_str)) break;
+        return true;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
+        if(type->status == STATUS_RESOLVED) return true;
+        if(!analyze_enum(type->enum_, type_ref)) break;
+        return true;
     case TYPE_STRUCT:
+        if(type->status == STATUS_RESOLVED) return true;
+        if(!analyze_struct(type->struct_, type_ref)) break;
+        return true;
     case TYPE_UNION:
         if(type->status == STATUS_RESOLVED) return true;
-        if(!analyze_type_obj(type->user_def, type_ref, flags, err_loc, err_str)) break;
+        if(!analyze_union(type->struct_, type_ref)) break;
         return true;
     case TYPE_AUTO:
         if(BIT_IS_UNSET(flags, RES_ALLOW_AUTO))
@@ -132,21 +141,21 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
     return true;
 }
 
-static bool resolve_func_ptr(Type* func_ty, SourceLoc err_loc)
+static bool resolve_func_ptr(Type* func_ty)
 {
     FuncSignature* sig = func_ty->func_ptr;
-    if(!resolve_type(&sig->ret_type, RES_ALLOW_VOID, err_loc, "Function pointer type cannot have return type"))
+    if(!resolve_type(&sig->ret_type.type, RES_ALLOW_VOID, sig->ret_type.loc, "Function pointer type cannot have return type"))
         return false;
 
-    func_ty->visibility = sig->ret_type->visibility; 
+    func_ty->visibility = sig->ret_type.type->visibility; 
 
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
-        Object* param = sig->params.data[i];
-        if(!resolve_type(&param->type, RES_NORMAL, param->loc, "Parameter cannot be of type"))
+        ObjVar* param = sig->params.data[i];
+        if(!resolve_type(&param->type_loc.type, RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
             return false;
-        if(param->type->visibility < func_ty->visibility)
-            func_ty->visibility = param->type->visibility;
+        if(param->type_loc.type->visibility < func_ty->visibility)
+            func_ty->visibility = param->type_loc.type->visibility;
     }
 
     return true;

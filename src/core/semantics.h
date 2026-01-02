@@ -18,8 +18,8 @@ typedef enum : uint8_t
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
-    Module*      module;
-    Object*      cur_func;
+    ObjModule*   module;
+    ObjFunc*     cur_func;
     Object*      cyclic_def;
     
     BlockContext block_context;
@@ -40,21 +40,25 @@ struct ObjStack
 extern SemaContext* g_sema;
 extern ObjStack     g_obj_stack;
 
-bool     analyze_global_var(Object* global_var);
-bool     analyze_function(Object* function);
-bool     analyze_expr_no_set(ASTExpr* expr);
-bool     analyze_cast(ASTExpr* cast);
-bool     analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
-bool     implicit_cast(ASTExpr** expr_to_cast, Type* desired);
-void     implicit_cast_varargs(ASTExpr** expr_to_cast);
-bool     resolve_import(Module* module, Object* import);
-bool     resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
-void     push_obj(Object* obj);
-Module*  find_module(Module* start, SymbolLoc symloc, bool allow_private);
-Object*  find_obj(ModulePath* path);
-uint32_t push_scope();
-void     pop_scope(uint32_t old);
-bool     expr_is_lvalue(ASTExpr* expr);
+bool       analyze_global_var(ObjVar* var);
+bool       analyze_function(ObjFunc* function);
+bool       analyze_expr_no_set(ASTExpr* expr);
+bool       analyze_cast(ASTExpr* cast);
+bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+bool       analyze_enum(ObjEnum* enum_, Type** o_type);
+bool       analyze_struct(ObjStruct* struct_, Type** o_type);
+bool       analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+bool       analyze_union(ObjStruct* union_, Type** o_type);
+bool       implicit_cast(ASTExpr** expr_to_cast, Type* desired);
+void       implicit_cast_varargs(ASTExpr** expr_to_cast);
+bool       resolve_import(ObjModule* module, ObjImport* import);
+bool       resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+void       push_obj(Object* obj);
+ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
+Object*    find_obj(ModulePath* path);
+uint32_t   push_scope();
+void       pop_scope(uint32_t old);
+bool       expr_is_lvalue(ASTExpr* expr);
 
 static inline void const_int_correct(ASTExpr* expr)
 {
@@ -102,7 +106,7 @@ static inline bool obj_is_type(Object* obj)
     case OBJ_BITFIELD:
     case OBJ_ENUM:
     case OBJ_STRUCT:
-    case OBJ_TYPE_ALIAS:
+    case OBJ_TYPEDEF:
     case OBJ_UNION:
         return true;
     }
@@ -135,7 +139,7 @@ static inline Type* flatten_type(Type* type)
         switch(type->kind)
         {
         case TYPE_ALIAS_DISTINCT:
-            type = type->user_def->type_alias;
+            type = type->typedef_->alias.type;
             continue;
         case TYPE_ENUM_DISTINCT:
         default:

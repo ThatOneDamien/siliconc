@@ -547,7 +547,7 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 #define FLTFLT { rule_size_change  , cast_float_to_float }
 #define FLTBOO { rule_explicit_only, cast_float_to_bool }
 #define FLTINT { rule_explicit_only, cast_float_to_int }
-#define PTRBOO { rule_always       , cast_ptr_to_bool }
+#define PTRBOO { rule_explicit_only, cast_ptr_to_bool }
 #define PTRINT { rule_explicit_only, cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr   , cast_ptr_to_ptr }
 #define STRPTR { rule_str_to_ptr   , cast_reinterpret }

@@ -1,7 +1,8 @@
 #include "semantics.h"
 #include "utils/da.h"
 
-static void analyze_function_body(Object* function);
+static inline void analyze_main();
+static void analyze_function_body(ObjFunc* function);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
 static bool analyze_stmt_block(ASTStmt* stmt);
 static void analyze_break(ASTStmt* stmt);
@@ -11,18 +12,13 @@ static void analyze_if(ASTStmt* stmt);
 static void analyze_return(ASTStmt* stmt);
 static void analyze_switch(ASTStmt* stmt);
 static void analyze_while(ASTStmt* stmt);
-static void analyze_declaration(ASTDeclaration* decl);
+static void analyze_declaration(ObjVar* decl);
 static void analyze_swap(ASTStmt* stmt);
 
-static bool analyze_enum_obj(Object* type_obj);
-static bool analyze_struct_obj(Object* type_obj);
-static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags flags,
-                               SourceLoc err_loc, const char* err_str);
-static bool analyze_union_obj(Object* type_obj);
 
 SemaContext* g_sema = NULL;
 
-void analyze_module(Module* module)
+void analyze_module(ObjModule* module)
 {
     for(uint32_t i = 0; i < module->submodules.size; ++i)
         analyze_module(module->submodules.data[i]);
@@ -34,14 +30,20 @@ void analyze_module(Module* module)
     g_sema = &sema;
     g_sema->module = module;
 
+    // FIXME: Add check that we are compiling an executable. Libraries must NOT
+    //        have a main function.
+    if(module == &g_compiler.top_module && g_compiler.emit_link)
+        analyze_main();
+
     for(uint32_t i = 0; i < module->types.size; ++i)
-        analyze_type_obj(module->types.data[i], NULL, RES_NORMAL, (SourceLoc){}, NULL);
+        analyze_type_obj(module->types.data[i], NULL, RES_NORMAL, LOC_NULL, NULL);
 
     for(uint32_t i = 0; i < module->vars.size; ++i)
         analyze_global_var(module->vars.data[i]);
 
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         analyze_function_body(module->funcs.data[i]);
+
     g_sema = prev;
 #ifdef SI_DEBUG
     if(g_compiler.debug_output & DEBUG_SEMA)
@@ -49,137 +51,136 @@ void analyze_module(Module* module)
 #endif
 }
 
-bool analyze_function(Object* function)
+bool analyze_function(ObjFunc* func)
 {
-    if(function->status == STATUS_RESOLVED) return function->kind != OBJ_INVALID;
-    SIC_ASSERT(function->kind == OBJ_FUNC);
-    if(function->status == STATUS_RESOLVING)
+    if(func->header.status == STATUS_RESOLVED) return func->header.kind != OBJ_INVALID;
+    if(func->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(function);
+        set_cyclic_def(&func->header);
         return false;
     }
-    FuncSignature* sig = function->func.signature;
-    Type* func_type = function->type;
-    ObjectDA* params = &sig->params;
+
     bool success = true;
-    function->status = STATUS_RESOLVING;
+    func->header.status = STATUS_RESOLVING;
+
     bool prev = g_sema->in_global_init;
     g_sema->in_global_init = true;
 
-    if(!resolve_type(&sig->ret_type, RES_ALLOW_VOID, function->loc, "Function cannot have return type"))
+    if(!resolve_type(&func->signature.ret_type.type, RES_ALLOW_VOID, 
+                     func->signature.ret_type.loc, "Function cannot have return type"))
     {
-        check_cyclic_def(function, function->loc);
+        check_cyclic_def(&func->header, func->header.loc);
         success = false;
     }
     else
     {
-        func_type->visibility = sig->ret_type->visibility;
-        if(sig->ret_type->visibility < function->visibility)
+        if(func->signature.ret_type.type->visibility < func->header.visibility)
         {
-            sic_error_at(function->loc, "Function's return type has less visibility than parent function.");
+            sic_error_at(func->signature.ret_type.loc, "Return type is marked private, but parent function is marked public.");
+            sic_diagnostic_at(func->header.loc, DIAG_NOTE, "From function definition here.");
             success = false;
         }
     }
 
-
-    for(uint32_t i = 0; i < params->size; ++i)
+    const ObjVarDA params = func->signature.params;
+    for(uint32_t i = 0; i < params.size; ++i)
     {
-        Object* param = params->data[i];
-        if(!resolve_type(&param->type, RES_NORMAL, param->loc, "Parameter cannot be of type"))
+        ObjVar* param = params.data[i];
+        if(!resolve_type(&param->type_loc.type, RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
         {
-            check_cyclic_def(param, param->loc);
+            check_cyclic_def(&param->header, param->header.loc);
             success = false;
             continue;
         }
-        if(param->type->visibility < func_type->visibility)
-            func_type->visibility = param->type->visibility;
-        if(param->type->visibility < function->visibility)
+
+        if(param->type_loc.type->visibility < func->header.visibility)
         {
-            sic_error_at(param->loc, "Parameter's type has less visibility than parent function.");
+            sic_error_at(param->type_loc.loc, "Parameter's type has less visibility than parent function.");
             success = false;
             continue;
         }
     }
 
     g_sema->in_global_init = prev;
-    function->status = STATUS_RESOLVED;
-    func_type->status = STATUS_RESOLVED;
+    func->header.status = STATUS_RESOLVED;
+    func->func_type->status = STATUS_RESOLVED;
 
     if(!success)
     {
-        function->kind = OBJ_INVALID;
-        func_type->kind = TYPE_INVALID;
+        func->header.kind = OBJ_INVALID;
+        func->func_type->kind = TYPE_INVALID;
     }
 
     return success;
 }
 
-bool resolve_import(Module* module, Object* import)
+bool resolve_import(ObjModule* module, ObjImport* import)
 {
-    if(import->status == STATUS_RESOLVED) return import->kind != OBJ_INVALID;
-    if(import->status == STATUS_RESOLVING)
+    if(import->header.status == STATUS_RESOLVED) return import->header.kind != OBJ_INVALID;
+    if(import->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(import);
+        set_cyclic_def(&import->header);
         return false;
     }
 
-    import->status = STATUS_RESOLVING;
+    import->header.status = STATUS_RESOLVING;
 
 
     // TODO: Check external modules as well. They arent added yet, but when they are
     // add them here.
-    ModulePath* path = &import->unresolved_import;
-    Module* mod = &g_compiler.top_module;
+    const ModulePath path = import->unresolved;
+    ObjModule* mod = &g_compiler.top_module;
         
-    for(uint32_t i = 0; i < path->size - 1; ++i)
+    for(uint32_t i = 0; i < path.size - 1; ++i)
     {
         for(uint32_t j = 0; j < mod->imports.size; ++j)
         {
-            Object* other_import = mod->imports.data[j];
-            if((other_import->symbol == NULL || other_import->symbol == path->data[i].sym) &&
+            ObjImport* other_import = mod->imports.data[j];
+            if((other_import->header.symbol == NULL || other_import->header.symbol == path.data[i].sym) &&
                !resolve_import(mod, other_import))
             {
-                check_cyclic_def(import, import->loc);
+                check_cyclic_def(&import->header, import->header.loc);
                 return false;
             }
         }
 
-        if((mod = find_module(mod, path->data[i], false)) == NULL)
+        if((mod = find_module(mod, path.data[i], false)) == NULL)
             return false;
     }
 
-    if(import->symbol == NULL)
+    if(import->header.symbol == NULL)
     {
         for(uint32_t i = 0; i < mod->imports.size; ++i)
         {
-            Object* other_import = mod->imports.data[i];
+            ObjImport* other_import = mod->imports.data[i];
             if(!resolve_import(mod, other_import))
             {
-                check_cyclic_def(import, import->loc);
+                check_cyclic_def(&import->header, import->header.loc);
                 return false;
             }
         }
-        import->status = STATUS_RESOLVED;
+        import->header.status = STATUS_RESOLVED;
         for(uint32_t i = 0; i < mod->symbol_ns.bucket_cnt; ++i)
         {
             HashEntry* entry = mod->symbol_ns.buckets + i;
             if(entry->key != NULL)
             {
-                Object* prev = hashmap_get(&module->symbol_ns, entry->key);
-                if(prev != NULL)
+                Object* old = hashmap_get(&module->symbol_ns, entry->key);
+                if(old != NULL)
                 {
-                    sic_error_redef(import, prev);
-                    import->kind = OBJ_INVALID;
+                    sic_error_redef(&import->header, old);
+                    import->header.kind = OBJ_INVALID;
                     return false;
                 }
 
-                Object* new = CALLOC_STRUCT(Object);
-                new->loc = import->loc;
-                new->kind = OBJ_IMPORT;
-                new->visibility = import->visibility;
-                new->status = STATUS_RESOLVED;
-                new->import = entry->value->kind == OBJ_IMPORT ? entry->value->import : entry->value;
-                hashmap_put(&module->symbol_ns, entry->key, new);
+                ObjImport* new = CALLOC_STRUCT(ObjImport);
+                new->header.symbol = entry->key;
+                new->header.loc = import->header.loc;
+                new->header.kind = OBJ_IMPORT;
+                new->header.visibility = import->header.visibility;
+                new->header.status = STATUS_RESOLVED;
+                new->resolved = entry->value->kind == OBJ_IMPORT ? obj_as_import(entry->value)->resolved : entry->value;
+                hashmap_put(&module->symbol_ns, entry->key, &new->header);
             }
         }
 
@@ -191,94 +192,105 @@ bool resolve_import(Module* module, Object* import)
                 Object* old = hashmap_get(&module->module_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_diagnostic_at(import->loc, DIAG_ERROR, "Module with name \'%s\' already exists.", entry->key);
-                    sic_diagnostic_at(entry->value->loc, DIAG_NOTE, "Previous definition here.");
-                    import->kind = OBJ_INVALID;
+                    sic_diagnostic_at(import->header.loc, DIAG_ERROR, "Module with name \'%s\' already exists.", entry->key);
+                    sic_diagnostic_at(old->loc, DIAG_NOTE, "Previous definition here.");
+                    import->header.kind = OBJ_INVALID;
                     return false;
                 }
 
-                Object* new = CALLOC_STRUCT(Object);
-                new->loc = import->loc;
-                new->kind = OBJ_IMPORT;
-                new->visibility = import->visibility;
-                new->status = STATUS_RESOLVED;
-                new->import = entry->value->kind == OBJ_IMPORT ? entry->value->import : entry->value;
-                hashmap_put(&module->module_ns, entry->key, new);
+                ObjImport* new = CALLOC_STRUCT(ObjImport);
+                new->header.symbol = entry->key;
+                new->header.loc = import->header.loc;
+                new->header.kind = OBJ_IMPORT;
+                new->header.visibility = import->header.visibility;
+                new->header.status = STATUS_RESOLVED;
+                new->resolved = entry->value->kind == OBJ_IMPORT ? obj_as_import(entry->value)->resolved : entry->value;
+                hashmap_put(&module->module_ns, entry->key, &new->header);
             }
         }
         return true;
     }
 
+    const Symbol actual = path.data[path.size - 1].sym;
+
     for(uint32_t i = 0; i < mod->imports.size; ++i)
     {
-        Object* other_import = mod->imports.data[i];
-        if((other_import->symbol == NULL || other_import->symbol == import->symbol) &&
+        ObjImport* other_import = mod->imports.data[i];
+        if((other_import->header.symbol == NULL || other_import->header.symbol == actual) &&
            !resolve_import(mod, other_import))
         {
-            check_cyclic_def(import, import->loc);
+            check_cyclic_def(&import->header, import->header.loc);
             return false;
         }
     }
 
-    import->status = STATUS_RESOLVED;
+    bool used = false;
+    import->header.status = STATUS_RESOLVED;
 
-    Object* o = hashmap_get(&mod->module_ns, path->data[path->size - 1].sym);
+    Object* o = hashmap_get(&mod->module_ns, actual);
     if(o != NULL)
     {
-        Object* prev = hashmap_get(&module->module_ns, import->symbol);
-        if(prev != NULL)
+        Object* old = hashmap_get(&module->module_ns, import->header.symbol);
+        if(old != NULL)
         {
-            sic_error_redef(import, prev);
-            import->kind = OBJ_INVALID;
+            sic_error_redef(&import->header, old);
+            import->header.kind = OBJ_INVALID;
             return false;
         }
-        import->import = o;
-        hashmap_put(&module->module_ns, import->symbol, import);
+        import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
+        used = true;
+        hashmap_put(&module->module_ns, import->header.symbol, &import->header);
     }
 
-    o = hashmap_get(&mod->symbol_ns, path->data[path->size - 1].sym);
+    o = hashmap_get(&mod->symbol_ns, actual);
     if(o != NULL)
     {
-        Object* prev = hashmap_get(&module->symbol_ns, import->symbol);
+        Object* prev = hashmap_get(&module->symbol_ns, import->header.symbol);
         if(prev != NULL)
         {
-            sic_error_redef(import, prev);
-            import->kind = OBJ_INVALID;
+            sic_error_redef(&import->header, prev);
+            if(!used)
+                import->header.kind = OBJ_INVALID;
             return false;
         }
-        import->import = o;
-        hashmap_put(&module->symbol_ns, import->symbol, import);
+        if(used)
+        {
+            ObjImport* prev_import = import;
+            import = CALLOC_STRUCT(ObjImport);
+            memcpy(import, prev_import, sizeof(ObjImport));
+        }
+        import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
+        hashmap_put(&module->symbol_ns, import->header.symbol, &import->header);
     }
 
     return true;
 }
 
-static UNUSED bool analyze_main(Object* main)
+static inline void analyze_main()
 {
+    Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
+    if(main == NULL)
+        sic_fatal_error("Root module is missing main function. Declare it as 'fn main()'.");
+
     if(main->kind != OBJ_FUNC)
     {
-        sic_error_at(main->loc, "Symbol 'main' is reserved for entry function.");
-        return false;
+        sic_error_at(main->loc, "Symbol 'main' in the root crate is reserved for the entry function.");
+        return;
     }
 
-    if(g_compiler.main_function != NULL)
-    {
-        sic_error_redef(main, g_compiler.main_function);
-        return false;
-    }
-
-    FuncSignature* sig = main->func.signature;
-    TypeKind rt_kind = sig->ret_type->kind;
+    ObjFunc* func = obj_as_func(main);
+    const ObjVarDA params = func->signature.params;
+    TypeKind rt_kind = func->signature.ret_type.type->kind;
     if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
         goto BAD_SIG;
 
-    if(sig->params.size >= 1 && sig->params.data[0]->type->kind != TYPE_INT)
+    if(params.size >= 1 && params.data[0]->type_loc.type->kind != TYPE_INT)
         goto BAD_SIG;
 
     Type* second;
-    if(sig->params.size >= 2)
+    if(params.size >= 2)
     {
-        second = sig->params.data[1]->type;
+        second = params.data[1]->type_loc.type;
         if(second->kind != TYPE_POINTER)
             goto BAD_SIG;
         second = second->pointer_base;
@@ -289,83 +301,77 @@ static UNUSED bool analyze_main(Object* main)
             goto BAD_SIG;
     }
 
-    g_compiler.main_function = main;
-    return true;
+    return;
 
 BAD_SIG:
     sic_error_at(main->loc, "The signature of the main function is invalid. "
                             "The return type should be 'int' or 'void', with "
                             "optional parameters 'int, char**'.");
-    return false;
+    return;
 }
 
-static void analyze_function_body(Object* function)
+static void analyze_function_body(ObjFunc* func)
 {
-    if(!analyze_function(function)) return;
+    if(!analyze_function(func)) return;
 
     g_sema->in_global_init = false;
-    FuncSignature* sig = function->func.signature;
-    ObjectDA* params = &sig->params;
+    const ObjVarDA params = func->signature.params;
 
     uint32_t scope = push_scope();
-    for(uint32_t i = 0; i < params->size; ++i)
-    {
-        Object* param = params->data[i];
-        push_obj(param);
-    }
+    for(uint32_t i = 0; i < params.size; ++i)
+        push_obj(&params.data[i]->header);
 
 
-    ASTStmt* body = function->func.body;
-    g_sema->cur_func = function;
+    ASTStmt* body = func->body;
+    g_sema->cur_func = func;
     if(body != NULL && !analyze_stmt_block(body->stmt.block.body) && 
-       sig->ret_type->kind != TYPE_VOID)
+       func->signature.ret_type.type->kind != TYPE_VOID)
     {
-        sic_error_at(function->loc, "Function does not return from all control paths.");
+        sic_error_at(func->header.loc, "Function does not return from all control paths.");
     }
     g_sema->cur_func = NULL;
     pop_scope(scope);
 }
 
-bool analyze_global_var(Object* global_var)
+bool analyze_global_var(ObjVar* var)
 {
-    if(global_var->status == STATUS_RESOLVED) return global_var->kind != OBJ_INVALID;
-    SIC_ASSERT(global_var->kind == OBJ_VAR);
-    if(global_var->status == STATUS_RESOLVING)
+    if(var->header.status == STATUS_RESOLVED) return var->header.kind != OBJ_INVALID;
+    if(var->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(global_var);
+        set_cyclic_def(&var->header);
         return false;
     }
 
     g_sema->in_global_init = true;
-    global_var->status = STATUS_RESOLVING;
+    var->header.status = STATUS_RESOLVING;
 
-    if(!resolve_type(&global_var->type, RES_NORMAL, global_var->loc, "Variable cannot be of type"))
+    if(!resolve_type(&var->type_loc.type, RES_NORMAL, var->type_loc.loc, "Variable cannot be of type"))
     {
-        check_cyclic_def(global_var, global_var->loc);
+        check_cyclic_def(&var->header, var->header.loc);
         return false;
     }
 
-    if(global_var->var.initial_val != NULL)
+    if(var->initial_val != NULL)
     {
-        if(!implicit_cast(&global_var->var.initial_val, global_var->type))
+        if(!implicit_cast(&var->initial_val, var->type_loc.type))
         {
-            check_cyclic_def(global_var, global_var->loc);
+            check_cyclic_def(&var->header, var->header.loc);
             return false;
         }
-        if(!global_var->var.initial_val->const_eval)
+        if(!var->initial_val->const_eval)
         {
-            sic_error_at(global_var->loc, "Global variable must be initialized with a compile-time evaluable value.");
-            global_var->kind = OBJ_INVALID;
-            global_var->status = STATUS_RESOLVED;
+            sic_error_at(var->header.loc, "Global variable must be initialized with a compile-time evaluable value.");
+            var->header.kind = OBJ_INVALID;
+            var->header.status = STATUS_RESOLVED;
             return false;
         }
     }
 
-    if(global_var->type->visibility < global_var->visibility)
+    if(var->type_loc.type->visibility < var->header.visibility)
         // TODO: Make this error print the actual visibility of both.
-        sic_error_at(global_var->loc, "Global variable's type has less visibility than the object itself.");
+        sic_error_at(var->header.loc, "Global variable's type has less visibility than the object itself.");
 
-    global_var->status = STATUS_RESOLVED;
+    var->header.status = STATUS_RESOLVED;
     return true;
 }
 
@@ -402,9 +408,9 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_LABEL:
         SIC_TODO();
     case STMT_MULTI_DECL: {
-        ASTDeclDA* decl_list = &stmt->stmt.multi_decl;
-        for(uint32_t i = 0; i < decl_list->size; ++i)
-            analyze_declaration(decl_list->data + i);
+        const ObjVarDA decl_list = stmt->stmt.multi_decl;
+        for(uint32_t i = 0; i < decl_list.size; ++i)
+            analyze_declaration(decl_list.data[i]);
         return;
     }
     case STMT_NOP:
@@ -413,7 +419,7 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
         analyze_return(stmt);
         return;
     case STMT_SINGLE_DECL:
-        analyze_declaration(&stmt->stmt.single_decl);
+        analyze_declaration(stmt->stmt.single_decl);
         return;
     case STMT_SWAP:
         analyze_swap(stmt);
@@ -508,7 +514,7 @@ static void analyze_if(ASTStmt* stmt)
 static void analyze_return(ASTStmt* stmt)
 {
     ASTReturn* ret = &stmt->stmt.return_;
-    Type* ret_type = g_sema->cur_func->func.signature->ret_type;
+    Type* ret_type = g_sema->cur_func->signature.ret_type.type;
     stmt->always_returns = true;
     if(ret_type->kind == TYPE_INVALID) return;
     if(ret->ret_expr != NULL)
@@ -600,83 +606,83 @@ static void analyze_while(ASTStmt* stmt)
     }
 }
 
-static void analyze_declaration(ASTDeclaration* decl)
+static void analyze_declaration(ObjVar* decl)
 {
-    Object* obj = decl->obj;
-    if(!resolve_type(&obj->type, RES_ALLOW_AUTO_ARRAY | RES_ALLOW_AUTO, decl->obj->loc, "Variable cannot be of type"))
+    if(!resolve_type(&decl->type_loc.type, RES_ALLOW_AUTO_ARRAY | RES_ALLOW_AUTO, 
+                     decl->type_loc.loc, "Variable cannot be of type"))
         goto ERR;
 
-    TypeKind kind = obj->type->kind;
-    if(decl->init_expr == NULL)
+    TypeKind kind = decl->type_loc.type->kind;
+    if(decl->initial_val == NULL)
     {
         if(kind == TYPE_AUTO)
         {
-            sic_error_at(obj->loc, "Declaring a variable with auto requires "
-                                   "it to be initialized with an expression.");
+            sic_error_at(decl->header.loc, "Declaring a variable with auto requires "
+                                           "it to be initialized with an expression.");
             goto ERR;
         }
 
         if(kind == TYPE_PS_ARRAY)
         {
-            sic_error_at(obj->loc, "Auto-sized arrays require an right hand side with an "
-                                   "inferrible array size(i.e. an array literal) to be initialized.");
+            sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
+                                           "inferrible array size(i.e. an array literal) to be initialized.");
             goto ERR;
         }
 
     }
-    else if(!analyze_expr(decl->init_expr))
+    else if(!analyze_expr(decl->initial_val))
         goto ERR;
     else
     {
-        Type* rhs_type = decl->init_expr->type;
+        Type* rhs_type = decl->initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
         if(kind == TYPE_AUTO)
         {
             if(rhs_type->kind == TYPE_ANON_ARRAY)
             {
-                sic_error_at(obj->loc, "Unable to deduce type of right hand expression. "
-                             "For array literals, please declare a type.");
+                sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
+                                               "For array literals, please declare a type.");
                 goto ERR;
             }
-            obj->type = rhs_type;
+            decl->type_loc.type = rhs_type;
         }
         else if(kind == TYPE_PS_ARRAY)
         {
             if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
-                if(!type_equal(obj->type->array.elem_type, rhs_ctype->array.elem_type))
+                if(!type_equal(decl->type_loc.type->array.elem_type, rhs_ctype->array.elem_type))
                 {
-                    sic_error_at(obj->loc, 
+                    sic_error_at(decl->header.loc, 
                                  "Cannot assign auto-sized array type \'%s\' to "
                                  "incompatible array type \'%s\'.",
-                                 type_to_string(obj->type),
+                                 type_to_string(decl->type_loc.type),
                                  type_to_string(rhs_type));
                     goto ERR;
                 }
-                obj->type = rhs_type;
+                decl->type_loc.type = rhs_type;
             }
             else if(rhs_type->kind == TYPE_ANON_ARRAY)
             {
-                if(decl->init_expr->expr.init_list.size == 0)
+                if(decl->initial_val->expr.init_list.size == 0)
                 {
-                    sic_error_at(obj->loc, "Cannot assign auto-sized array type to array literal with length 0.");
+                    sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
                     goto ERR;
                 }
 
-                obj->type->kind = TYPE_STATIC_ARRAY;
-                obj->type->array.static_len = decl->init_expr->expr.init_list.max + 1;
-                implicit_cast(&decl->init_expr, obj->type);
+                decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
+                decl->type_loc.type->array.static_len = decl->initial_val->expr.init_list.max + 1;
+                implicit_cast(&decl->initial_val, decl->type_loc.type);
             }
         }
         else
-            implicit_cast(&decl->init_expr, obj->type);
+            implicit_cast(&decl->initial_val, decl->type_loc.type);
     }
-    push_obj(decl->obj);
+    push_obj(&decl->header);
     return;
 ERR:
-    decl->obj->kind = OBJ_INVALID;
-    decl->obj->status = STATUS_RESOLVED;
-    push_obj(decl->obj);
+    decl->header.kind = OBJ_INVALID;
+    decl->header.status = STATUS_RESOLVED;
+    push_obj(&decl->header);
 }
 
 static void analyze_swap(ASTStmt* stmt)
@@ -698,7 +704,7 @@ static void analyze_swap(ASTStmt* stmt)
 
     if(!type_is_trivially_copyable(left->type))
     {
-        ObjFunc* func = &g_sema->cur_func->func;
+        ObjFunc* const func = g_sema->cur_func;
         func->swap_stmt_size = MAX(func->swap_stmt_size, type_size(left->type));
         func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }
@@ -712,22 +718,13 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
     case OBJ_BITFIELD:
         SIC_TODO();
     case OBJ_ENUM:
-        if(type_obj->status == STATUS_RESOLVED) break;
-        if(!analyze_enum_obj(type_obj)) goto ERR;
-        break;
+        return analyze_enum(obj_as_enum(type_obj), o_type);
     case OBJ_STRUCT:
-        if(type_obj->status == STATUS_RESOLVED) break;
-        if(g_sema->in_ptr || g_sema->in_typedef) break;
-        if(!analyze_struct_obj(type_obj)) goto ERR;
-        break;
-    case OBJ_TYPE_ALIAS:
-        if(!analyze_type_alias(type_obj, o_type, flags, err_loc, err_str)) goto ERR;
-        return true;
+        return analyze_struct(obj_as_struct(type_obj), o_type);
+    case OBJ_TYPEDEF:
+        return analyze_typedef(obj_as_typedef(type_obj), o_type, flags, err_loc, err_str);
     case OBJ_UNION:
-        if(type_obj->status == STATUS_RESOLVED) break;
-        if(g_sema->in_ptr || g_sema->in_typedef) break;
-        if(!analyze_union_obj(type_obj)) goto ERR;
-        break;
+        return analyze_union(obj_as_struct(type_obj), o_type);
     case OBJ_INVALID:
         return false;
     case OBJ_ENUM_VALUE:
@@ -735,109 +732,126 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
     case OBJ_IMPORT:
     case OBJ_MODULE:
     case OBJ_VAR:
-        SIC_UNREACHABLE();
+        break;
     }
-    if(o_type != NULL)
-        *o_type = type_obj->type;
-    return true;
-ERR:
-    type_obj->kind = OBJ_INVALID;
-    type_obj->status = STATUS_RESOLVED;
-    return false;
+    SIC_UNREACHABLE();
 }
 
-static bool analyze_enum_obj(Object* type_obj)
+bool analyze_enum(ObjEnum* enum_, Type** o_type)
 {
-    ObjEnum* enum_ = &type_obj->enum_;
-    type_obj->type->status = STATUS_RESOLVED;
-    type_obj->status = STATUS_RESOLVED;
-    if(enum_->underlying == NULL)
-        enum_->underlying = g_type_int;
-    else if(!resolve_type(&enum_->underlying, RES_NORMAL, type_obj->loc, "An enum's underlying type cannot be of type"))
-        return false;
+    if(enum_->header.status == STATUS_RESOLVED) return enum_->header.kind != OBJ_INVALID;
+
+    Type* const type = enum_->type_ref;
+    type->status = STATUS_RESOLVED;
+    enum_->header.status = STATUS_RESOLVED;
+
+    if(enum_->underlying.type == NULL)
+        enum_->underlying.type = g_type_int;
+    else if(!resolve_type(&enum_->underlying.type, RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
+        goto ERR;
     else 
     {
-        enum_->underlying = enum_->underlying->canonical;
-        if(!type_is_integer(enum_->underlying))
+        enum_->underlying.type = enum_->underlying.type->canonical;
+        if(!type_is_integer(enum_->underlying.type))
         {
-            sic_error_at(type_obj->loc, "Underlying type for enums must be an integer type.");
-            return false;
+            sic_error_at(enum_->underlying.loc, "Underlying type for enums must be an integer type.");
+            goto ERR;
         }
     }
 
-    type_obj->type->canonical = type_obj->type->kind == TYPE_ENUM ? enum_->underlying : type_obj->type;
+    type->canonical = type->kind == TYPE_ENUM ? enum_->underlying.type : type;
 
     uint32_t scope = push_scope();
     uint64_t last_value = -1;
     for(uint32_t i = 0; i < enum_->values.size; ++i)
     {
-        Object* value = enum_->values.data[i];
-        value->type = enum_->underlying;
-        if(value->enum_val.value == NULL)
-            value->enum_val.const_val = ++last_value;
-        else if(!analyze_expr(value->enum_val.value))
-            return false;
-        else if(value->enum_val.value->kind != EXPR_CONSTANT)
+        ObjEnumValue* value = enum_->values.data[i];
+        value->enum_type = type;
+        if(value->raw_value == NULL)
+            value->const_value = ++last_value;
+        else if(!analyze_expr(value->raw_value))
+            goto ERR;
+        else if(value->raw_value->kind != EXPR_CONSTANT)
         {
-            sic_error_at(value->loc, "Enum value must be assigned a constant integer expression.");
-            return false;
+            sic_error_at(value->header.loc, "Enum value must be assigned a constant integer expression.");
+            goto ERR;
         }
-        else if(!implicit_cast(&value->enum_val.value, enum_->underlying))
-            return false;
+        else if(!implicit_cast(&value->raw_value, enum_->underlying.type))
+            goto ERR;
         else
-            last_value = value->enum_val.const_val = value->enum_val.value->expr.constant.val.i;
-        push_obj(value);
+            last_value = value->const_value = value->raw_value->expr.constant.val.i;
+        push_obj(&value->header);
     }
     pop_scope(scope);
+
+    if(o_type != NULL)
+        *o_type = type;
+
     return true;
+ERR:
+    enum_->header.kind = OBJ_INVALID;
+    type->kind = TYPE_INVALID;
+    return false;
 }
 
-static bool analyze_struct_obj(Object* type_obj)
+bool analyze_struct(ObjStruct* struct_, Type** o_type)
 {
-    if(type_obj->status == STATUS_RESOLVING)
+    if(struct_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
+        return struct_->header.kind != OBJ_INVALID;
+    if(struct_->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(type_obj);
+        set_cyclic_def(&struct_->header);
         return false;
     }
-    type_obj->status = STATUS_RESOLVING;
-    ObjStruct* struct_ = &type_obj->struct_;
+
+    struct_->header.status = STATUS_RESOLVING;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
-        Object* member = struct_->members.data[i];
-        if(!resolve_type(&member->type, RES_NORMAL, member->loc, "Struct member cannot be of type"))
+        ObjVar* member = struct_->members.data[i];
+        if(!resolve_type(&member->type_loc.type, RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot be of type"))
         {
-            check_cyclic_def(member, member->loc);
+            // FIXME: I believe this is wrong. I'm not sure the proper order in which to display the
+            // cyclic definitions, but I definitely need to make sure this works properly.
+            check_cyclic_def(&member->header, member->header.loc);
+            struct_->header.status = STATUS_RESOLVED;
+            struct_->header.kind = OBJ_INVALID;
             return false;
         }
-        if(member->type->visibility < type_obj->visibility)
+        if(member->type_loc.type->visibility < struct_->header.visibility)
         {
             // TODO: Make this error print the actual visibility of both.
-            sic_error_at(member->loc, "Member has type with less visibility than parent.");
+            sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
+            struct_->header.status = STATUS_RESOLVED;
+            struct_->header.kind = OBJ_INVALID;
             return false;
         }
-        uint32_t align = type_alignment(member->type);
+        uint32_t align = type_alignment(member->type_loc.type);
         SIC_ASSERT(is_pow_of_2(align));
-        struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type);
+        struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type_loc.type);
         struct_->align = MAX(struct_->align, align);
-
     }
-    type_obj->type->status = STATUS_RESOLVED;
-    type_obj->status = STATUS_RESOLVED;
+
+    struct_->header.status = STATUS_RESOLVED;
+    struct_->type_ref->status = STATUS_RESOLVED;
+
+    if(o_type != NULL)
+        *o_type = struct_->type_ref;
     return true;
 }
 
-static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags flags,
-                               SourceLoc err_loc, const char* err_str)
+bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
+                            SourceLoc err_loc, const char* err_str)
 {
-    switch(type_obj->status)
+    SIC_ASSERT(typedef_->header.kind == OBJ_TYPEDEF);
+    switch(typedef_->header.status)
     {
     case STATUS_RESOLVED:
         if(o_type != NULL)
         {
-            *o_type = type_obj->type;
+            *o_type = typedef_->type_ref;
             if(!resolve_type(o_type, flags, err_loc, err_str))
             {
-                check_cyclic_def(type_obj, type_obj->loc);
+                check_cyclic_def(&typedef_->header, typedef_->header.loc);
                 return false;
             }
         }
@@ -845,29 +859,30 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
     case STATUS_RESOLVING:
         if(g_sema->in_typedef)
         {
-            set_cyclic_def(type_obj);
+            set_cyclic_def(&typedef_->header);
             return false;
         }
         FALLTHROUGH;
     case STATUS_UNRESOLVED: {
-        type_obj->status = STATUS_RESOLVING;
+        typedef_->header.status = STATUS_RESOLVING;
         bool prev = g_sema->in_typedef;
         g_sema->in_typedef = true;
-        bool success = resolve_type(&type_obj->type_alias, RES_ALLOW_VOID, type_obj->loc, "Typedef cannot be assigned to type");
+        bool success = resolve_type(&typedef_->alias.type, RES_ALLOW_VOID, typedef_->alias.loc, "Typedef cannot be assigned to type");
         g_sema->in_typedef = prev;
         if(!success)
         {
-            check_cyclic_def(type_obj, type_obj->loc);
+            check_cyclic_def(&typedef_->header, typedef_->header.loc);
             return false;
         }
-        type_obj->status = STATUS_RESOLVED;
-        type_obj->type_alias = type_reduce(type_obj->type_alias); 
-        type_obj->type->status = STATUS_RESOLVED;
-        type_obj->type->canonical = type_obj->type->kind == TYPE_ALIAS ? type_obj->type_alias->canonical : type_obj->type;
+        typedef_->header.status = STATUS_RESOLVED;
+        typedef_->type_ref->status = STATUS_RESOLVED;
+        typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ? 
+                                            typedef_->alias.type->canonical : 
+                                            typedef_->type_ref;
 
         if(o_type != NULL)
         {
-            *o_type = type_obj->type;
+            *o_type = typedef_->type_ref;
             return resolve_type(o_type, flags, err_loc, err_str);
         }
         return true;
@@ -877,39 +892,47 @@ static bool analyze_type_alias(Object* type_obj, Type** o_type, ResolutionFlags 
     }
 }
 
-static bool analyze_union_obj(Object* type_obj)
+bool analyze_union(ObjStruct* union_, Type** o_type)
 {
-    if(type_obj->status == STATUS_RESOLVING)
+    SIC_ASSERT(union_->header.kind == OBJ_UNION);
+    if(union_->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(type_obj);
+        set_cyclic_def(&union_->header);
         return false;
     }
-    type_obj->status = STATUS_RESOLVING;
-    ObjStruct* struct_ = &type_obj->struct_;
+    union_->header.status = STATUS_RESOLVING;
     uint32_t largest_size = 0;
-    for(uint32_t i = 0; i < struct_->members.size; ++i)
+    for(uint32_t i = 0; i < union_->members.size; ++i)
     {
-        Object* member = struct_->members.data[i];
-        if(!resolve_type(&member->type, RES_NORMAL, member->loc, "Union member cannot be of type"))
+        ObjVar* member = union_->members.data[i];
+        if(!resolve_type(&member->type_loc.type, RES_NORMAL, member->type_loc.loc, "Union member cannot be of type"))
         {
-            check_cyclic_def(member->type->user_def, member->loc);
+            // FIXME: Just like in analyze_struct
+            check_cyclic_def(&member->header, member->header.loc);
+            union_->header.status = STATUS_RESOLVED;
+            union_->header.kind = OBJ_INVALID;
             return false;
         }
-        if(member->type->visibility < type_obj->visibility)
+        if(member->type_loc.type->visibility < union_->header.visibility)
         {
             // TODO: Make this error print the actual visibility of both.
-            sic_error_at(member->loc, "Member has type with less visibility than parent.");
+            sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
+            union_->header.status = STATUS_RESOLVED;
+            union_->header.kind = OBJ_INVALID;
             return false;
         }
-        uint32_t next_size = type_size(member->type);
+        uint32_t next_size = type_size(member->type_loc.type);
         if(largest_size < next_size)
         {
             largest_size = next_size;
-            struct_->largest_type = member->type;
+            union_->largest_type = member->type_loc.type;
         }
     }
-    type_obj->type->status = STATUS_RESOLVED;
-    type_obj->status = STATUS_RESOLVED;
+    union_->header.status = STATUS_RESOLVED;
+    union_->type_ref->status = STATUS_RESOLVED;
+
+    if(o_type != NULL)
+        *o_type = union_->type_ref;
     return true;
 }
 

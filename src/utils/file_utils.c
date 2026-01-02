@@ -45,7 +45,7 @@ void get_current_dir()
         sic_fatal_error("Failed to get current working directory.");
 }
 
-FileId source_file_add_or_get(const char* path, Module* module)
+FileId source_file_add_or_get(const char* path, ObjModule* module)
 {
     SIC_ASSERT(path != NULL);
 
@@ -105,7 +105,7 @@ ERR:
     sic_fatal_error("Failed to read source file \'%s\'", path);
 }
 
-FileId find_and_open_module_path(Module* module)
+FileId find_and_open_module_path(ObjModule* module)
 {
     // FIXME: Check overflow of buffer.
     const char* base_path = file_from_id(g_compiler.input_file)->rel_path;
@@ -115,8 +115,8 @@ FileId find_and_open_module_path(Module* module)
         if(base_path[i] == '/')
             len = i + 1;
     memcpy(path, base_path, len);
-    ModuleDA stack = {0};
-    Module* temp = module;
+    ObjModuleDA stack = {0};
+    ObjModule* temp = module;
     while(temp->parent != NULL)
     {
         da_append(&stack, temp);
@@ -125,14 +125,14 @@ FileId find_and_open_module_path(Module* module)
 
     for(uint32_t i = stack.size - 1; i < stack.size; --i)
     {
-        size_t next_len = strlen(stack.data[i]->name);
-        memcpy(path + len, stack.data[i]->name, next_len);
+        size_t next_len = strlen(stack.data[i]->header.symbol);
+        memcpy(path + len, stack.data[i]->header.symbol, next_len);
         len += next_len;
         path[len++] = '/';
     }
 
     memcpy(path + len, "mod.si", sizeof("mod.si"));
-    FREE(stack.data, stack.capacity * sizeof(Module*));
+    FREE(stack.data, stack.capacity * sizeof(ObjModule*));
     return source_file_add_or_get(path, module);
 }
 

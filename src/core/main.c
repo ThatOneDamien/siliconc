@@ -8,8 +8,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler = {.top_module = {.name = "root"}};
-
+CompilerContext g_compiler;
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
@@ -63,7 +62,7 @@ int main(int argc, char* argv[])
         gen_ir();
     }
 
-    if(g_compiler.mode != MODE_LINK || g_compiler.linker_inputs.size == 0)
+    if(!g_compiler.emit_link)
         exit(EXIT_SUCCESS);
 
 
@@ -83,7 +82,7 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-dynamic-linker");
     da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
     da_append(&cmd, "-o");
-    da_append(&cmd, g_compiler.output_file_name ? g_compiler.output_file_name : "a.out");
+    da_append(&cmd, g_compiler.link_name ? g_compiler.link_name : "a.out");
 
     // CRT Object files
     da_append(&cmd, str_format("%s/Scrt1.o", crt_path));
@@ -113,12 +112,12 @@ int main(int argc, char* argv[])
 
 void run_subprocess(const char** cmd)
 {
-    if(g_compiler.hash_hash_hash)
-    {
-        for(const char** c = cmd; *c != NULL; ++c)
-            printf("%s ", *c);
-        putc('\n', stdout);
-    }
+    // if(g_compiler.show_invoked)
+    // {
+    //     for(const char** c = cmd; *c != NULL; ++c)
+    //         printf("%s ", *c);
+    //     putc('\n', stdout);
+    // }
     if(fork() == 0)
     {
         execvp(cmd[0], (char**)cmd);

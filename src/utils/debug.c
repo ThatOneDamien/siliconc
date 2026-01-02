@@ -35,34 +35,33 @@ void print_token(Token* tok)
            tok->loc.col_num);
 }
 
-void print_module(const Module* module)
+void print_module(const ObjModule* module)
 {
     SIC_ASSERT(module != NULL);
     printf("Module: \'%s\' (%u Funcs, %u Global Vars)\n", 
-           module->name, module->funcs.size, module->vars.size);
+           module->header.symbol, module->funcs.size, module->vars.size);
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         print_func(module->funcs.data[i]);
 }
 
-void print_func(const Object* func)
+void print_func(const ObjFunc* func)
 {
-    const ObjFunc* comps = &func->func;
-    const FuncSignature* sig = comps->signature;
+    const FuncSignature* sig = &func->signature;
     printf("Function \'%s\' %s (returns %s):\n", 
-           func->symbol,
-           s_vis_strs[func->visibility],
-           debug_type_to_str(sig->ret_type));
+           func->header.symbol,
+           s_vis_strs[func->header.visibility],
+           debug_type_to_str(sig->ret_type.type));
     printf("  Params (count: %u):\n", sig->params.size);
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
-        Object* param = sig->params.data[i];
+        ObjVar* param = sig->params.data[i];
         printf("    %s (type %s)\n", 
-               param->symbol,
-               debug_type_to_str(param->type));
+               param->header.symbol,
+               debug_type_to_str(param->type_loc.type));
     }
 
     printf("  Body:\n");
-    ASTStmt* cur_stmt = comps->body;
+    ASTStmt* cur_stmt = func->body;
     while(cur_stmt != NULL)
     {
         print_stmt_at_depth(cur_stmt, 2, NULL);
@@ -123,11 +122,11 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     case STMT_LABEL:
         SIC_TODO();
     case STMT_MULTI_DECL: {
-        const ASTDeclDA* decls = &stmt->stmt.multi_decl;
-        for(uint32_t i = 0; i < decls->size; ++i)
+        const ObjVarDA decls = stmt->stmt.multi_decl;
+        for(uint32_t i = 0; i < decls.size; ++i)
         {
-            ASTDeclaration* decl = &decls->data[i];
-            print_expr_at_depth(decl->init_expr, depth + 1, decl->obj->symbol);
+            ObjVar* decl = decls.data[i];
+            print_expr_at_depth(decl->initial_val, depth + 1, decl->header.symbol);
         }
         return;
     }
@@ -137,14 +136,14 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_expr_at_depth(stmt->stmt.return_.ret_expr, depth + 1, NULL);
         return;
     case STMT_SINGLE_DECL: {
-        const ASTDeclaration* decl = &stmt->stmt.single_decl;
-        if(decl->init_expr != NULL)
-            print_expr_at_depth(decl->init_expr, depth + 1, decl->obj->symbol);
-        else
-        {
-            PRINT_DEPTH(depth + 1);
-            printf("%s: ( Uninitialized )\n", decl->obj->symbol);
-        }
+        // const ASTDeclaration* decl = &stmt->stmt.single_decl;
+        // if(decl->init_expr != NULL)
+        //     print_expr_at_depth(decl->init_expr, depth + 1, decl->obj->symbol);
+        // else
+        // {
+        //     PRINT_DEPTH(depth + 1);
+        //     printf("%s: ( Uninitialized )\n", decl->obj->symbol);
+        // }
         return;
     }
     case STMT_SWAP:
@@ -225,7 +224,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                s_unary_op_strs[expr->expr.unary.kind], 
                debug_type_to_str(expr->type));
         return;
-    case EXPR_PS_IDENT: {
+    case EXPR_UNRESOLVED_IDENT: {
         SIC_TODO_MSG("Fix");
         // printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
         //        expr->expr.pre_sema_ident., debug_type_to_str(expr->type));
@@ -250,7 +249,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
 UNRESOLVED_ARR:
         print_expr_at_depth(expr->expr.unresolved_access.parent_expr, depth + 1, NULL);
         PRINT_DEPTH(depth + 1);
-        printf("member: ( %s )\n", expr->expr.unresolved_access.member_sym);
+        printf("member: ( %s )\n", expr->expr.unresolved_access.member.sym);
         return;
     default:
         SIC_TODO();

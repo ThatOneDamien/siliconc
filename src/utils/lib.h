@@ -214,10 +214,10 @@ static inline void* crealloc(void* ptr, size_t size)
 #define CALLOC(nmemb, size, align)  arena_calloc(&g_global_arena, (nmemb) * (size), align)
 #define FREE(ptr, prev_size)        arena_free(&g_global_arena, ptr, prev_size)
 #define REALLOC(ptr, sz, al, psz)   arena_realloc(&g_global_arena, ptr, sz, al, psz)
-#define MALLOC_STRUCT(type)         arena_malloc(&g_global_arena, sizeof(type), _Alignof(type))
-#define CALLOC_STRUCT(type)         arena_calloc(&g_global_arena, sizeof(type), _Alignof(type))
-#define MALLOC_STRUCTS(type, count) arena_malloc(&g_global_arena, sizeof(type) * (count), _Alignof(type))
-#define CALLOC_STRUCTS(type, count) arena_calloc(&g_global_arena, sizeof(type) * (count), _Alignof(type))
+#define MALLOC_STRUCT(type)         ((type*)arena_malloc(&g_global_arena, sizeof(type), _Alignof(type)))
+#define CALLOC_STRUCT(type)         ((type*)arena_calloc(&g_global_arena, sizeof(type), _Alignof(type)))
+#define MALLOC_STRUCTS(type, count) ((type*)arena_malloc(&g_global_arena, sizeof(type) * (count), _Alignof(type)))
+#define CALLOC_STRUCTS(type, count) ((type*)arena_calloc(&g_global_arena, sizeof(type) * (count), _Alignof(type)))
 #endif
 
 #define FNV_SEED   0xCBF29CE484222325

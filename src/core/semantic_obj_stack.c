@@ -25,29 +25,29 @@ void push_obj(Object* obj)
     g_obj_stack.data[--g_obj_stack.stack_bottom] = obj;
 }
 
-Module* find_module(Module* start, SymbolLoc symloc, bool allow_private)
+ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
 {
     Object* next = hashmap_get(&start->module_ns, symloc.sym);
     if(next == NULL)
     {
         // TODO: Make the message display the full path of the module.
-        sic_error_at(symloc.loc, "Module \'%s\' does not exist in the current module.",
-                     start->name);
+        sic_error_at(symloc.loc, "Module \'%s\' does not exist in module \'%s\'.",
+                     symloc.sym, start->header.symbol);
         return NULL;
     }
     if(!allow_private && next->visibility == VIS_PRIVATE)
     {
         // TODO: Make the message display the full path of the module.
-        sic_error_at(symloc.loc, "Module \'%s\' is marked as private and is not accessible from current module.",
-                     symloc.sym);
+        sic_error_at(symloc.loc, "Module \'%s\' is marked as private and is not accessible from module \'%s\'.",
+                     symloc.sym, start->header.symbol);
         return NULL;
     }
-    return next->kind == OBJ_IMPORT ? next->import->module : next->module;
+    return obj_as_module(next->kind == OBJ_IMPORT ? obj_as_import(next)->resolved : next);
 }
 
 Object* find_obj(ModulePath* path)
 {
-    Module* mod = g_sema->module;
+    ObjModule* mod = g_sema->module;
     Object* o;
     SymbolLoc last = path->data[path->size - 1];
     bool allow_private;
@@ -86,7 +86,7 @@ Object* find_obj(ModulePath* path)
         return NULL;
     }
     // TODO: Check visibility rules.
-    return o->kind == OBJ_IMPORT ? o->import : o;
+    return o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
 }
 
 uint32_t push_scope()
