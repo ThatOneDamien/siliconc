@@ -114,7 +114,6 @@ typedef enum : uint8_t
     EXPR_BINARY,
     EXPR_CAST,
     EXPR_CONSTANT,
-    EXPR_DEFAULT,
     EXPR_FUNC_CALL,
     EXPR_IDENT,
     EXPR_MEMBER_ACCESS,
@@ -238,6 +237,7 @@ typedef enum : uint8_t
     STMT_SWITCH,
     STMT_WHILE,
 
+    STMT_CT_ASSERT,
     // STMT_CT_IF,
 } StmtKind;
 
@@ -427,6 +427,7 @@ typedef enum : uint8_t
     TYPE_AUTO,
     TYPE_PS_ARRAY,
     TYPE_PS_USER,
+    TYPE_STRING_LIT,
     TYPE_TYPEOF,
     __TYPE_COUNT,
 } TypeKind;

@@ -26,7 +26,6 @@ struct SemaContext
     bool         in_ptr : 1;
     bool         in_typedef : 1;
     bool         in_global_init : 1;
-    bool         check_lvalue : 1;
 };
 
 typedef struct ObjStack ObjStack;
@@ -42,7 +41,7 @@ extern ObjStack     g_obj_stack;
 
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
-bool       analyze_expr_no_set(ASTExpr* expr);
+bool       analyze_expr(ASTExpr* expr);
 bool       analyze_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_enum(ObjEnum* enum_, Type** o_type);
@@ -50,7 +49,7 @@ bool       analyze_struct(ObjStruct* struct_, Type** o_type);
 bool       analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_union(ObjStruct* union_, Type** o_type);
 bool       implicit_cast(ASTExpr** expr_to_cast, Type* desired);
-void       implicit_cast_varargs(ASTExpr** expr_to_cast);
+bool       implicit_cast_vararg(ASTExpr** arg);
 bool       resolve_import(ObjModule* module, ObjImport* import);
 bool       resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 void       push_obj(Object* obj);
@@ -59,6 +58,11 @@ Object*    find_obj(ModulePath* path);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
 bool       expr_is_lvalue(ASTExpr* expr);
+
+static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
+{
+    SIC_ASSERT(implicit_cast(expr_to_cast, desired));
+}
 
 static inline void const_int_correct(ASTExpr* expr)
 {
@@ -77,16 +81,6 @@ static inline bool expr_ensure_lvalue(ASTExpr* expr)
     if(!expr_is_lvalue(expr))
     {
         sic_error_at(expr->loc, "Expression is not assignable.");
-        return false;
-    }
-    return true;
-}
-
-static inline bool analyze_expr(ASTExpr* expr)
-{
-    if(!analyze_expr_no_set(expr))
-    {
-        expr->kind = EXPR_INVALID;
         return false;
     }
     return true;

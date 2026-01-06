@@ -12,7 +12,8 @@ static void analyze_if(ASTStmt* stmt);
 static void analyze_return(ASTStmt* stmt);
 static void analyze_switch(ASTStmt* stmt);
 static void analyze_while(ASTStmt* stmt);
-static void analyze_declaration(ObjVar* decl);
+static void analyze_ct_assert(ASTStmt* stmt);
+static bool analyze_declaration(ObjVar* decl);
 static void analyze_swap(ASTStmt* stmt);
 
 
@@ -43,6 +44,13 @@ void analyze_module(ObjModule* module)
 
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         analyze_function_body(module->funcs.data[i]);
+
+    ASTStmt* assert_ = module->ct_asserts;
+    while(assert_ != NULL)
+    {
+        analyze_ct_assert(assert_);
+        assert_ = assert_->next;
+    }
 
     g_sema = prev;
 #ifdef SI_DEBUG
@@ -257,7 +265,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         {
             ObjImport* prev_import = import;
             import = CALLOC_STRUCT(ObjImport);
-            memcpy(import, prev_import, sizeof(ObjImport));
+            *import = *prev_import;
         }
         import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
         hashmap_put(&module->symbol_ns, import->header.symbol, &import->header);
@@ -274,7 +282,7 @@ static inline void analyze_main()
 
     if(main->kind != OBJ_FUNC)
     {
-        sic_error_at(main->loc, "Symbol 'main' in the root crate is reserved for the entry function.");
+        sic_error_at(main->loc, "Symbol 'main' in the root module is reserved for the entry function.");
         return;
     }
 
@@ -342,29 +350,24 @@ bool analyze_global_var(ObjVar* var)
         return false;
     }
 
+    bool prev = g_sema->in_global_init;
     g_sema->in_global_init = true;
     var->header.status = STATUS_RESOLVING;
 
-    if(!resolve_type(&var->type_loc.type, RES_NORMAL, var->type_loc.loc, "Variable cannot be of type"))
+    if(!analyze_declaration(var))
     {
+        g_sema->in_global_init = true;
         check_cyclic_def(&var->header, var->header.loc);
         return false;
     }
+    g_sema->in_global_init = prev;
 
-    if(var->initial_val != NULL)
+    if(var->initial_val != NULL && !var->initial_val->const_eval)
     {
-        if(!implicit_cast(&var->initial_val, var->type_loc.type))
-        {
-            check_cyclic_def(&var->header, var->header.loc);
-            return false;
-        }
-        if(!var->initial_val->const_eval)
-        {
-            sic_error_at(var->header.loc, "Global variable must be initialized with a compile-time evaluable value.");
-            var->header.kind = OBJ_INVALID;
-            var->header.status = STATUS_RESOLVED;
-            return false;
-        }
+        sic_error_at(var->header.loc, "Global variable must be initialized with a compile-time evaluable value.");
+        var->header.kind = OBJ_INVALID;
+        var->header.status = STATUS_RESOLVED;
+        return false;
     }
 
     if(var->type_loc.type->visibility < var->header.visibility)
@@ -379,6 +382,10 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
 {
     switch(stmt->kind)
     {
+    case STMT_INVALID:
+    case STMT_NOP:
+        // Just ignore these
+        return;
     case STMT_BLOCK: {
         uint32_t scope = 0;
         if(add_scope)
@@ -410,16 +417,18 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_MULTI_DECL: {
         const ObjVarDA decl_list = stmt->stmt.multi_decl;
         for(uint32_t i = 0; i < decl_list.size; ++i)
+        {
             analyze_declaration(decl_list.data[i]);
+            push_obj(&decl_list.data[i]->header);
+        }
         return;
     }
-    case STMT_NOP:
-        return;
     case STMT_RETURN:
         analyze_return(stmt);
         return;
     case STMT_SINGLE_DECL:
         analyze_declaration(stmt->stmt.single_decl);
+        push_obj(&stmt->stmt.single_decl->header);
         return;
     case STMT_SWAP:
         analyze_swap(stmt);
@@ -430,7 +439,8 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_WHILE:
         analyze_while(stmt);
         return;
-    case STMT_INVALID:
+    case STMT_CT_ASSERT:
+        analyze_ct_assert(stmt);
         return;
     }
     SIC_UNREACHABLE();
@@ -450,13 +460,13 @@ static bool analyze_stmt_block(ASTStmt* stmt)
 
 static void analyze_break(ASTStmt* stmt)
 {
-    if(BIT_IS_UNSET(g_sema->block_context, BLOCK_BREAKABLE))
+    if(~g_sema->block_context & BLOCK_BREAKABLE)
         sic_error_at(stmt->loc, "Cannot break in the current context.");
 }
 
 static void analyze_continue(ASTStmt* stmt)
 {
-    if(BIT_IS_UNSET(g_sema->block_context, BLOCK_CONTINUABLE))
+    if(~g_sema->block_context & BLOCK_CONTINUABLE)
         sic_error_at(stmt->loc, "Cannot continue in the current context.");
 }
 
@@ -496,7 +506,7 @@ static void analyze_if(ASTStmt* stmt)
             sic_diagnostic_at(if_stmt->cond->loc, DIAG_WARNING, 
                               "Condition always evaluates to true, consider "
                               "changing this to a #if statement or removing it.");
-            memcpy(stmt, if_stmt->then_stmt, sizeof(ASTStmt));
+            *stmt = *if_stmt->then_stmt;
         }
         else
         {
@@ -504,7 +514,7 @@ static void analyze_if(ASTStmt* stmt)
                               "Condition always evaluates to false, consider "
                               "changing this to a #if statement or removing it.");
             if(if_stmt->else_stmt != NULL)
-                memcpy(stmt, if_stmt->else_stmt, sizeof(ASTStmt));
+                *stmt = *if_stmt->else_stmt;
             else
                 stmt->kind = STMT_NOP;
         }
@@ -606,7 +616,33 @@ static void analyze_while(ASTStmt* stmt)
     }
 }
 
-static void analyze_declaration(ObjVar* decl)
+static void analyze_ct_assert(ASTStmt* stmt)
+{
+    ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
+    bool valid = implicit_cast(&assert_->cond, g_type_bool);
+    valid &= analyze_expr(assert_->err_msg);
+    if(!valid) return;
+    if(assert_->cond->kind != EXPR_CONSTANT)
+    {
+        sic_error_at(assert_->cond->loc, "Compile-time assert's first argument must be a "
+                                         "compile-time evaluable boolean value.");
+        return;
+    }
+    SIC_ASSERT(assert_->cond->expr.constant.kind == CONSTANT_INTEGER);
+    if(assert_->err_msg->kind != EXPR_CONSTANT ||
+       assert_->err_msg->expr.constant.kind != CONSTANT_STRING)
+    {
+        sic_error_at(assert_->err_msg->loc, "Compile-time assert's second argument must be a "
+                                            "compile-time evaluable string.");
+        return;
+    }
+    if(!assert_->cond->expr.constant.val.i)
+    {
+        sic_diagnostic(DIAG_ERROR, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.val.str);
+    }
+}
+
+static bool analyze_declaration(ObjVar* decl)
 {
     if(!resolve_type(&decl->type_loc.type, RES_ALLOW_AUTO_ARRAY | RES_ALLOW_AUTO, 
                      decl->type_loc.loc, "Variable cannot be of type"))
@@ -641,8 +677,14 @@ static void analyze_declaration(ObjVar* decl)
             if(rhs_type->kind == TYPE_ANON_ARRAY)
             {
                 sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
-                                               "For array literals, please declare a type.");
+                             "For array literals, please declare a type.");
                 goto ERR;
+            }
+            if(rhs_type->kind == TYPE_STRING_LIT)
+            {
+                SIC_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
+                // TODO: Replace this with actual string type. Most likely a char slice.
+                rhs_type = type_pointer_to(g_type_char);
             }
             decl->type_loc.type = rhs_type;
         }
@@ -677,12 +719,11 @@ static void analyze_declaration(ObjVar* decl)
         else
             implicit_cast(&decl->initial_val, decl->type_loc.type);
     }
-    push_obj(&decl->header);
-    return;
+    return true;
 ERR:
     decl->header.kind = OBJ_INVALID;
     decl->header.status = STATUS_RESOLVED;
-    push_obj(&decl->header);
+    return false;
 }
 
 static void analyze_swap(ASTStmt* stmt)
@@ -739,9 +780,12 @@ bool analyze_type_obj(Object* type_obj, Type** o_type,
 
 bool analyze_enum(ObjEnum* enum_, Type** o_type)
 {
+    Type* const type = enum_->type_ref;
+    if(o_type != NULL)
+        *o_type = type;
+
     if(enum_->header.status == STATUS_RESOLVED) return enum_->header.kind != OBJ_INVALID;
 
-    Type* const type = enum_->type_ref;
     type->status = STATUS_RESOLVED;
     enum_->header.status = STATUS_RESOLVED;
 
@@ -784,8 +828,6 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
     }
     pop_scope(scope);
 
-    if(o_type != NULL)
-        *o_type = type;
 
     return true;
 ERR:
@@ -796,6 +838,9 @@ ERR:
 
 bool analyze_struct(ObjStruct* struct_, Type** o_type)
 {
+    if(o_type != NULL)
+        *o_type = struct_->type_ref;
+
     if(struct_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
         return struct_->header.kind != OBJ_INVALID;
     if(struct_->header.status == STATUS_RESOLVING)
@@ -831,11 +876,10 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
         struct_->align = MAX(struct_->align, align);
     }
 
+    struct_->size = ALIGN_UP(struct_->size, struct_->align);
     struct_->header.status = STATUS_RESOLVED;
     struct_->type_ref->status = STATUS_RESOLVED;
 
-    if(o_type != NULL)
-        *o_type = struct_->type_ref;
     return true;
 }
 
@@ -848,12 +892,12 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
     case STATUS_RESOLVED:
         if(o_type != NULL)
         {
-            *o_type = typedef_->type_ref;
-            if(!resolve_type(o_type, flags, err_loc, err_str))
-            {
+            *o_type = typedef_->alias.type;
+            if(!resolve_type(o_type, flags, err_loc, err_str)) {
                 check_cyclic_def(&typedef_->header, typedef_->header.loc);
                 return false;
             }
+            *o_type = typedef_->type_ref;
         }
         return true;
     case STATUS_RESOLVING:
@@ -876,14 +920,19 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
         }
         typedef_->header.status = STATUS_RESOLVED;
         typedef_->type_ref->status = STATUS_RESOLVED;
-        typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ? 
-                                            typedef_->alias.type->canonical : 
+        typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ?
+                                            typedef_->alias.type->canonical :
                                             typedef_->type_ref;
+        typedef_->alias.type = type_reduce(typedef_->alias.type);
 
         if(o_type != NULL)
         {
-            *o_type = typedef_->type_ref;
-            return resolve_type(o_type, flags, err_loc, err_str);
+            *o_type = typedef_->alias.type;
+            if(resolve_type(o_type, flags, err_loc, err_str)) {
+                *o_type = typedef_->type_ref;
+                return true;
+            }
+            return false;
         }
         return true;
     }
@@ -894,7 +943,10 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
 
 bool analyze_union(ObjStruct* union_, Type** o_type)
 {
-    SIC_ASSERT(union_->header.kind == OBJ_UNION);
+    if(o_type != NULL)
+        *o_type = union_->type_ref;
+    if(union_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
+        return union_->header.kind != OBJ_INVALID;
     if(union_->header.status == STATUS_RESOLVING)
     {
         set_cyclic_def(&union_->header);
@@ -902,6 +954,9 @@ bool analyze_union(ObjStruct* union_, Type** o_type)
     }
     union_->header.status = STATUS_RESOLVING;
     uint32_t largest_size = 0;
+
+    if(o_type != NULL)
+        *o_type = union_->type_ref;
     for(uint32_t i = 0; i < union_->members.size; ++i)
     {
         ObjVar* member = union_->members.data[i];
@@ -931,8 +986,6 @@ bool analyze_union(ObjStruct* union_, Type** o_type)
     union_->header.status = STATUS_RESOLVED;
     union_->type_ref->status = STATUS_RESOLVED;
 
-    if(o_type != NULL)
-        *o_type = union_->type_ref;
     return true;
 }
 

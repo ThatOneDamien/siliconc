@@ -1,0 +1,19 @@
+fn printf(char* fmt, ...);
+
+#assert(#sizeof(Temp) == 16, "This is a test!")
+
+struct Temp
+{
+    union
+    {
+        int tmp;
+        ulong other;
+    }
+    int a;
+}
+
+fn main(int argc, char** argv) -> int exit_code
+{
+    printf("%lu %lu\n", #sizeof(Temp), #alignof(Temp));
+    return 0;
+}

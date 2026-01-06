@@ -33,7 +33,7 @@ static bool parse_global_var_decl(Lexer* l, Visibility vis);
 // Types
 static Visibility  parse_visibility(Lexer* l);
 static Object*     parse_enum_decl(Lexer* l, Visibility vis);
-static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis);
+static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool nested);
 static Object*     parse_bitfield_decl(Lexer* l, Visibility vis);
 static Object*     parse_typedef(Lexer* l, Visibility vis);
 static bool        parse_decl_type_or_expr(Lexer* l, TypeLoc* type_loc, ASTExpr** expr, bool allow_func);
@@ -51,6 +51,7 @@ static ASTStmt* parse_if(Lexer* l);
 static ASTStmt* parse_return(Lexer* l);
 static ASTStmt* parse_switch(Lexer* l);
 static ASTStmt* parse_while(Lexer* l);
+static ASTStmt* parse_ct_assert(Lexer* l);
 static ASTStmt* parse_expr_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l, TypeLoc type_loc);
 
@@ -79,7 +80,6 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l);
 static ASTExpr* parse_char_literal(Lexer* l);
 static ASTExpr* parse_float_literal(Lexer* l);
 static ASTExpr* parse_string_literal(Lexer* l);
-static ASTExpr* parse_default_expr(Lexer* l);
 static ASTExpr* parse_bool_literal(Lexer* l);
 static ASTExpr* parse_nullptr(Lexer* l);
 
@@ -127,6 +127,8 @@ void parse_source_file(FileId fileid)
 
     while(!tok_equal(l, TOKEN_EOF))
     {
+        if(try_consume(l, TOKEN_SEMI))
+            continue; // Ignore semicolons
         if(!parse_top_level(l))
             recover_top_level(l);
     }
@@ -140,6 +142,7 @@ static bool parse_top_level(Lexer* l)
     Object* type;
     switch(peek(l)->kind)
     {
+    case TOKEN_SEMI:
     case TOKEN_BITFIELD:
         advance(l);
         type = parse_bitfield_decl(l, vis);
@@ -162,12 +165,19 @@ static bool parse_top_level(Lexer* l)
         FALLTHROUGH;
     case TOKEN_UNION:
         advance(l);
-        type = parse_struct_decl(l, kind, vis);
+        type = parse_struct_decl(l, kind, vis, false);
         break;
     case TOKEN_TYPEDEF:
         advance(l);
         type = parse_typedef(l, vis);
         break;
+    case TOKEN_CT_ASSERT: {
+        ASTStmt* res = parse_ct_assert(l);
+        if(stmt_is_bad(res)) return false;
+        res->next = l->module->ct_asserts;
+        l->module->ct_asserts = res;
+        return true;
+    }
     default: 
         return parse_global_var_decl(l, vis);
     }
@@ -449,9 +459,89 @@ static Object* parse_enum_decl(Lexer* l, Visibility vis)
     return &enum_->header;
 }
 
-static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis)
+static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
 {
-    CONSUME_OR_RET(TOKEN_IDENT, NULL); // TODO: Change this to allow anonymous structs
+    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
+    if(tok_equal(l, TOKEN_RBRACE))
+    {
+        sic_error_at(struct_->header.loc, "%s declaration is empty.", kind == OBJ_STRUCT ? "Struct" : "Union");
+        return false;
+    }
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        TypeLoc type_loc;
+        if(try_consume(l, TOKEN_STRUCT))
+        {
+            type_loc.loc = peek_prev(l)->loc;
+            if(kind == OBJ_STRUCT)
+            {
+                if(!parse_struct_members(l, OBJ_STRUCT, struct_)) return false;
+                continue;
+            }
+
+            Object* inner = parse_struct_decl(l, OBJ_STRUCT, VIS_PUBLIC, true);
+            if(inner == NULL) return false;
+            type_loc.type = obj_as_struct(inner)->type_ref;
+            ObjVar* member = CALLOC_STRUCT(ObjVar);
+            member->header.loc = type_loc.loc;
+            member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
+            member->header.kind = OBJ_VAR;
+            member->kind = VAR_MEMBER;
+            member->type_loc = type_loc;
+            da_append(&struct_->members, member);
+            continue;
+        }
+
+        if(try_consume(l, TOKEN_UNION))
+        {
+            type_loc.loc = peek_prev(l)->loc;
+            if(kind == OBJ_UNION)
+            {
+                if(!parse_struct_members(l, OBJ_UNION, struct_)) return false;
+                continue;
+            }
+
+            Object* inner = parse_struct_decl(l, OBJ_UNION, VIS_PUBLIC, true);
+            if(inner == NULL) return false;
+            type_loc.type = obj_as_struct(inner)->type_ref;
+            ObjVar* member = CALLOC_STRUCT(ObjVar);
+            member->header.loc = type_loc.loc;
+            member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
+            member->header.kind = OBJ_VAR;
+            member->kind = VAR_MEMBER;
+            member->type_loc = type_loc;
+            da_append(&struct_->members, member);
+            continue;
+        }
+        if(tok_equal(l, TOKEN_BITFIELD))
+        {
+            SIC_TODO();
+        }
+
+        if(!parse_decl_type(l, &type_loc, false)) return false;
+
+        do
+        {
+            // For now we don't allow anonymous members. This will change
+            CONSUME_OR_RET(TOKEN_IDENT, false);
+            ObjVar* member = CALLOC_STRUCT(ObjVar);
+            member->header.symbol = peek_prev(l)->sym;
+            member->header.loc = peek_prev(l)->loc;
+            member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
+            member->header.kind = OBJ_VAR;
+            member->kind = VAR_MEMBER;
+            member->type_loc = type_loc;
+            da_append(&struct_->members, member);
+        } while(try_consume(l, TOKEN_COMMA));
+
+        CONSUME_OR_RET(TOKEN_SEMI, false);
+    }
+    return true;
+}
+
+static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool nested)
+{
+    if(!nested && !consume(l, TOKEN_IDENT)) return NULL;
     ObjStruct* struct_ = CALLOC_STRUCT(ObjStruct);
     struct_->header.symbol = peek_prev(l)->sym;
     struct_->header.loc = peek_prev(l)->loc;
@@ -463,35 +553,8 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis)
     type->struct_ = struct_;
     type->canonical = type;
 
-    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
-    if(tok_equal(l, TOKEN_RBRACE))
-    {
-        sic_error_at(struct_->header.loc, "%s declaration is empty.", kind == OBJ_STRUCT ? "Struct" : "Union");
-        return NULL;
-    }
 
-    while(!try_consume(l, TOKEN_RBRACE))
-    {
-        TypeLoc type_loc;
-        if(!parse_decl_type(l, &type_loc, false))
-            return NULL;
-
-        do
-        {
-            // For now we don't allow anonymous members. This will change
-            CONSUME_OR_RET(TOKEN_IDENT, NULL);
-            ObjVar* member = CALLOC_STRUCT(ObjVar);
-            member->header.symbol = peek_prev(l)->sym;
-            member->header.loc = peek_prev(l)->loc;
-            member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
-            member->header.kind = OBJ_VAR;
-            member->kind = VAR_MEMBER;
-            member->type_loc = type_loc;
-            da_append(&struct_->members, member);
-        } while(try_consume(l, TOKEN_COMMA));
-
-        CONSUME_OR_RET(TOKEN_SEMI, NULL);
-    }
+    if(!parse_struct_members(l, kind, struct_)) return NULL;
 
     da_compact(&struct_->members);
     return &struct_->header;
@@ -517,10 +580,12 @@ static Object* parse_typedef(Lexer* l, Visibility vis)
     type->visibility = vis;
     type->typedef_ = typedef_;
 
-    CONSUME_OR_RET(TOKEN_ASSIGN, NULL);
-    if(!parse_decl_type(l, &typedef_->alias, true))
-        return NULL;
-    CONSUME_OR_RET(TOKEN_SEMI, NULL);
+    if(!consume(l, TOKEN_ASSIGN) || !parse_decl_type(l, &typedef_->alias, true) ||
+       !consume(l, TOKEN_SEMI))
+    {
+        typedef_->header.kind = OBJ_INVALID;
+        return &typedef_->header;
+    }
     return &typedef_->header;
 }
 
@@ -744,6 +809,9 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_WHILE:
         stmt = parse_while(l);
         break;
+    case TOKEN_CT_ASSERT:
+        stmt = parse_ct_assert(l);
+        break;
     default:
         stmt = parse_expr_stmt(l);
         break;
@@ -902,16 +970,25 @@ static ASTStmt* parse_while(Lexer* l)
     ASTStmt* stmt = new_stmt(l, STMT_WHILE);
     ASTWhile* while_stmt = &stmt->stmt.while_;
     advance(l);
+    
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_STMT);
+    ASSIGN_EXPR_OR_RET(while_stmt->cond, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_STMT);
+    ASSIGN_STMT_OR_RET(while_stmt->body, BAD_STMT);
 
-    while_stmt->cond = parse_expr(l);
-    if(expr_is_bad(while_stmt->cond) || !consume(l, TOKEN_RPAREN))
-        return BAD_STMT;
+    return stmt;
+}
 
-    while_stmt->body = parse_stmt(l);
-    if(stmt_is_bad(while_stmt->body))
-        return BAD_STMT;
-
+static ASTStmt* parse_ct_assert(Lexer* l)
+{
+    ASTStmt* stmt = new_stmt(l, STMT_CT_ASSERT);
+    ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
+    advance(l);
+    CONSUME_OR_RET(TOKEN_LPAREN, BAD_STMT);
+    ASSIGN_EXPR_OR_RET(assert_->cond, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_COMMA, BAD_STMT);
+    ASSIGN_EXPR_OR_RET(assert_->err_msg, BAD_STMT);
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_STMT);
     return stmt;
 }
 
@@ -1402,14 +1479,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
     ASTExpr* expr = new_constant(l, CONSTANT_STRING);
     expr->expr.constant.val.str = peek(l)->str.val;
     expr->expr.constant.val.str_len = peek(l)->str.len;
-    expr->type = g_type_anon_arr;
-    advance(l);
-    return expr;
-}
-
-static ASTExpr* parse_default_expr(Lexer* l)
-{
-    ASTExpr* expr = new_expr(l, EXPR_DEFAULT);
+    expr->type = g_type_str_lit;
     advance(l);
     return expr;
 }
@@ -1432,7 +1502,7 @@ static ASTExpr* parse_nullptr(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_alignof(Lexer* l)
+static ASTExpr* parse_ct_alignof(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CT_ALIGNOF);
     advance(l);
@@ -1444,7 +1514,7 @@ static ASTExpr* parse_alignof(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_offsetof(Lexer* l)
+static ASTExpr* parse_ct_offsetof(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CT_ALIGNOF);
     advance(l);
@@ -1456,7 +1526,7 @@ static ASTExpr* parse_offsetof(Lexer* l)
 
 }
 
-static ASTExpr* parse_sizeof(Lexer* l)
+static ASTExpr* parse_ct_sizeof(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_CT_SIZEOF);
     advance(l);
@@ -1485,6 +1555,7 @@ static inline bool expect(Lexer* l, TokenKind kind)
     if(tok_equal(l, kind))
         return true;
 
+
     parser_error(l, "Expected \'%s\'", tok_kind_to_str(kind));
     return false;
 }
@@ -1510,13 +1581,12 @@ static inline bool try_consume(Lexer* l, TokenKind kind)
 
 static inline bool consume(Lexer* l, TokenKind kind)
 {
-    if(tok_equal(l, kind))
+    if(expect(l, kind))
     {
         advance(l);
         return true;
     }
 
-    parser_error(l, "Expected \'%s\'.", tok_kind_to_str(kind));
     return false;
 }
 
@@ -1639,14 +1709,11 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
 
     [TOKEN_AS]              = { NULL, parse_cast, PREC_PRIMARY_POSTFIX },
-    [TOKEN_DEFAULT]         = { parse_default_expr, NULL, PREC_NONE },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 
-    [TOKEN_CT_ALIGNOF]      = { parse_alignof, NULL, PREC_NONE },
-	[TOKEN_CT_ASSERT]       = {},
-	[TOKEN_CT_OFFSETOF]     = { parse_offsetof, NULL, PREC_NONE },
-	[TOKEN_CT_SIZEOF]       = { parse_sizeof, NULL, PREC_NONE },
-	[TOKEN_CT_TYPEOF]       = {},
+    [TOKEN_CT_ALIGNOF]      = { parse_ct_alignof, NULL, PREC_NONE },
+	[TOKEN_CT_OFFSETOF]     = { parse_ct_offsetof, NULL, PREC_NONE },
+	[TOKEN_CT_SIZEOF]       = { parse_ct_sizeof, NULL, PREC_NONE },
 };

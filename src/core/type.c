@@ -61,6 +61,7 @@ TYPE_DEF(s_invalid , TYPE_INVALID);
 TYPE_DEF(s_void    , TYPE_VOID, .ptr_cache = &s_voidptr);
 TYPE_DEF(s_voidptr , TYPE_POINTER, .pointer_base = &s_void);
 TYPE_DEF(s_anon_arr, TYPE_ANON_ARRAY);
+TYPE_DEF(s_str_lit , TYPE_STRING_LIT);
 TYPE_DEF(s_auto    , TYPE_AUTO);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);
@@ -85,6 +86,7 @@ Type* const g_type_ulong    = &s_ulong;
 Type* const g_type_float    = &s_float;
 Type* const g_type_double   = &s_double;
 Type* const g_type_anon_arr = &s_anon_arr;
+Type* const g_type_str_lit  = &s_str_lit;
 Type* const g_type_auto     = &s_auto;
 Type* const g_type_iptr     = &s_iptr;
 Type* const g_type_uptr     = &s_uptr;
@@ -148,6 +150,11 @@ Type* type_pointer_to(Type* base)
         base->ptr_cache->kind = TYPE_POINTER;
         base->ptr_cache->pointer_base = base;
         base->ptr_cache->canonical = base->ptr_cache;
+        if(base->status == STATUS_RESOLVED)
+        {
+            base->ptr_cache->status = STATUS_RESOLVED;
+            base->ptr_cache->visibility = base->visibility;
+        }
     }
     return base->ptr_cache;
 }
@@ -221,6 +228,8 @@ bool type_equal(Type* t1, Type* t2)
         return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_RUNTIME_ARRAY:
+    case TYPE_ANON_ARRAY:
+    case TYPE_STRING_LIT:
         return false;
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
@@ -232,7 +241,6 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_UNION:
         return t1->struct_ == t2->struct_;
     case TYPE_INVALID:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
@@ -274,6 +282,7 @@ ByteSize type_size(Type* ty)
     case TYPE_AUTO:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -314,6 +323,7 @@ uint32_t type_alignment(Type* ty)
     case TYPE_AUTO:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -353,8 +363,6 @@ const char* type_to_string(Type* type)
     }
     case TYPE_STATIC_ARRAY:
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.static_len);
-    case TYPE_RUNTIME_ARRAY:
-        return str_format("%s[]", type_to_string(type->array.elem_type));
     case TYPE_ALIAS:
         return str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
     case TYPE_ALIAS_DISTINCT:
@@ -365,11 +373,15 @@ const char* type_to_string(Type* type)
     case TYPE_STRUCT:
     case TYPE_UNION:
         return str_format("%s", type->struct_->header.symbol);
+    case TYPE_ANON_ARRAY:
+        return "array literal";
     case TYPE_PS_ARRAY:
+    case TYPE_RUNTIME_ARRAY:
         return str_format("%s[*]", type_to_string(type->array.elem_type));
+    case TYPE_STRING_LIT:
+        return "string";
     case TYPE_INVALID:
     case TYPE_PS_USER:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:

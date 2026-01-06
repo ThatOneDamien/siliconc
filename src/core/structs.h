@@ -71,6 +71,7 @@ typedef struct ASTReturn        ASTReturn;
 typedef struct ASTSwap          ASTSwap;
 typedef struct ASTSwitch        ASTSwitch;
 typedef struct ASTWhile         ASTWhile;
+typedef struct ASTCtAssert      ASTCtAssert;
 typedef struct ASTStmt          ASTStmt;
 
 // Object Structs (defined symbols)
@@ -461,6 +462,12 @@ struct ASTWhile
     ASTStmt* body;
 };
 
+struct ASTCtAssert
+{
+    ASTExpr* cond;
+    ASTExpr* err_msg;
+};
+
 struct ASTStmt
 {
     StmtKind  kind;
@@ -480,6 +487,8 @@ struct ASTStmt
         ASTSwap   swap;
         ASTSwitch switch_;
         ASTWhile  while_;
+
+        ASTCtAssert ct_assert;
     } stmt;
 };
 
@@ -487,6 +496,7 @@ struct FuncSignature
 {
     TypeLoc  ret_type;
     ObjVarDA params;
+    void*    llvm_ref;
     bool     is_var_arg;
 };
 
@@ -551,6 +561,7 @@ struct ObjModule
     ObjImportDA imports;
     ObjectDA    types;
     ObjVarDA    vars;
+    ASTStmt*    ct_asserts;
     HashMap     module_ns; // Namespace of modules
     HashMap     symbol_ns; // Namespace of types, functions, variables
 };
@@ -619,13 +630,13 @@ struct SourceFile
 
 struct CompilerContext
 {
-    SourceFileDA sources;
-    StringDA     linker_inputs;
-    ObjModule    top_module;
+    SourceFileDA  sources;
+    StringDA      linker_inputs;
+    ObjModule     top_module;
 
     // Compiler CLI arguments/flags
     FileId        input_file;
-    const char*   link_name;
+    const char*   out_name;
     const char*   out_dir;
 
     CompileTarget target;

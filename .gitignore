@@ -4,4 +4,5 @@ compile_commands.json
 a.out
 *.ll
 *.s
+*.o
 sandbox

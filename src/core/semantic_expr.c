@@ -27,6 +27,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_logical(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
+static bool analyze_eq_ne(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_shift(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_bit_op(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
 static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs);
@@ -44,59 +45,74 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(ASTExpr** expr);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
-bool analyze_expr_no_set(ASTExpr* expr)
+bool analyze_expr(ASTExpr* expr)
 {
-    if(expr->evaluated)
-        return expr->kind != EXPR_INVALID;
-    expr->evaluated = true;
+    if(expr->evaluated) return expr->kind != EXPR_INVALID;
+    bool success;
     switch(expr->kind)
     {
     case EXPR_INVALID:
-        return false;
+        success = false;
+        break;
     case EXPR_ARRAY_ACCESS:
-        return analyze_array_access(expr);
+        success = analyze_array_access(expr);
+        break;
     case EXPR_ARRAY_INIT_LIST:
-        return analyze_array_init_list(expr);
+        success = analyze_array_init_list(expr);
+        break;
     case EXPR_BINARY:
-        return analyze_binary(expr);
+        success = analyze_binary(expr);
+        break;
     case EXPR_CAST:
-        return analyze_cast(expr);
+        success = analyze_cast(expr);
+        break;
     case EXPR_CONSTANT:
-        return true;
-    case EXPR_DEFAULT:
-        ERROR_AND_RET(expr->loc, "Keyword \'default\' not allowed in this context.");
+        success = true;
+        break;
     case EXPR_FUNC_CALL:
-        return analyze_call(expr);
+        success = analyze_call(expr);
+        break;
     case EXPR_POSTFIX: {
-        ASTExpr* inner = expr->expr.unary.inner;
-        return analyze_expr(inner) && 
-               analyze_incdec(expr, inner);
+        ASTExpr* const inner = expr->expr.unary.inner;
+        success = analyze_expr(inner) && analyze_incdec(expr, inner);
+        break;
     }
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
     case EXPR_TERNARY:
-        return analyze_ternary(expr);
+        success = analyze_ternary(expr);
+        break;
     case EXPR_UNARY:
-        return analyze_unary(expr);
+        success = analyze_unary(expr);
+        break;
     case EXPR_UNRESOLVED_ARR:
-        return analyze_unresolved_arrow(expr);
+        success = analyze_unresolved_arrow(expr);
+        break;
     case EXPR_UNRESOLVED_DOT:
-        return analyze_unresolved_dot(expr);
+        success = analyze_unresolved_dot(expr);
+        break;
     case EXPR_UNRESOLVED_IDENT:
-        return analyze_ident(expr);
+        success = analyze_ident(expr);
+        break;
     case EXPR_CT_ALIGNOF:
-        return analyze_ct_alignof(expr);
+        success = analyze_ct_alignof(expr);
+        break;
     case EXPR_CT_OFFSETOF:
-        return analyze_ct_offsetof(expr);
+        success = analyze_ct_offsetof(expr);
+        break;
     case EXPR_CT_SIZEOF:
-        return analyze_ct_sizeof(expr);
+        success = analyze_ct_sizeof(expr);
+        break;
     case EXPR_IDENT:
     case EXPR_MEMBER_ACCESS:
     case EXPR_TYPE_IDENT:
     case EXPR_ZEROED_OUT:
-        break;
+        SIC_UNREACHABLE();
     }
-    SIC_UNREACHABLE();
+    SIC_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
+    expr->evaluated = true;
+    if(!success) expr->kind = EXPR_INVALID;
+    return success;
 }
 
 bool expr_is_lvalue(ASTExpr* expr)
@@ -130,20 +146,23 @@ static bool analyze_array_access(ASTExpr* expr)
                       "Cannot access element of array literal. Please first assign the array to a const "
                       "literal or cast it to a typed array (i.e. int[*]), then perform the access.");
     }
-    if(!type_is_array(arr_t) && !type_is_pointer(arr_t))
+    if(arr_t->kind == TYPE_POINTER)
+    {
+        expr->type = arr_t->pointer_base;
+        if(!resolve_type(&expr->type, RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
+    }
+    else if(type_is_array(arr_t))
+        expr->type = arr_t->array.elem_type;
+    else
     {
         ERROR_AND_RET(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
                       type_to_string(arr_expr->type));
     }
 
-    Type* elem_t = expr->type = type_pointer_base(arr_t);
-    if(type_reduce(elem_t)->kind == TYPE_VOID)
-        ERROR_AND_RET(expr->loc, "Cannot access element of void array. Consider casting to another type.");
     if(!implicit_cast(&expr->expr.array_access.index_expr, g_type_usize))
         return false;
 
     ASTExpr* index_expr = expr->expr.array_access.index_expr;
-
 
     if(index_expr->kind == EXPR_CONSTANT)
     {
@@ -266,6 +285,7 @@ static inline bool analyze_binary(ASTExpr* expr)
         return analyze_logical(expr, lhs, rhs);
     case BINARY_EQ:
     case BINARY_NE:
+        return analyze_eq_ne(expr, lhs, rhs);
     case BINARY_LT:
     case BINARY_LE:
     case BINARY_GT:
@@ -333,12 +353,11 @@ static bool analyze_call(ASTExpr* expr)
     for(uint32_t i = sig->params.size; i < call->args.size; ++i)
     {
         ASTExpr** arg = call->args.data + i;
-        if(!analyze_expr(*arg))
+        if(!implicit_cast_vararg(arg))
         {
             valid = false;
             continue;
         }
-        implicit_cast_varargs(arg);
     }
 
 
@@ -435,26 +454,28 @@ EXIT:
 static bool analyze_unary(ASTExpr* expr)
 {
     ASTExpr* inner = expr->expr.unary.inner;
-    UnaryOpKind kind = expr->expr.unary.kind;
-    if(kind == UNARY_ADDR_OF)
-        return analyze_addr_of(expr, inner);
 
-    ANALYZE_EXPR_OR_RET(inner);
     switch(expr->expr.unary.kind)
     {
     case UNARY_INVALID:
-    case UNARY_ADDR_OF:
         break;
+    case UNARY_ADDR_OF:
+        return analyze_addr_of(expr, inner);
     case UNARY_BIT_NOT:
+        ANALYZE_EXPR_OR_RET(inner);
         return analyze_bit_not(expr, &expr->expr.unary.inner);
     case UNARY_DEC:
     case UNARY_INC:
+        ANALYZE_EXPR_OR_RET(inner);
         return analyze_incdec(expr, inner);
     case UNARY_DEREF:
+        ANALYZE_EXPR_OR_RET(inner);
         return analyze_deref(expr, inner);
     case UNARY_LOG_NOT:
+        ANALYZE_EXPR_OR_RET(inner);
         return analyze_log_not(expr, inner);
     case UNARY_NEG:
+        ANALYZE_EXPR_OR_RET(inner);
         return analyze_negate(expr, &expr->expr.unary.inner);
     }
     SIC_UNREACHABLE();
@@ -509,10 +530,11 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -534,11 +556,12 @@ static bool analyze_unresolved_arrow(ASTExpr* expr)
     }
 
     ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
-    deref->type = t->pointer_base;
     deref->loc = expr->loc;
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
     deref->expr.unary.inner = parent;
+
+    ANALYZE_EXPR_OR_RET(deref);
     return resolve_member(expr, deref);
 }
 
@@ -570,12 +593,12 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     if(parent->type->canonical->kind == TYPE_POINTER)
     {
         ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
-        deref->type = parent->type->canonical->pointer_base;
         deref->loc = expr->loc;
         deref->kind = EXPR_UNARY;
         deref->expr.unary.kind = UNARY_DEREF;
         deref->expr.unary.inner = parent;
         parent = deref;
+        ANALYZE_EXPR_OR_RET(parent);
     }
 
     return resolve_member(expr, parent);
@@ -622,8 +645,8 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     ASTExpr* right = *rhs;
     Type* lt = left->type->canonical;
     Type* rt = right->type->canonical;
-    bool left_is_pointer = type_is_pointer(lt);
-    bool right_is_pointer = type_is_pointer(rt);
+    bool left_is_pointer = lt->kind == TYPE_POINTER;
+    bool right_is_pointer = rt->kind == TYPE_POINTER;
     if(right_is_pointer)
     {
         left_is_pointer = true;
@@ -829,7 +852,23 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     if(!implicit_cast(lhs, g_type_bool) || !implicit_cast(rhs, g_type_bool))
         return false;
+
     expr->type = g_type_bool;
+
+    ASTExpr* left = *lhs;
+    ASTExpr* right = *rhs;
+    if(left->kind == EXPR_CONSTANT)
+    {
+        SIC_ASSERT(left->expr.constant.kind == CONSTANT_INTEGER);
+        *expr = (expr->expr.binary.kind == BINARY_LOG_OR) ^ left->expr.constant.val.i ? *right : *left;
+        return true;
+    }
+
+    if(right->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ right->expr.constant.val.i))
+    {
+        SIC_ASSERT(right->expr.constant.kind == CONSTANT_INTEGER);
+        *expr = *left; 
+    }
     return true;
 }
 
@@ -840,19 +879,43 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     Type* lhs_ctype = lhs_type->canonical;
     Type* rhs_ctype = rhs_type->canonical;
     expr->type = g_type_bool;
-    if(type_is_pointer(lhs_ctype))
-        return implicit_cast(rhs, lhs_type);
-    if(type_is_pointer(rhs_ctype))
-        return implicit_cast(lhs, rhs_type);
-
-    if(!type_is_numeric(lhs_ctype) || !type_is_numeric(rhs_ctype))
+    if(lhs_ctype->kind == TYPE_STRING_LIT || rhs_ctype->kind == TYPE_STRING_LIT)
     {
-        sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                     type_to_string(lhs_type), type_to_string(rhs_type));
+        // TODO: Remove this. It is temporarily here because the string type is not
+        // fleshed out. There are two options: allow comparisons between strings
+        // which would resolve to a strcmp under the hood, or disallow them entirely.
+        sic_error_at(expr->loc, "String literals cannot be compared.");
         return false;
     }
+    if(lhs_ctype->kind == TYPE_POINTER || lhs_ctype->kind == TYPE_FUNC_PTR)
+        return implicit_cast(rhs, lhs_type);
+    if(rhs_ctype->kind == TYPE_POINTER || rhs_ctype->kind == TYPE_FUNC_PTR)
+        return implicit_cast(lhs, rhs_type);
 
     return arith_type_conv(expr, lhs, rhs);
+}
+
+static bool analyze_eq_ne(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
+{
+    if(!analyze_comparison(expr, lhs, rhs)) return false;
+
+    ASTExpr* left = *lhs;
+    ASTExpr* right = *rhs;
+    Type* ty = left->type->canonical;
+    if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
+    {
+        bool value;
+        if(type_is_float(ty))
+            value = left->expr.constant.val.f == right->expr.constant.val.f;
+        else
+            value = left->expr.constant.val.i == right->expr.constant.val.i;
+
+        expr->kind = EXPR_CONSTANT;
+        expr->expr.constant.kind = CONSTANT_INTEGER;
+        expr->expr.constant.val.i = value ^ (expr->expr.binary.kind == BINARY_NE);
+        expr->const_eval = true;
+    }
+    return true;
 }
 
 static bool analyze_shift(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
@@ -977,9 +1040,10 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 
     if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_DEREF)
     {
-        memcpy(expr, inner->expr.unary.inner, sizeof(ASTExpr));
+        *expr = *inner->expr.unary.inner;
         return true;
     }
+
     if(!expr_is_lvalue(inner))
         ERROR_AND_RET(expr->loc, "Cannot take address of rvalue.");
 
@@ -1000,7 +1064,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
     promote_int_type(inner);
     ASTExpr* in = *inner;
 
-    expr->type = (*inner)->type;
+    expr->type = in->type;
     if(in->kind == EXPR_CONSTANT)
     {
         SIC_ASSERT(in->expr.constant.kind == CONSTANT_INTEGER);
@@ -1018,20 +1082,22 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
 
 static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 {
-    if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_ADDR_OF)
-    {
-        memcpy(expr, inner->expr.unary.inner, sizeof(ASTExpr));
-        return true;
-    }
-    if(inner->type->canonical->kind != TYPE_POINTER)
+    Type* ctype = inner->type->canonical;
+    if(ctype->kind != TYPE_POINTER)
     {
         sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
                      type_to_string(inner->type));
         return false;
     }
 
-    expr->type = inner->type->canonical->pointer_base;
-    return true;
+    if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_ADDR_OF)
+    {
+        *expr = *inner->expr.unary.inner;
+        return true;
+    }
+
+    expr->type = ctype->pointer_base;
+    return resolve_type(&expr->type, RES_NORMAL, expr->loc, "Cannot dereference pointer to type");
 }
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
@@ -1060,7 +1126,8 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
 {
     ASTExpr* inner = *inner_ref;
     Type* type = inner->type;
-    if(!type_is_numeric(type->canonical))
+    Type* ctype = type->canonical;
+    if(!type_is_numeric(ctype))
     {
         sic_error_at(expr->loc, "Cannot negate non-numeric type %s.",
                      type_to_string(type));
@@ -1076,13 +1143,13 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
         {
             expr->expr.constant.val.f = -inner->expr.constant.val.f;
             expr->expr.constant.kind = CONSTANT_FLOAT;
-            expr->type = inner->type;
+            expr->type = type;
             return true;
         }
 
         expr->expr.constant.val.i = -inner->expr.constant.val.i;
         expr->expr.constant.kind = CONSTANT_INTEGER;
-        switch(inner->type->canonical->kind)
+        switch(ctype->kind)
         {
         case TYPE_UBYTE:
             expr->type = inner->expr.constant.val.i > 0x7F ? g_type_short : g_type_byte;
@@ -1093,25 +1160,22 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
         case TYPE_UINT:
             expr->type = inner->expr.constant.val.i > 0x7FFFFFFF ? g_type_long : g_type_int;
             return true;
-        case TYPE_ULONG:
         case TYPE_BYTE:
         case TYPE_SHORT:
         case TYPE_INT:
         case TYPE_LONG:
-            expr->type = inner->type;
+        case TYPE_ULONG:
+            expr->type = type;
             return true;
         default:
             SIC_UNREACHABLE();
         }
     }
 
-    if(type_is_integer(type->canonical))
-    {
+    if(type_is_integer(ctype))
         promote_int_type(inner_ref);
-        inner = *inner_ref;
-    }
 
-    expr->type = inner->type;
+    expr->type = (*inner_ref)->type;
     return true;
 }
 
@@ -1188,10 +1252,11 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;

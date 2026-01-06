@@ -156,6 +156,8 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_expr_at_depth(stmt->stmt.while_.cond, depth + 1, "cond");
         print_stmt_at_depth(stmt->stmt.while_.body, depth + 1, "body");
         return;
+    case STMT_CT_ASSERT:
+        SIC_TODO();
     case STMT_INVALID:
         break;
     }

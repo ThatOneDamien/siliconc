@@ -9,11 +9,7 @@ typedef struct CodegenContext CodegenContext;
 typedef struct GenValue       GenValue;
 struct CodegenContext
 {
-    const char*          llvm_filename;
-    const char*          asm_filename;
-    const char*          obj_filename;
     ObjFunc*             cur_func;
-
 
     LLVMTargetMachineRef target_machine;
     LLVMModuleRef        llvm_module;
@@ -43,7 +39,7 @@ struct GenValue
 
 static void     gen_source_file(CodegenContext* c, SourceFile* file);
 static void     gen_module(CodegenContext* c, ObjModule* module);
-static void     emit_llvm_ir(CodegenContext* c);
+static void     emit_llvm_ir(CodegenContext* c, const char* out_path);
 static void     emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileType llvm_file_type);
 static void     emit_global_var(CodegenContext* c, ObjVar* global);
 static void     emit_function_body(CodegenContext* c, ObjFunc* func);
@@ -121,52 +117,82 @@ void llvm_codegen()
     c.ptr_type = LLVMPointerType(LLVMInt8Type(), 0);
     c.builder = LLVMCreateBuilder();
 
+    // LARGE TODO: Add support for incremental builds. Because this is
+    //             done extremely naively at the moment, I am putting all
+    //             generated code in one llvm module to allow for the best
+    //             optimization.
+
+    // TODO: Change this from being hardcoded.
+    const char* const target_triple = "x86_64-pc-linux-gnu";
+    LLVMTargetRef target = get_llvm_target(target_triple);
+
+    // TODO: Add optimization. No optimization for now, but this will be changed later 
+    //       along with properly setting up target detection.
+    c.target_machine = LLVMCreateTargetMachine(target, target_triple, "generic", "", LLVMCodeGenLevelNone, LLVMRelocPIC, LLVMCodeModelDefault);
+    if(c.target_machine == NULL)
+        sic_fatal_error("LLVM failed to create target machine, maybe check target triple?");
+
+    SourceFile* main_file = file_from_id(g_compiler.input_file);
+    c.llvm_module = LLVMModuleCreateWithNameInContext(g_compiler.out_name, s_context);
+    LLVMSetSourceFileName(c.llvm_module, main_file->rel_path, strlen(main_file->rel_path));
+    LLVMSetModuleDataLayout(c.llvm_module, LLVMCreateTargetDataLayout(c.target_machine));
+    LLVMSetTarget(c.llvm_module, target_triple);
     for(uint32_t i = 0; i < g_compiler.sources.size; ++i)
         gen_source_file(&c, g_compiler.sources.data + i);
 
     LLVMDisposeBuilder(c.builder);
-}
 
-static void gen_source_file(CodegenContext* c, SourceFile* file)
-{
-    // TODO: Change this from being hardcoded.
-    const char* target_triple = "x86_64-pc-linux-gnu";
-    LLVMTargetRef target = get_llvm_target(target_triple);
-    // No optimization for now, this will be changed later along with properly setting up
-    // target detection.
-    c->target_machine = LLVMCreateTargetMachine(target, target_triple, "generic", "", LLVMCodeGenLevelNone, LLVMRelocPIC, LLVMCodeModelDefault);
-    if(c->target_machine == NULL)
-        sic_fatal_error("LLVM failed to create target machine, maybe check target triple?");
-
-    c->llvm_module = LLVMModuleCreateWithNameInContext(file->rel_path, s_context);
-    LLVMSetSourceFileName(c->llvm_module, file->rel_path, strlen(file->rel_path));
-    LLVMSetModuleDataLayout(c->llvm_module, LLVMCreateTargetDataLayout(c->target_machine));
-    LLVMSetTarget(c->llvm_module, target_triple);
-    gen_module(c, file->module);
+    scratch_clear();
+    if(g_compiler.out_dir)
+    {
+        scratch_append(g_compiler.out_dir);
+        if(g_scratch.data[g_scratch.len - 1] != '/')
+            scratch_appendc('/');
+    }
+    scratch_append(g_compiler.out_name);
+    size_t len = g_scratch.len; // Save length for reuse.
 
     if(g_compiler.emit_ir)
     {
-        c->llvm_filename = convert_ext_to(file->rel_path, FT_LLVM_IR);
-        emit_llvm_ir(c);
+        scratch_append(".ll");
+        emit_llvm_ir(&c, scratch_string());
+        g_scratch.len = len;
     }
 
     if(g_compiler.emit_asm)
     {
-        c->asm_filename = convert_ext_to(file->rel_path, FT_ASM);
-        emit_file(c, c->asm_filename, LLVMAssemblyFile);
+        scratch_append(".s");
+        emit_file(&c, scratch_string(), LLVMAssemblyFile);
+        g_scratch.len = len;
     }
 
-    // c->obj_filename = g_compiler.emit_obj ? 
-    //                     convert_ext_to(file->rel_path, FT_OBJ) :
-    //                     create_tempfile(FT_OBJ);
+    const char* obj_filename;
+    if(g_compiler.emit_obj)
+    {
+        scratch_append(".o");
+        obj_filename = scratch_string();
+    }
+    else if(g_compiler.emit_link)
+        obj_filename = create_tempfile(FT_OBJ);
+    else
+        goto END;
 
-    // TODO: Uncomment the above code and add proper incremental build support.
-    c->obj_filename = create_tempfile(FT_OBJ);
+    emit_file(&c, obj_filename, LLVMObjectFile);
+    da_append(&g_compiler.linker_inputs, obj_filename);
 
-    emit_file(c, c->obj_filename, LLVMObjectFile);
-    da_append(&g_compiler.linker_inputs, c->obj_filename);
-    LLVMDisposeTargetMachine(c->target_machine);
-    LLVMDisposeModule(c->llvm_module);
+END:
+    LLVMDisposeTargetMachine(c.target_machine);
+    LLVMDisposeModule(c.llvm_module);
+}
+
+// This function exists because in the future when incremental builds
+// are working, this will produce a separate output file per source.
+// For now, everytime the compiler is called the ENTIRE project is
+// recompiled, and YES this is inefficient but incremental builds
+// go along with the build system which will take a WHILE to make.
+static void gen_source_file(CodegenContext* c, SourceFile* file)
+{
+    gen_module(c, file->module);
 
 }
 
@@ -319,6 +345,7 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         emit_while(c, stmt);
         return;
     case STMT_INVALID:
+    case STMT_CT_ASSERT:
         break;
     }
     SIC_UNREACHABLE();
@@ -548,8 +575,6 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_CONSTANT:
         emit_constant(c, expr, &result);
         return result;
-    case EXPR_DEFAULT:
-        SIC_TODO();
     case EXPR_FUNC_CALL:
         emit_call(c, expr, &result);
         return result;
@@ -582,13 +607,11 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
 
 static void emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
-    ASTExprAAccess* aa = &expr->expr.array_access;
-    GenValue array = emit_expr(c, aa->array_expr);
-    GenValue index = emit_expr(c, aa->index_expr);
+    GenValue array = emit_expr(c, expr->expr.array_access.array_expr);
+    GenValue index = emit_expr(c, expr->expr.array_access.index_expr);
     load_rvalue(c, &array);
     load_rvalue(c, &index);
-    Type* arr_type = aa->array_expr->type;
-    result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, type_pointer_base(arr_type)), array.value, &index.value, 1, "");
+    result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, expr->type), array.value, &index.value, 1, "");
     result->kind = GEN_VAL_ADDRESS;
 }
 
@@ -1169,7 +1192,7 @@ static void emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 
 static void emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result)
 {
-    if(type_is_pointer(left->type))
+    if(left->type->kind == TYPE_POINTER)
         result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, left->type->pointer_base), left->value, &right->value, 1, "");
     else if(type_is_float(left->type))
         result->value = LLVMBuildFAdd(c->builder, left->value, right->value, "");
@@ -1216,7 +1239,7 @@ static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
 
 static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result)
 {
-    if(type_is_pointer(left->type))
+    if(left->type->kind == TYPE_POINTER)
     {
         right->value = LLVMBuildNeg(c->builder, right->value, "");
         result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, left->type->pointer_base), left->value, &right->value, 1, "");
@@ -1277,7 +1300,7 @@ static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
     LLVMPositionBuilderAtEnd(c->builder, block);
 }
 
-static void emit_llvm_ir(CodegenContext* c)
+static void emit_llvm_ir(CodegenContext* c, const char* out_path)
 {
     char* error;
     if(LLVMVerifyModule(c->llvm_module, LLVMPrintMessageAction, &error))
@@ -1286,7 +1309,7 @@ static void emit_llvm_ir(CodegenContext* c)
             error = "No error supplied.";
         sic_fatal_error("Failed to verify LLVM-IR module: %s", error);
     }
-    if(LLVMPrintModuleToFile(c->llvm_module, c->llvm_filename, &error))
+    if(LLVMPrintModuleToFile(c->llvm_module, out_path, &error))
         sic_fatal_error("Failed to emit LLVM IR: \'%s\'", error);
 }
 
@@ -1300,6 +1323,7 @@ static void emit_file(CodegenContext* c, const char* out_path, LLVMCodeGenFileTy
 static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
 {
     type = type->canonical;
+    if(type->llvm_ref != NULL) return type->llvm_ref;
     switch(type->kind)
     {
     case TYPE_VOID:
@@ -1323,23 +1347,17 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_DOUBLE:
         return type->llvm_ref = LLVMDoubleType();
     case TYPE_POINTER:
-        return type->llvm_ref = c->ptr_type;
     case TYPE_FUNC_PTR:
-        return c->ptr_type;
+        return type->llvm_ref = c->ptr_type;
     case TYPE_STATIC_ARRAY:
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.static_len);
     case TYPE_RUNTIME_ARRAY:
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_ALIAS_DISTINCT:
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         return type->llvm_ref = get_llvm_type(c, type->enum_->underlying.type);
     case TYPE_STRUCT: {
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         ObjStruct* struct_ = type->struct_;
         if(struct_->header.llvm_ref)
             return type->llvm_ref = struct_->header.llvm_ref;
@@ -1354,7 +1372,6 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = struct_->header.llvm_ref;
     }
     case TYPE_UNION: {
-        if(type->llvm_ref != NULL) return type->llvm_ref;
         ObjStruct* union_ = type->struct_;
         if(union_->header.llvm_ref)
             return type->llvm_ref = union_->header.llvm_ref;
@@ -1364,10 +1381,11 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;
@@ -1378,18 +1396,18 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
 static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
 {
     SIC_ASSERT(type->kind == TYPE_FUNC_PTR);
-    if(type->llvm_ref != NULL)
-        return type->llvm_ref;
+    FuncSignature* sig = type->func_ptr;
+    if(sig->llvm_ref != NULL)
+        return sig->llvm_ref;
 
     LLVMTypeRef* param_types = NULL;
-    FuncSignature* sig = type->func_ptr;
     if(sig->params.size > 0)
         param_types = MALLOC_STRUCTS(LLVMTypeRef, sig->params.size);
 
     for(uint32_t i = 0; i < sig->params.size; ++i)
         param_types[i] = get_llvm_type(c, sig->params.data[i]->type_loc.type);
 
-    return type->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type.type), param_types, sig->params.size, sig->is_var_arg);
+    return sig->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type.type), param_types, sig->params.size, sig->is_var_arg);
 }
 
 static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
@@ -1468,10 +1486,11 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
     case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;

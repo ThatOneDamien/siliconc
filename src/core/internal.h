@@ -27,6 +27,7 @@ extern Type* const g_type_usize;
 extern Type* const g_type_float;
 extern Type* const g_type_double;
 extern Type* const g_type_anon_arr;
+extern Type* const g_type_str_lit;
 extern Type* const g_type_auto;
 
 extern ASTExpr* g_bad_expr;
@@ -162,11 +163,6 @@ static inline bool type_is_numeric(Type* ty)
            ty->kind == TYPE_ENUM;
 }
 
-static inline bool type_is_pointer(Type* ty)
-{
-    return ty->kind == TYPE_POINTER;
-}
-
 static inline bool type_is_array(Type* ty)
 {
     return ty->kind == TYPE_STATIC_ARRAY || ty->kind == TYPE_RUNTIME_ARRAY;
@@ -180,15 +176,6 @@ static inline bool type_is_user_def(Type* ty)
 static inline bool type_is_trivially_copyable(Type* ty)
 {
     return !type_is_array(ty) && type_size(ty) <= 16;
-}
-
-static inline Type* type_pointer_base(Type* ptr_ty)
-{
-    if(type_is_array(ptr_ty))
-        return ptr_ty->array.elem_type;
-    if(!type_is_pointer(ptr_ty))
-        SIC_UNREACHABLE();
-    return ptr_ty->pointer_base;
 }
 
 // Bad value checkers
@@ -239,7 +226,7 @@ static inline ObjModule* obj_as_module(Object* o)
 
 static inline ObjStruct* obj_as_struct(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_STRUCT);
+    SIC_ASSERT(o->kind == OBJ_STRUCT || o->kind == OBJ_UNION);
     return (ObjStruct*)o;
 }
 

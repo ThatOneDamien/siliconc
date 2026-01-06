@@ -11,8 +11,6 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
-#define BIT_IS_SET(x, BIT) (x & BIT)
-#define BIT_IS_UNSET(x, BIT) ((x & BIT) == 0)
 #define SCRATCH_SIZE (1 << 14)
 #ifdef __GNUC__
     #define UNUSED __attribute__((unused))
@@ -28,48 +26,25 @@
 
 #ifdef SI_DEBUG
     #include <signal.h>
-    #define SIC_ERROR_DBG(msg)                      \
+    #define SIC_ERROR_DBG(...)                      \
         do                                          \
         {                                           \
             fprintf(stderr, "\033[31m[DEBUG]: ");   \
-            fprintf(stderr, msg);                   \
+            fprintf(stderr, __VA_ARGS__);           \
             fprintf(stderr, "\033[0m\n");           \
-            raise(SIGTRAP);                         \
+            __asm__ volatile("int3");               \
         } while(0)
-    #define SIC_ERROR_DBG_ARGS(msg, ...)        \
-        do                                      \
-        {                                       \
-            fprintf(stderr, "\033[31m");        \
-            fprintf(stderr, msg, __VA_ARGS__);  \
-            fprintf(stderr, "\033[0m\n");       \
-            raise(SIGTRAP);                     \
-        } while(0)
-    #define SIC_ASSERT(cond)                                            \
-        do                                                              \
-        {                                                               \
-            if(!(cond))                                                 \
-                SIC_ERROR_DBG_ARGS("Assertion failed %s:%d(%s): %s",    \
-                                   __FILE__, __LINE__, __FUNCTION__,    \
-                                   #cond);                              \
-        } while(0)
-    #define SIC_ASSERT_MSG(cond, msg)   \
-        do                              \
-        {                               \
-            if(!(cond))                 \
-                SIC_ERROR_DBG(msg);     \
-        } while(0)
-    #define SIC_ASSERT_ARGS(cond, msg, ...)             \
-        do                                              \
-        {                                               \
-            if(!(cond))                                 \
-                SIC_ERROR_DBG_ARGS(msg, __VA_ARGS__);   \
+    #define SIC_ASSERT(cond)                                    \
+        do                                                      \
+        {                                                       \
+            if(!(cond))                                         \
+                SIC_ERROR_DBG("Assertion failed %s:%d(%s): %s", \
+                              __FILE__, __LINE__, __FUNCTION__, \
+                              #cond);                           \
         } while(0)
 #else
-    #define SIC_ERROR_DBG(msg)
-    #define SIC_ERROR_DBG_ARGS(msg, ...)
-    #define SIC_ASSERT(cond)                ((void)(cond))
-    #define SIC_ASSERT_MSG(cond, msg)       ((void)(cond))
-    #define SIC_ASSERT_ARGS(cond, msg, ...) ((void)(cond))
+    #define SIC_ERROR_DBG(...)
+    #define SIC_ASSERT(cond) ((void)(cond))
 #endif
 
 struct ScratchBuffer
@@ -129,9 +104,14 @@ static inline void sic_fatal_error(const char* message, ...)
     exit(EXIT_FAILURE);
 }
 
+#ifdef SI_DEBUG
+    #define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE__, __LINE__, __FUNCTION__)
+    #define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE__, __LINE__, __FUNCTION__, msg)
+#else
+    #define SIC_TODO()        static_assert(false, "TODO not implemented in release.")
+    #define SIC_TODO_MSG(msg) static_assert(false, "TODO not implemented in release. " msg)
+#endif
 #define SIC_UNREACHABLE() sic_fatal_error("Compiler encountered an unexpected error, should be unreachable. %s:%d(%s)", __FILE__, __LINE__, __FUNCTION__)
-#define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE__, __LINE__, __FUNCTION__)
-#define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE__, __LINE__, __FUNCTION__, msg)
 
 
 // string.c - Scratch Buffer and String format

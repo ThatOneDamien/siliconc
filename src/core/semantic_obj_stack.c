@@ -30,6 +30,7 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
     Object* next = hashmap_get(&start->module_ns, symloc.sym);
     if(next == NULL)
     {
+        SIC_ERROR_DBG("Here");
         // TODO: Make the message display the full path of the module.
         sic_error_at(symloc.loc, "Module \'%s\' does not exist in module \'%s\'.",
                      symloc.sym, start->header.symbol);
@@ -51,14 +52,17 @@ Object* find_obj(ModulePath* path)
     Object* o;
     SymbolLoc last = path->data[path->size - 1];
     bool allow_private;
-    if(!g_sema->in_global_init && path->size == 1)
+    if(path->size == 1)
     {
         allow_private = true;
-        for(uint32_t i = g_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
+        if(!g_sema->in_global_init)
         {
-            o = g_obj_stack.data[i];
-            if(o->symbol == last.sym)
-                return o;
+            for(uint32_t i = g_obj_stack.stack_bottom; i < OBJ_STACK_SIZE; ++i)
+            {
+                o = g_obj_stack.data[i];
+                if(o->symbol == last.sym)
+                    return o;
+            }
         }
     }
     else

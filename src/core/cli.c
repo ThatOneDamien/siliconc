@@ -3,8 +3,6 @@
 
 #include <string.h>
 
-static NORETURN void print_help(void);
-
 typedef struct
 {
     char        short_name;
@@ -17,10 +15,14 @@ typedef enum
 {
     FLAG_HELP,
     FLAG_OPTIMIZE,
-    FLAG_OUT_DIR,
+    FLAG_EMIT,
     FLAG_OUT_NAME,
+    FLAG_OUT_DIR,
     __FLAG_COUNT,
 } FlagKind;
+
+static void process_emit(char* arg);
+static NORETURN void print_help(void);
 
 static const Flag s_flags[__FLAG_COUNT];
 
@@ -40,16 +42,13 @@ void process_args(int argc, char* argv[])
                 g_compiler.input_file = source_file_add_or_get(argv[i], &g_compiler.top_module);
                 continue;
             case FT_OBJ:
-                da_append(&g_compiler.linker_inputs, arg);
-                continue;
             case FT_LLVM_IR:
             case FT_ASM:
             case FT_SHARED:
             case FT_STATIC:
-                SIC_TODO();
             case FT_UNKNOWN:
             default:
-                sic_fatal_error("Input file \'%s\' has invalid extension.", arg);
+                sic_fatal_error("Unrecognized input file \'%s\'. Please only provide a silicon source file (.si).", arg);
             }
             continue;
         }
@@ -91,7 +90,7 @@ void process_args(int argc, char* argv[])
         }
 
         arg++;
-        for(size_t j = 0; j < __FLAG_COUNT; ++j)
+        for(FlagKind j = 0; j < __FLAG_COUNT; ++j)
         {
             if(s_flags[j].long_name != NULL && strcmp(arg, s_flags[j].long_name) == 0)
             {
@@ -107,51 +106,102 @@ HANDLE_FLAG:
         case FLAG_HELP:
             print_help();
         case FLAG_OPTIMIZE:
+            SIC_TODO();
         case FLAG_OUT_DIR:
+            if(i == argc - 1 || argv[i + 1][0] == '-')
+                sic_fatal_error("Missing directory path after --out-dir.");
+            i++;
+            g_compiler.out_dir = argv[i];
+            break;
+        case FLAG_EMIT:
+            if(i == argc - 1 || argv[i + 1][0] == '-')
+                sic_fatal_error("Missing file kind after --emit.");
+            had_emit = true;
+            i++;
+            process_emit(argv[i]);
+            break;
         case FLAG_OUT_NAME:
             if(i == argc - 1 || argv[i + 1][0] == '-')
-                sic_fatal_error("Missing filename after --oname.");
+                sic_fatal_error("Missing filename after --out-name.");
             i++;
-            g_compiler.link_name = argv[i];
+            g_compiler.out_name = argv[i];
             break;
         default:
             SIC_UNREACHABLE();
         }
     }
 
+    if(g_compiler.input_file == FILE_NULL)
+        sic_fatal_error("No input file provided.");
 
     // TODO: Make this customizable through options
     if(!had_emit)
         g_compiler.emit_link = true;
+
+    if(!g_compiler.out_name)
+    {
+        SourceFile* main_file = file_from_id(g_compiler.input_file);
+        scratch_clear();
+        const char* file_name = strrchr(main_file->rel_path, '/');
+        file_name = file_name == NULL ? main_file->rel_path : file_name + 1;
+        while(file_name[0] != '\0' && file_name[0] != '.')
+        {
+            scratch_appendc(file_name[0]);
+            file_name++;
+        }
+        g_compiler.out_name = str_dupn(scratch_string(), g_scratch.len);
+    }
     g_compiler.target = TARGET_x86_64;
     g_compiler.ir_kind = IR_LLVM;
 }
 
+static void process_emit(char* arg)
+{
+    char* kind = strtok(arg, ",");
+    while(kind != NULL)
+    {
+        if(strcmp(kind, "link") == 0)     g_compiler.emit_link = true;
+        else if(strcmp(kind, "obj") == 0) g_compiler.emit_obj = true;
+        else if(strcmp(kind, "asm") == 0) g_compiler.emit_asm = true;
+        else if(strcmp(kind, "ir") == 0)  g_compiler.emit_ir = true;
+        else
+            sic_fatal_error("Unknown emit kind '%s', possible options are link,obj,asm,ir.", kind);
+        kind = strtok(NULL, ",");
+    }
+
+}
 
 static NORETURN void print_help(void)
 {
     printf("About: siliconc(a.k.a sic), a compiler for the silicon language.\n\n");
     printf("Usage: sic [<OPTIONS>] INPUT\n\n");
     printf("Options:\n");
-    SIC_TODO();
-    // for(size_t i = 0; i < __FLAG_COUNT; ++i)
-    // {
-    //     printf("    ");
-    //     if(!s_flags[i].short_name)
-    //         printf("    ");
-    //     else
-    //     {
-    //         printf("-%c", s_flags[i].short_name);
-    //         if()
-    //     }
-    //
-    // }
-    exit(0);
+
+    for(size_t i = 0; i < __FLAG_COUNT; ++i)
+    {
+        printf("    ");
+        if(s_flags[i].short_name)
+        {
+            printf("-%c", s_flags[i].short_name);
+            if(s_flags[i].long_name)
+                printf(", --%s ", s_flags[i].long_name);
+            else
+                putc(' ', stdout);
+        }
+        else
+            printf("    --%s ", s_flags[i].long_name);
+
+        if(s_flags[i].input_args)
+            printf("%s ", s_flags[i].input_args);
+        printf("%s\n", s_flags[i].description);
+    }
+    exit(EXIT_SUCCESS);
 }
 
 static const Flag s_flags[__FLAG_COUNT] = {
-    [FLAG_HELP]     = { 'h', "help", NULL, "Print this help message." },
+    [FLAG_HELP]     = { 'h', "help", "", "Print this help message." },
     [FLAG_OPTIMIZE] = { 'O', NULL, "<OPT-LEVEL>", "Optimize build to OPT-LEVEL, which can be 0,1,2,3,s,z."},
+    [FLAG_EMIT]     = { 0, "emit", "<KIND>[,<KIND>]", "Emit all file types in list. KIND can be link,obj,asm,ir."},
+    [FLAG_OUT_NAME] = { 0, "out-name", "<NAME>", "Set the name of the final build output (executable or library) to NAME."},
     [FLAG_OUT_DIR]  = { 0, "out-dir", "<DIR>", "Place build components in the directory DIR."},
-    [FLAG_OUT_NAME] = { 0, "oname", "<NAME>", "Set the name of the final build output (executable or library) to NAME."},
 };

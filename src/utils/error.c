@@ -79,7 +79,7 @@ void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message,
         after_len++;
 
 
-    fprintf(stderr, "%s:%u:%hhu \033[%sm%s:\033[0m ",
+    fprintf(stderr, "%s:%u:%u: \033[%sm%s:\033[0m ",
             file->rel_path, loc.line_num, loc.col_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
     
     vfprintf(stderr, message, va);

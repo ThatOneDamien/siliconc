@@ -1,24 +1,31 @@
-/// test:   const_eval_int
+/// test:   eval_int
 /// action: compile
 /// result: pass
-int a = 1 + 1;
-int b = 1 - 1;
-int c = 1 * 1;
-int d = 1 / 1;
-int e = 1 % 1;
-int f = 1 << 1;
-int g = 1 >> 1;
-int h = 1 >>> 1;
-int i = 1 | 1;
-int j = 1 & 1;
-int k = 1 ^ 1;
-int l = 1 || 1;
-int m = 1 && 1;
-int n = -1;
-int o = ~1;
+#assert(10 + 16 == 26, "Fail");
+#assert(110 - 15 == 95, "Fail");
+#assert(12 * 14 == 168, "Fail");
+#assert(100 / 10 == 10, "Fail");
+#assert(13 % 4 == 1, "Fail");
+#assert((0x5 << 4) == 0x50, "Fail");
+#assert((0xFF00 >> 4) == 0xFF0, "Fail");
+#assert(((0x80000000 as uint) >>> 3) == 0xF0000000, "Fail");
+#assert((0xC & 0xB) == 0x8, "Fail");
+#assert((0xC ^ 0xB) == 0x7, "Fail");
+#assert((0xC | 0xB) == 0xF, "Fail");
+#assert((-1 as uint) == 0xFFFFFFFF, "Fail");
+#assert((~1 as uint) == 0xFFFFFFFE, "Fail");
+#assert(true && true, "Fail");
+#assert(true || false, "Fail");
+#assert(128 == 0x80, "Fail");
+#assert(1000 != 1, "Fail");
+#assert(20 <= 500, "Fail");
+#assert(-20 <= 500, "Fail");
+#assert(40 >= 5, "Fail");
+#assert(-5 >= -40, "Fail");
+#assert(0 < 1, "Fail");
+#assert(1 > 0, "Fail");
 
-
-/// test:   const_eval_float
+/// test:   eval_float
 /// action: compile
 /// result: pass
 float a = 1.0f + 1.0f;
@@ -26,6 +33,15 @@ float b = 1.0f - 1.0f;
 float c = 1.0f * 1.0f;
 float d = 1.0f / 1.0f;
 float e = -1.0f;
+bool f = 1.0f == 1.0f;
+bool g = 1.0f != 1.0f;
+bool h = 
+
+/// test:   eval_addr
+/// action: compile
+/// result: pass
+int a;
+int* b = &a;
 
 /// test:   int_divide_zero
 /// action: compile

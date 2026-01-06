@@ -71,8 +71,7 @@ class TestRunner:
 
         # Check compile only test
         if test.action == 'compile':
-            out_obj = pathlib.Path(tmpdir) / 'a.o'
-            cmd = [compiler_path, '-s', source_file, '-o', out_obj]
+            cmd = [compiler_path, source_file, '--emit', 'obj', '--out-dir', tmpdir]
             result = None
             if verbose:
                 result = subprocess.run(cmd, check=False, timeout=test.timeout, text=True)
@@ -84,8 +83,8 @@ class TestRunner:
         # --- Compiling and Running ---
 
         # Compile first
-        out_exe = pathlib.Path(tmpdir) / 'a.out'
-        cmd = [compiler_path, source_file, '-o', out_exe]
+        out_exe = pathlib.Path(tmpdir) / 'testout'
+        cmd = [compiler_path, source_file, '--out-dir', tmpdir, '--out-name', 'testout']
         result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=test.timeout, text=True)
         if verbose:

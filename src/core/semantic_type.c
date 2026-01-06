@@ -1,14 +1,11 @@
 #include "semantics.h"
 
-static bool resolve_array(Type* arr_ty, ResolutionFlags flags,
-                          SourceLoc err_loc, const char* err_str);
+static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 static bool resolve_func_ptr(Type* func_ty);
-static bool resolve_typeof(Type** type_ref, Type* typeof);
-static bool resolve_user(Type** type_ref, ResolutionFlags flags,
-                         SourceLoc err_loc, const char* err_str);
+static bool resolve_typeof(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+static bool resolve_user(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 
-bool resolve_type(Type** type_ref, ResolutionFlags flags,
-                  SourceLoc err_loc, const char* err_str)
+bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
 {
     SIC_ASSERT(type_ref != NULL);
     SIC_ASSERT(*type_ref != NULL);
@@ -20,7 +17,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
     case TYPE_INVALID:
         return false;
     case TYPE_VOID:
-        if(BIT_IS_UNSET(flags, RES_ALLOW_VOID))
+        if(~flags & RES_ALLOW_VOID)
         {
             sic_error_at(err_loc, "%s 'void'.", err_str);
             break;
@@ -28,16 +25,15 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         FALLTHROUGH;
     case INT_TYPES:
     case FLOAT_TYPES:
-    case TYPE_ANON_ARRAY:
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
     case TYPE_POINTER: {
         if(type->status == STATUS_RESOLVED) return true;
-        type->status = STATUS_RESOLVED;
         bool prev = g_sema->in_ptr;
         g_sema->in_ptr = true;
         if(!resolve_type(&type->pointer_base, RES_ALLOW_VOID, err_loc, "Cannot have pointer to type")) break;
         g_sema->in_ptr = prev;
+        type->status = STATUS_RESOLVED;
         type->visibility = type->pointer_base->visibility;
         return true;
     }
@@ -71,7 +67,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         if(!analyze_union(type->struct_, type_ref)) break;
         return true;
     case TYPE_AUTO:
-        if(BIT_IS_UNSET(flags, RES_ALLOW_AUTO))
+        if(~flags & RES_ALLOW_AUTO)
         {
             sic_error_at(err_loc, "%s 'auto'.", err_str);
             break;
@@ -86,9 +82,10 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags,
         return true;
     case TYPE_TYPEOF:
         if(type->status == STATUS_RESOLVED) return true;
-        type->status = STATUS_RESOLVED;
-        if(!resolve_typeof(type_ref, type)) break;
+        if(!resolve_typeof(type_ref, flags, err_loc, err_str)) break;
         return true;
+    case TYPE_ANON_ARRAY:
+    case TYPE_STRING_LIT:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();
     }
@@ -108,7 +105,7 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
 
     if(arr->size_expr == NULL)
     {
-        if(BIT_IS_SET(flags, RES_ALLOW_AUTO_ARRAY))
+        if(flags & RES_ALLOW_AUTO_ARRAY)
             return true;
 
         sic_error_at(err_loc, "%s auto-sized array \'%s\'.", err_str, type_to_string(arr_ty));
@@ -119,7 +116,7 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
         return false;
 
     bool was_signed = type_is_signed(arr->size_expr->type->canonical);
-    if(!implicit_cast(&arr->size_expr, g_type_ulong))
+    if(!implicit_cast(&arr->size_expr, g_type_usize))
         return false;
 
 
@@ -161,16 +158,29 @@ static bool resolve_func_ptr(Type* func_ty)
     return true;
 }
 
-static bool resolve_typeof(Type** type_ref, Type* typeof)
+static bool resolve_typeof(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
 {
-    if(!analyze_expr(typeof->type_of))
+    ASTExpr* inner = (*type_ref)->type_of;
+    if(!analyze_expr(inner))
         return false;
-    *type_ref = typeof->type_of->type;
-    return true;
+
+    Type* inner_ty = inner->type;
+    if(inner_ty->kind == TYPE_ANON_ARRAY)
+    {
+        sic_error_at(inner->loc, "Cannot get type of array initializer list.");
+        return false;
+    }
+    if(inner_ty->kind == TYPE_STRING_LIT)
+    {
+        SIC_ASSERT(inner->expr.constant.kind == CONSTANT_STRING);
+        *type_ref = type_pointer_to(g_type_char);
+        return true;
+    }
+    *type_ref = inner_ty;
+    return resolve_type(type_ref, flags, err_loc, err_str);
 }
 
-static bool resolve_user(Type** type_ref, ResolutionFlags flags,
-                         SourceLoc err_loc, const char* err_str)
+static bool resolve_user(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
 {
     Type* user_ty = *type_ref;
     Object* type_obj = find_obj(&user_ty->unresolved);

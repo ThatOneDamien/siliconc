@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler;
+CompilerContext g_compiler = { .top_module = { .header = { .symbol = "root" }}};
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG
@@ -35,32 +35,29 @@ int main(int argc, char* argv[])
     if(g_compiler.ir_kind == IR_LLVM)
         llvm_initialize();
 
-    if(g_compiler.input_file != FILE_NULL)
-    {
-        parse_source_file(g_compiler.input_file);
+    parse_source_file(g_compiler.input_file);
 
 #ifdef SI_DEBUG
-        if(g_compiler.debug_output & DEBUG_PARSER)
-        {
-            print_module(&g_compiler.top_module);
-            printf("\n\n");
-        }
-#endif
-        analyze_module(&g_compiler.top_module);
-
-        if(g_error_cnt > 0)
-        {
-            fprintf(stderr, "sic: ");
-            if(g_warning_cnt > 0)
-                fprintf(stderr, "%d warning(s), and ", g_warning_cnt);
-            fprintf(stderr, "%d error(s) generated. Compilation terminated.\n", g_error_cnt); 
-            exit(EXIT_FAILURE);
-        }
-        if(g_warning_cnt > 0)
-            fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
-
-        gen_ir();
+    if(g_compiler.debug_output & DEBUG_PARSER)
+    {
+        print_module(&g_compiler.top_module);
+        printf("\n\n");
     }
+#endif
+    analyze_module(&g_compiler.top_module);
+
+    if(g_error_cnt > 0)
+    {
+        fprintf(stderr, "sic: ");
+        if(g_warning_cnt > 0)
+            fprintf(stderr, "%d warning(s), and ", g_warning_cnt);
+        fprintf(stderr, "%d error(s) generated. Compilation terminated.\n", g_error_cnt); 
+        exit(EXIT_FAILURE);
+    }
+    if(g_warning_cnt > 0)
+        fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
+
+    gen_ir();
 
     if(!g_compiler.emit_link)
         exit(EXIT_SUCCESS);
@@ -82,7 +79,16 @@ int main(int argc, char* argv[])
     da_append(&cmd, "-dynamic-linker");
     da_append(&cmd, "/lib64/ld-linux-x86-64.so.2");
     da_append(&cmd, "-o");
-    da_append(&cmd, g_compiler.link_name ? g_compiler.link_name : "a.out");
+
+    scratch_clear();
+    if(g_compiler.out_dir)
+    {
+        scratch_append(g_compiler.out_dir);
+        if(g_scratch.data[g_scratch.len - 1] != '/')
+            scratch_appendc('/');
+    }
+    scratch_append(g_compiler.out_name);
+    da_append(&cmd, scratch_string());
 
     // CRT Object files
     da_append(&cmd, str_format("%s/Scrt1.o", crt_path));
@@ -112,24 +118,21 @@ int main(int argc, char* argv[])
 
 void run_subprocess(const char** cmd)
 {
-    // if(g_compiler.show_invoked)
-    // {
-    //     for(const char** c = cmd; *c != NULL; ++c)
-    //         printf("%s ", *c);
-    //     putc('\n', stdout);
-    // }
-    if(fork() == 0)
+    pid_t id = fork();
+    if(id == 0)
     {
         execvp(cmd[0], (char**)cmd);
         sic_diagnostic(DIAG_ERROR, "Failed to execute subprocess \'%s\': %s\n", cmd[0], strerror(errno));
         _exit(EXIT_FAILURE);
     }
 
+    pid_t dead;
     int status;
-    while(wait(&status) > 0)
-        ;
-    if(status != EXIT_SUCCESS)
-        exit(status);
+    while((dead = wait(&status)) != id)
+    {
+        if(dead == (pid_t)-1)
+            sic_fatal_error("Fatal error occurred when running subprocess.");
+    }
 }
 
 static void resolve_dependency_paths(char** crt, char** gcclib)
