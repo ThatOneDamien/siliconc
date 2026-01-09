@@ -306,13 +306,9 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
     case STMT_FOR:
         emit_for(c, stmt);
         return;
-    case STMT_GOTO:
-        SIC_TODO();
     case STMT_IF: 
         emit_if(c, stmt);
         return;
-    case STMT_LABEL:
-        SIC_TODO();
     case STMT_MULTI_DECL: {
         const ObjVarDA decls = stmt->stmt.multi_decl;
         for(uint32_t i = 0; i < decls.size; ++i)
@@ -375,47 +371,48 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
     }
 }
 
-static void emit_for(CodegenContext* c, ASTStmt* stmt)
+static void emit_for(UNUSED CodegenContext* c, UNUSED ASTStmt* stmt)
 {
-    ASTFor* for_stmt = &stmt->stmt.for_;
-
-    LLVMBasicBlockRef exit_block = create_basic_block(".for_exit");
-    LLVMBasicBlockRef body_block = create_basic_block(".for_body");
-    LLVMBasicBlockRef cond_block = body_block;
-    LLVMBasicBlockRef loop_block;
-    if(!stmt_empty(for_stmt->init_stmt))
-        emit_stmt(c, for_stmt->init_stmt);
-
-    if(for_stmt->cond_expr != NULL)
-    {
-        cond_block = append_new_basic_block(c, ".for_cond");
-        GenValue cond = emit_expr(c, for_stmt->cond_expr);
-        load_rvalue(c, &cond);
-        LLVMBuildCondBr(c->builder, cond.value, body_block, exit_block);
-    }
-    else
-        emit_br(c, body_block);
-
-    loop_block = for_stmt->loop_expr == NULL ? cond_block : create_basic_block(".for_loop");
-    
-    LLVMBasicBlockRef prev_break = c->break_bb;
-    LLVMBasicBlockRef prev_cont = c->continue_bb;
-    c->break_bb = exit_block;
-    c->continue_bb = loop_block;
-    append_old_basic_block(c, body_block);
-    emit_stmt(c, for_stmt->body);
-    emit_br(c, loop_block);
-    c->break_bb = prev_break;
-    c->continue_bb = prev_cont;
-    
-    if(for_stmt->loop_expr != NULL)
-    {
-        append_old_basic_block(c, loop_block); 
-        emit_expr(c, for_stmt->loop_expr);
-    }
-
-    emit_br(c, cond_block);
-    append_old_basic_block(c, exit_block);
+    SIC_TODO();
+//     ASTFor* for_stmt = &stmt->stmt.for_;
+//
+//     LLVMBasicBlockRef exit_block = create_basic_block(".for_exit");
+//     LLVMBasicBlockRef body_block = create_basic_block(".for_body");
+//     LLVMBasicBlockRef cond_block = body_block;
+//     LLVMBasicBlockRef loop_block;
+//     if(!stmt_empty(for_stmt->init_stmt))
+//         emit_stmt(c, for_stmt->init_stmt);
+//
+//     if(for_stmt->cond_expr != NULL)
+//     {
+//         cond_block = append_new_basic_block(c, ".for_cond");
+//         GenValue cond = emit_expr(c, for_stmt->cond_expr);
+//         load_rvalue(c, &cond);
+//         LLVMBuildCondBr(c->builder, cond.value, body_block, exit_block);
+//     }
+//     else
+//         emit_br(c, body_block);
+//
+//     loop_block = for_stmt->loop_expr == NULL ? cond_block : create_basic_block(".for_loop");
+//     
+//     LLVMBasicBlockRef prev_break = c->break_bb;
+//     LLVMBasicBlockRef prev_cont = c->continue_bb;
+//     c->break_bb = exit_block;
+//     c->continue_bb = loop_block;
+//     append_old_basic_block(c, body_block);
+//     emit_stmt(c, for_stmt->body);
+//     emit_br(c, loop_block);
+//     c->break_bb = prev_break;
+//     c->continue_bb = prev_cont;
+//     
+//     if(for_stmt->loop_expr != NULL)
+//     {
+//         append_old_basic_block(c, loop_block); 
+//         emit_expr(c, for_stmt->loop_expr);
+//     }
+//
+//     emit_br(c, cond_block);
+//     append_old_basic_block(c, exit_block);
 }
 
 static void emit_if(CodegenContext* c, ASTStmt* stmt)
@@ -589,6 +586,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         emit_incdec(c, expr, &inner, &result, true);
         return result;
     }
+    case EXPR_RANGE:
+        SIC_TODO();
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
     case EXPR_TERNARY:

@@ -107,20 +107,13 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_expr_at_depth(stmt->stmt.expr, depth + 1, NULL);
         return;
     case STMT_FOR:
-        print_stmt_at_depth(stmt->stmt.for_.init_stmt, depth + 1, "init");
-        print_expr_at_depth(stmt->stmt.for_.cond_expr, depth + 1, "cond");
-        print_expr_at_depth(stmt->stmt.for_.loop_expr, depth + 1, "loop");
-        print_stmt_at_depth(stmt->stmt.for_.body, depth + 1, "body");
-        return;
-    case STMT_GOTO:
         SIC_TODO();
+        return;
     case STMT_IF:
         print_expr_at_depth(stmt->stmt.if_.cond, depth + 1, "cond");
         print_stmt_at_depth(stmt->stmt.if_.then_stmt, depth + 1, "then");
         print_stmt_at_depth(stmt->stmt.if_.else_stmt, depth + 1, "else");
         return;
-    case STMT_LABEL:
-        SIC_TODO();
     case STMT_MULTI_DECL: {
         const ObjVarDA decls = stmt->stmt.multi_decl;
         for(uint32_t i = 0; i < decls.size; ++i)
@@ -291,9 +284,7 @@ static const char* s_stmt_type_strs[] = {
     [STMT_CONTINUE]    = "Continue Statement",
     [STMT_EXPR_STMT]   = "Expression Statement",
     [STMT_FOR]         = "For Loop",
-    [STMT_GOTO]        = "Goto Statement",
     [STMT_IF]          = "If Statement",
-    [STMT_LABEL]       = "Label",
     [STMT_MULTI_DECL]  = "Multi Declaration",
     [STMT_NOP]         = "Nop",
     [STMT_RETURN]      = "Return Statement",

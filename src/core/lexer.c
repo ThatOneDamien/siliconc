@@ -90,16 +90,16 @@ void lexer_advance(Lexer* l)
     if(t->kind == TOKEN_EOF)
         return;
 
-    if(at_eof(l))
-    {
-        t->kind = TOKEN_EOF;
-        t->loc.len = 0;
-        return;
-    }
-
     t->loc.col_num  = get_col(l);
     t->loc.line_num = l->cur_line;
     t->start        = l->cur_pos;
+
+    if(at_eof(l))
+    {
+        t->kind = TOKEN_EOF;
+        t->loc.len = 1;
+        return;
+    }
 
     char c = peek(l);
     next(l);
@@ -336,6 +336,7 @@ void lexer_advance(Lexer* l)
         t->kind = TOKEN_INVALID;
         return;
     }
+
     t->loc.len = get_col(l) - t->loc.col_num;
 }
 
@@ -685,7 +686,7 @@ static inline bool extract_num_suffix(Lexer* l, bool* is_float)
     }
 }
 
-static inline bool escaped_char(const char** pos, uint32_t* value)
+static bool escaped_char(const char** pos, uint32_t* value)
 {
     // TODO: Make this have specific errors for each issue instead of
     // just saying 'invalid escape sequence'.
@@ -792,6 +793,7 @@ static inline bool escaped_char(const char** pos, uint32_t* value)
         *value = 0x3F;
         break;
     default:
+        success = false;
         break;
     }
 
@@ -882,7 +884,7 @@ static inline void lexer_error_at_current(Lexer* l, Token* t, const char* msg, .
     loc.col_num  = get_col(l);
     loc.line_num = l->cur_line;
     loc.len = 1;
-    sic_diagnostic_atv(loc, DIAG_ERROR, msg, va);
+    sic_diagnostic_atv(DIAG_ERROR, loc, msg, va);
     va_end(va);
     t->kind = TOKEN_INVALID;
 }
@@ -892,7 +894,7 @@ static inline void lexer_error(Lexer* l, Token* t, const char* msg, ...)
     va_list va;
     va_start(va, msg);
     t->loc.len = get_col(l) - t->loc.col_num;
-    sic_diagnostic_atv(t->loc, DIAG_ERROR, msg, va);
+    sic_diagnostic_atv(DIAG_ERROR, t->loc, msg, va);
     va_end(va);
     t->kind = TOKEN_INVALID;
 }

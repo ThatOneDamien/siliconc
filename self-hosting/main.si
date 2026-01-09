@@ -1,19 +1,39 @@
 fn printf(char* fmt, ...);
 
-#assert(#sizeof(Temp) == 16, "This is a test!")
-
-struct Temp
-{
-    union
-    {
-        int tmp;
-        ulong other;
-    }
-    int a;
-}
-
 fn main(int argc, char** argv) -> int exit_code
 {
-    printf("%lu %lu\n", #sizeof(Temp), #alignof(Temp));
+    int a;
+    if(something) {
+        int a;
+        a + 1;
+    }
+    if(something) do_something;
+    if(something)
+        do_something;
+    if(something)
+    {
+        do_something;
+    }
+
+    if something { do_something; }
+    if something {
+        do_something;
+    }
+    if (something) {
+
+    }
+
+    loop {
+
+    }
+
+    for(int i = 0; i < len; ++i)
+    {
+
+    }
+
+    for int i = 0; i < len; ++i {
+
+    }
     return 0;
 }

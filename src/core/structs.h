@@ -57,6 +57,7 @@ typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct InitListEntry    InitListEntry;
 typedef struct InitList         InitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprRange     ASTExprRange;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprUnary     ASTExprUnary;
@@ -358,6 +359,13 @@ struct ASTExprMAccess
     uint32_t member_idx;
 };
 
+struct ASTExprRange
+{
+    ASTExpr* from;
+    ASTExpr* to;
+    bool     inclusive;
+};
+
 struct ASTExprTernary
 {
     ASTExpr* cond_expr;
@@ -401,6 +409,7 @@ struct ASTExpr
         Object*         ident;
         InitList        init_list;
         ASTExprMAccess  member_access;
+        ASTExprRange    range;
         ModulePath      pre_sema_ident;
         ASTExprTernary  ternary;
         ASTExprUnary    unary;
@@ -426,9 +435,8 @@ struct ASTCase
 
 struct ASTFor
 {
-    ASTStmt* init_stmt;
-    ASTExpr* cond_expr;
-    ASTExpr* loop_expr;
+    ObjVar*  loop_var;
+    ASTExpr* collection;
     ASTStmt* body;
 };
 

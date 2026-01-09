@@ -8,27 +8,20 @@
 int g_error_cnt = 0;
 int g_warning_cnt = 0;
 
-static const char* DIAG_COLOR[] = {
+static const char* const DIAG_COLOR[] = {
     [DIAG_NOTE]    = "34",
     [DIAG_WARNING] = "95",
     [DIAG_ERROR]   = "91",
     [DIAG_FATAL]   = "31",
 };
 
-static const char* DIAG_NAME[] = {
+static const char* const DIAG_NAME[] = {
     [DIAG_NOTE]    = "note",
     [DIAG_WARNING] = "warning",
     [DIAG_ERROR]   = "error",
     [DIAG_FATAL]   = "fatal error",
 };
 
-void sic_diagnostic(DiagnosticType diag, const char* message, ...)
-{
-    va_list va;
-    va_start(va, message);
-    sic_diagnosticv(diag, message, va);
-    va_end(va);
-}
 
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va)
 {
@@ -44,15 +37,8 @@ void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va)
         g_warning_cnt++;
 }
 
-void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* message, ...)
-{
-    va_list va;
-    va_start(va, message);
-    sic_diagnostic_atv(loc, diag, message, va);
-    va_end(va);
-}
 
-void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message, va_list va)
+void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message, va_list va)
 {
     SIC_ASSERT(message != NULL);
     if(g_compiler.werror && diag == DIAG_WARNING)
@@ -103,8 +89,62 @@ void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message,
         g_warning_cnt++;
 }
 
+void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, va_list va)
+{
+    SIC_ASSERT(message != NULL);
+    if(g_compiler.werror && diag == DIAG_WARNING)
+        diag = DIAG_ERROR;
+    SourceFile* file = file_from_id(loc.file);
+    const char* line_start = file->src;
+    const char* after_loc;
+    uint32_t cnt = 1;
+    uint32_t before_len = 0;
+    uint32_t after_len = 0;
+
+    while(cnt < loc.line_num)
+    {
+        if(*line_start == '\n')
+            cnt++;
+        line_start++;
+    }
+
+    before_len = loc.col_num + loc.len - 1;
+    after_loc = line_start + before_len;
+
+    while(after_loc[after_len] != '\0' &&
+          after_loc[after_len] != '\n')
+        after_len++;
+
+
+    fprintf(stderr, "%s:%u:%u: \033[%sm%s:\033[0m ",
+            file->rel_path, loc.line_num, loc.col_num, DIAG_COLOR[diag], DIAG_NAME[diag]);
+    
+    vfprintf(stderr, message, va);
+
+    fprintf(stderr, "\n%4u | %.*s %.*s\n     | ", 
+            loc.line_num, 
+            before_len, line_start,
+            after_len, after_loc);
+
+    for(uint32_t i = 0; i < before_len; ++i)
+        putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
+    fprintf(stderr, "\033[34m^\033[0m\n");
+
+    if(under != NULL)
+    {
+        fprintf(stderr, "     | ");
+        for(uint32_t i = 0; i < before_len; ++i)
+            putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
+        fprintf(stderr, "\033[34m%s\033[0m\n", under);
+    }
+    if(diag == DIAG_ERROR)
+        g_error_cnt++;
+    else if(diag == DIAG_WARNING)
+        g_warning_cnt++;
+}
+
 void sic_error_redef(Object* redef, Object* orig)
 {
-    sic_diagnostic_at(redef->loc, DIAG_ERROR, "Redefinition of symbol \'%s\'.", redef->symbol);
-    sic_diagnostic_at(orig->loc, DIAG_NOTE, "Previous definition here.");
+    sic_diagnostic_at(DIAG_ERROR, redef->loc, "Redefinition of symbol \'%s\'.", redef->symbol);
+    sic_diagnostic_at(DIAG_NOTE, orig->loc, "Previous definition here.");
 }

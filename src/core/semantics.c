@@ -85,7 +85,7 @@ bool analyze_function(ObjFunc* func)
         if(func->signature.ret_type.type->visibility < func->header.visibility)
         {
             sic_error_at(func->signature.ret_type.loc, "Return type is marked private, but parent function is marked public.");
-            sic_diagnostic_at(func->header.loc, DIAG_NOTE, "From function definition here.");
+            sic_diagnostic_at(DIAG_NOTE, func->header.loc, "From function definition here.");
             success = false;
         }
     }
@@ -200,8 +200,8 @@ bool resolve_import(ObjModule* module, ObjImport* import)
                 Object* old = hashmap_get(&module->module_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_diagnostic_at(import->header.loc, DIAG_ERROR, "Module with name \'%s\' already exists.", entry->key);
-                    sic_diagnostic_at(old->loc, DIAG_NOTE, "Previous definition here.");
+                    sic_diagnostic_at(DIAG_ERROR, import->header.loc, "Module with name \'%s\' already exists.", entry->key);
+                    sic_diagnostic_at(DIAG_NOTE, old->loc, "Previous definition here.");
                     import->header.kind = OBJ_INVALID;
                     return false;
                 }
@@ -407,13 +407,9 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_FOR:
         analyze_for(stmt);
         return;
-    case STMT_GOTO:
-        SIC_TODO();
     case STMT_IF:
         analyze_if(stmt);
         return;
-    case STMT_LABEL:
-        SIC_TODO();
     case STMT_MULTI_DECL: {
         const ObjVarDA decl_list = stmt->stmt.multi_decl;
         for(uint32_t i = 0; i < decl_list.size; ++i)
@@ -441,6 +437,7 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
         return;
     case STMT_CT_ASSERT:
         analyze_ct_assert(stmt);
+        stmt->kind = STMT_NOP;
         return;
     }
     SIC_UNREACHABLE();
@@ -474,12 +471,9 @@ static void analyze_for(ASTStmt* stmt)
 {
     ASTFor* for_stmt = &stmt->stmt.for_;
     uint32_t scope = push_scope();
-    if(for_stmt->init_stmt != NULL)
-        analyze_stmt(for_stmt->init_stmt, false);
-    if(for_stmt->cond_expr != NULL)
-        implicit_cast(&for_stmt->cond_expr, g_type_bool);
-    if(for_stmt->loop_expr != NULL)
-        analyze_expr(for_stmt->loop_expr);
+    analyze_declaration(for_stmt->loop_var);
+    push_obj(&for_stmt->loop_var->header);
+    analyze_expr(for_stmt->collection);
 
     BlockContext context = g_sema->block_context;
     g_sema->block_context |= BLOCK_LOOP;
@@ -503,14 +497,14 @@ static void analyze_if(ASTStmt* stmt)
     {
         if(if_stmt->cond->expr.constant.val.i)
         {
-            sic_diagnostic_at(if_stmt->cond->loc, DIAG_WARNING, 
+            sic_diagnostic_at(DIAG_WARNING, if_stmt->cond->loc,
                               "Condition always evaluates to true, consider "
                               "changing this to a #if statement or removing it.");
             *stmt = *if_stmt->then_stmt;
         }
         else
         {
-            sic_diagnostic_at(if_stmt->cond->loc, DIAG_WARNING, 
+            sic_diagnostic_at(DIAG_WARNING, if_stmt->cond->loc,
                               "Condition always evaluates to false, consider "
                               "changing this to a #if statement or removing it.");
             if(if_stmt->else_stmt != NULL)
@@ -576,7 +570,7 @@ static void analyze_switch(ASTStmt* stmt)
                 if(other->expr->expr.constant.val.i == cas->expr->expr.constant.val.i)
                 {
                     sic_error_at(cas->expr->loc, "Duplicate case for value %lu.", cas->expr->expr.constant.val.i);
-                    sic_diagnostic_at(other->expr->loc, DIAG_NOTE, "Previous case statement here.");
+                    sic_diagnostic_at(DIAG_NOTE, other->expr->loc, "Previous case statement here.");
                     goto CASE_BODY;
                 }
             }
@@ -609,7 +603,7 @@ static void analyze_while(ASTStmt* stmt)
     if(while_stmt->cond->kind == EXPR_CONSTANT &&
        !while_stmt->cond->expr.constant.val.i)
     {
-        sic_diagnostic_at(while_stmt->cond->loc, DIAG_WARNING, 
+        sic_diagnostic_at(DIAG_WARNING, while_stmt->cond->loc,
                           "Condition always evaluates to false, consider "
                           "removing this.");
         stmt->kind = STMT_NOP;
@@ -638,7 +632,7 @@ static void analyze_ct_assert(ASTStmt* stmt)
     }
     if(!assert_->cond->expr.constant.val.i)
     {
-        sic_diagnostic(DIAG_ERROR, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.val.str);
+        sic_error_at(stmt->loc, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.val.str);
     }
 }
 

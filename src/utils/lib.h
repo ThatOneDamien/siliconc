@@ -76,20 +76,44 @@ void   global_arenas_init(void);
 extern int g_error_cnt;
 extern int g_warning_cnt;
 
-PRINTF_FMT(2, 3)
-void sic_diagnostic(DiagnosticType diag, const char* message, ...);
-PRINTF_FMT(3, 4)
-void sic_diagnostic_at(SourceLoc loc, DiagnosticType diag, const char* message, ...);
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va);
-void sic_diagnostic_atv(SourceLoc loc, DiagnosticType diag, const char* message, va_list va);
+void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message, va_list va);
+void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, va_list va);
 void sic_error_redef(Object* redef, Object* orig);
+
+PRINTF_FMT(2, 3)
+static inline void sic_diagnostic(DiagnosticType diag, const char* message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnosticv(diag, message, va);
+    va_end(va);
+}
+
+PRINTF_FMT(3, 4)
+static inline void sic_diagnostic_at(DiagnosticType diag, SourceLoc loc, const char* message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_atv(diag, loc, message, va);
+    va_end(va);
+}
+
+PRINTF_FMT(4, 5)
+static inline void sic_diagnostic_after(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_afterv(diag, loc, under, message, va);
+    va_end(va);
+}
 
 PRINTF_FMT(2, 3)
 static inline void sic_error_at(SourceLoc loc, const char* message, ...)
 {
     va_list va;
     va_start(va, message);
-    sic_diagnostic_atv(loc, DIAG_ERROR, message, va);
+    sic_diagnostic_atv(DIAG_ERROR, loc, message, va);
     va_end(va);
 }
 

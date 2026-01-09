@@ -68,9 +68,10 @@ static inline void const_int_correct(ASTExpr* expr)
 {
     SIC_ASSERT(expr->kind == EXPR_CONSTANT &&
                expr->expr.constant.kind == CONSTANT_INTEGER);
-    BitSize shift = expr->type->builtin.bit_size;
+    Type* ctype = expr->type->canonical;
+    BitSize shift = ctype->builtin.bit_size;
     uint64_t val = expr->expr.constant.val.i;
-    if(type_is_signed(expr->type))
+    if(type_is_signed(ctype))
         expr->expr.constant.val.i = (int64_t)(val << shift) >> shift;
     else
         expr->expr.constant.val.i = (val << shift) >> shift;
@@ -120,7 +121,7 @@ static inline void check_cyclic_def(Object* other, SourceLoc loc)
     if(g_sema->cyclic_def == other)
         g_sema->cyclic_def = NULL;
     else if(g_sema->cyclic_def != NULL)
-        sic_diagnostic_at(loc, DIAG_NOTE, "From declaration here.");
+        sic_diagnostic_at(DIAG_NOTE, loc, "From declaration here.");
     other->kind = OBJ_INVALID;
     other->status = STATUS_RESOLVED;
 }
