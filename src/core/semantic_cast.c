@@ -202,8 +202,8 @@ static bool rule_size_change(CastParams* params)
 
     if(params->to_kind == TYPE_CHAR && params->from_kind != TYPE_CHAR)
     {
-        CAST_ERROR("Casting from %s to char requires explicit cast to "
-                   "avoid ambiguity. Use byte or ubyte for single byte integer",
+        CAST_ERROR("Casting from %s to char requires explicit cast."
+                   "Use byte or ubyte for single byte integer.",
                    type_to_string(params->from));
         return false;
     }
@@ -585,6 +585,8 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_VOID]           = CAST_GROUP_VOID + 1,
     [TYPE_BOOL]           = CAST_GROUP_BOOL + 1,
     [TYPE_CHAR]           = CAST_GROUP_INT + 1,
+    [TYPE_CHAR16]         = CAST_GROUP_INT + 1,
+    [TYPE_CHAR32]         = CAST_GROUP_INT + 1,
     [TYPE_BYTE]           = CAST_GROUP_INT + 1,
     [TYPE_UBYTE]          = CAST_GROUP_INT + 1,
     [TYPE_SHORT]          = CAST_GROUP_INT + 1,

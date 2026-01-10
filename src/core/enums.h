@@ -347,6 +347,8 @@ typedef enum : uint8_t
     TOKEN_TYPENAME_START = TOKEN_VOID,
     TOKEN_BOOL,
     TOKEN_CHAR,
+    TOKEN_CHAR16,
+    TOKEN_CHAR32,
     TOKEN_BYTE,
     TOKEN_UBYTE,
     TOKEN_SHORT,
@@ -390,6 +392,11 @@ typedef enum : uint8_t
 
     TYPE_CHAR,
     TYPE_INTEGER_START  = TYPE_CHAR,
+    TYPE_CHAR_START     = TYPE_CHAR,
+    TYPE_CHAR16,
+    TYPE_CHAR32,
+    TYPE_CHAR_END       = TYPE_CHAR32,
+
     TYPE_BYTE,
     TYPE_UBYTE,
     TYPE_SHORT,
@@ -457,6 +464,8 @@ typedef enum : uint8_t
 #define INT_TYPES             \
             TYPE_BOOL:        \
             case TYPE_CHAR:   \
+            case TYPE_CHAR16: \
+            case TYPE_CHAR32: \
             case TYPE_BYTE:   \
             case TYPE_UBYTE:  \
             case TYPE_SHORT:  \

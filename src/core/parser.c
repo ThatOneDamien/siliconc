@@ -1453,10 +1453,22 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l)
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
-    // TODO: Add checks for char16 and char32 once added.
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    expr->expr.constant.val.i = *(uint32_t*)peek(l)->chr.val; // Hack for now
-    expr->type = g_type_char;
+    expr->expr.constant.val.i = peek(l)->chr.val; // Hack for now
+    switch(peek(l)->chr.size)
+    {
+    case 1:
+        expr->type = g_type_char;
+        break;
+    case 2:
+        expr->type = g_type_char16;
+        break;
+    case 4:
+        expr->type = g_type_char32;
+        break;
+    default:
+        SIC_UNREACHABLE();
+    }
     advance(l);
     return expr;
 }

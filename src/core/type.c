@@ -46,6 +46,8 @@ static Type s_voidptr;
 
 BUILTIN_TYPE_DEF(s_bool  , TYPE_BOOL  , 1);
 BUILTIN_TYPE_DEF(s_char  , TYPE_CHAR  , 1);
+BUILTIN_TYPE_DEF(s_char16, TYPE_CHAR16, 2);
+BUILTIN_TYPE_DEF(s_char32, TYPE_CHAR32, 4);
 BUILTIN_TYPE_DEF(s_byte  , TYPE_BYTE  , 1);
 BUILTIN_TYPE_DEF(s_ubyte , TYPE_UBYTE , 1);
 BUILTIN_TYPE_DEF(s_short , TYPE_SHORT , 2);
@@ -75,6 +77,8 @@ Type* const g_type_voidptr  = &s_voidptr;
 Type* const g_type_void     = &s_void;
 Type* const g_type_bool     = &s_bool;
 Type* const g_type_char     = &s_char;
+Type* const g_type_char16   = &s_char16;
+Type* const g_type_char32   = &s_char32;
 Type* const g_type_byte     = &s_byte;
 Type* const g_type_ubyte    = &s_ubyte;
 Type* const g_type_short    = &s_short;
@@ -97,6 +101,8 @@ static Type* builtin_type_lookup[] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
     [TOKEN_BOOL    - TOKEN_TYPENAME_START] = &s_bool,
     [TOKEN_CHAR    - TOKEN_TYPENAME_START] = &s_char,
+    [TOKEN_CHAR16  - TOKEN_TYPENAME_START] = &s_char16,
+    [TOKEN_CHAR32  - TOKEN_TYPENAME_START] = &s_char32,
     [TOKEN_BYTE    - TOKEN_TYPENAME_START] = &s_byte,
     [TOKEN_UBYTE   - TOKEN_TYPENAME_START] = &s_ubyte,
     [TOKEN_SHORT   - TOKEN_TYPENAME_START] = &s_short,

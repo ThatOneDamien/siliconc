@@ -135,8 +135,8 @@ struct Token
 
         struct
         {
-            char    val[4];
-            size_t   width;
+            uint32_t val;
+            ByteSize size;
         } chr;
 
         Symbol sym;

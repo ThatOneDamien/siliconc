@@ -21,20 +21,22 @@ typedef struct
 static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
 static inline void     extract_ct_identifier(Lexer* l, Token* t);
-static inline void     extract_char_literal(Lexer* l, Token* t);
-static inline void     extract_string_literal(Lexer* l, Token* t);
+static inline void     extract_char_literal(Lexer* l, Token* t, ByteSize literal_size);
+static inline void     extract_string_literal(Lexer* l, Token* t, ByteSize literal_size);
 static inline void     extract_raw_string_literal(Lexer* l, Token* t);
 static inline void     extract_base_2(Lexer* l, Token* t);
 static inline void     extract_base_8(Lexer* l, Token* t);
 static inline void     extract_base_10(Lexer* l, Token* t);
 static inline void     extract_base_16(Lexer* l, Token* t);
 static inline bool     extract_num_suffix(Lexer* l, bool* is_float);
-static inline bool     escaped_char(const char** pos, uint32_t* value);
-static inline size_t   unicode_to_utf8(uint32_t codepoint, char* utf8_buf);
+static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, ByteSize literal_size);
+static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint);
+static inline ByteSize unicode_to_utf8(uint32_t* value);
 static inline bool     consume(Lexer* l, char c);
 static inline char     next_nl(Lexer* l);
 static inline Token*   next_token_loc(Lexer* l);
 static inline uint32_t get_col(Lexer* l);
+static inline FileId   lexer_file_id(Lexer* l);
 static inline bool     c_is_hex(char c);
 
 PRINTF_FMT(3, 4)
@@ -227,10 +229,12 @@ void lexer_advance(Lexer* l)
             t->kind = TOKEN_SUB;
         break;
     case '\'':
-        extract_char_literal(l, t);
+        // TODO: Change this to accept prefix.
+        extract_char_literal(l, t, 1);
         return;
     case '\"':
-        extract_string_literal(l, t);
+        // TODO: Change this to accept prefix.
+        extract_string_literal(l, t, 1);
         break;
     case '`':
         extract_raw_string_literal(l, t);
@@ -332,7 +336,8 @@ void lexer_advance(Lexer* l)
         return;
     default:
         t->loc.len = 1;
-        sic_error_at(t->loc, "Invalid/unknown character.");
+        sic_error_at(t->loc, "Invalid/unknown character. For now, siliconc does not support "
+                             "unicode charcters anywhere except in char/string literals.");
         t->kind = TOKEN_INVALID;
         return;
     }
@@ -411,84 +416,67 @@ static inline void extract_ct_identifier(Lexer* l, Token* t)
     }
 }
 
-static inline void extract_char_literal(Lexer* l, Token* t)
+static inline void extract_char_literal(Lexer* l, Token* t, ByteSize literal_size)
 {
-    if(peek(l) == '\\')
-    {
-        next(l);
-        // int escape_len = escaped_char(&l->cur_pos, t->chr.val);
-        // if(escape_len < 0)
-        // {
-        //     lexer_error_at_current(l, t, "Invalid escape sequence.");
-        //     return;
-        // }
-        // t->chr.width = escape_len;
-    }
-    else
-    {
-        t->chr.val[0] = peek(l);
-        t->chr.width = 1;
-        next(l);
-    }
+    ByteSize len = next_char_in_literal(l, &t->chr.val, 1);
+    if(len == 0)
+        t->kind = TOKEN_INVALID;
 
-    if(peek(l) != '\'')
+    char c;
+    bool valid = peek(l) == '\'';
+    while((c = peek(l)) != '\'')
     {
-        lexer_error_at_current(l, t, "Multi-character char literal, or just missing \'.");
+        if(c == '\n' || c == '\0')
+        {
+            lexer_error(l, t, "Encountered end of the line while lexing "
+                              "char literal. Did you forget a '?");
+            return;
+        }
+        next(l);
+    }
+    next(l);
+
+    if(!valid)
+    {
+        lexer_error(l, t, "Multi-character char literals are not allowed.");
+        return;
+    }
+    if(len > literal_size)
+    {
+        lexer_error(l, t, "Value of char literal cannot fit in its containing "
+                          "type. For char16 and char32 add prefix u/U respectively.");
         return;
     }
     t->kind = TOKEN_CHAR_LITERAL;
-    next(l);
 }
 
-static inline void extract_string_literal(Lexer* l, Token* t)
+static inline void extract_string_literal(Lexer* l, Token* t, ByteSize literal_size)
 {
     StringBuilder sb;
     da_init(&sb, 256);
     bool errored = false;
     char c;
-    SourceLoc escape_loc;
-    escape_loc.file = t->loc.file;
-    escape_loc.len = 2;
-    escape_loc.line_num = t->loc.line_num;
     while((c = peek(l)) != '\"')
     {
-        if(c == '\\')
+        if(c == '\n' || c == '\0')
         {
-            c = *(++l->cur_pos);
-            if(!errored)
-            {
-                uint32_t value;
-                if(!escaped_char(&l->cur_pos, &value))
-                {
-                    escape_loc.col_num = (uintptr_t)l->cur_pos - (uintptr_t)l->line_start + 1;
-                    sic_error_at(escape_loc, "Invalid escape sequence.");
-                    errored = true;
-                    t->kind = TOKEN_INVALID;
-                    continue;
-                }
-
-                char buf[4];
-                size_t len = unicode_to_utf8(value, buf);
-                da_append_arr(&sb, buf, len);
-                continue;
-            }
-        }
-        if(c == '\n')
-        {
-            lexer_error(l, t, "Encountered newline character while "
-                              "lexing literal. Did you forget a '\"'?");
-            return;
-        }
-        if(c == '\0')
-        {
-            lexer_error(l, t, "Encountered end of file while lexing "
+            lexer_error(l, t, "Encountered end of the line while lexing "
                               "string literal. Did you forget a '\"'?");
             return;
         }
 
+        uint32_t value;
+        ByteSize len = next_char_in_literal(l, &value, literal_size);
+        if(!errored && len == 0)
+        {
+            errored = true;
+            t->kind = TOKEN_INVALID;
+            continue;
+        }
+
+
         if(!errored)
-            da_append(&sb, c);
-        next(l);
+            da_append_arr(&sb, (char*)&value, len);
     }
 
     next(l);
@@ -512,8 +500,8 @@ static inline void extract_raw_string_literal(Lexer* l, Token* t)
     {
         if(c == '\0')
         {
-            lexer_error(l, t, "Encountered end of file while lexing "
-                              "string literal. Did you forget a '\"'?");
+            lexer_error(l, t, "Encountered end of file while lexing raw "
+                              "string literal. Did you forget a '`'?");
             return;
         }
         da_append(&sb, c);
@@ -686,129 +674,221 @@ static inline bool extract_num_suffix(Lexer* l, bool* is_float)
     }
 }
 
-static bool escaped_char(const char** pos, uint32_t* value)
+static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, ByteSize literal_size)
 {
-    // TODO: Make this have specific errors for each issue instead of
-    // just saying 'invalid escape sequence'.
-    const char* p = *pos;
-    bool success = true;
-    switch(*(p++))
+    if(peek(l) == '\\')
     {
-    case 'a': // Audible Bell
-        *value = 0x07;
-        break;
-    case 'b': // Backspace
-        *value = 0x08;
-        break;
-    case 'e': // ANSI Escape Starting Byte
-        *value = 0x1B;
-        break;
-    case 'f': // Form Feed
-        *value = 0x0C;
-        break;
-    case 'n': // Line Feed/New Line
-        *value = 0x0A;
-        break;
-    case 'o': { // Arbitrary Octal Value
-        if(!c_is_octal(p[0]) || !c_is_octal(p[1]) || !c_is_octal(p[2]) ||
-           p[0] - '0' > 3)
+        const char* msg;
+        SourceLoc loc;
+        loc.file = lexer_file_id(l);
+        loc.col_num = get_col(l);
+        loc.line_num = l->cur_line;
+
+        next(l);
+        switch(*(l->cur_pos++))
         {
-            success = false;
+        case 'a': // Audible Bell
+            *value = 0x07;
+            return 1;
+        case 'b': // Backspace
+            *value = 0x08;
+            return 1;
+        case 'e': // ANSI Escape Starting Byte
+            *value = 0x1B;
+            return 1;
+        case 'f': // Form Feed
+            *value = 0x0C;
+            return 1;
+        case 'n': // Line Feed/New Line
+            *value = 0x0A;
+            return 1;
+        case 'o': { // Arbitrary Octal Value
+            msg = "'\\o' must be followed by exactly 3 octal digits(0-7).";
+            uint8_t d1 = peek(l) - '0';
+            if(d1 > 7) break;
+            next(l);
+            uint8_t d2 = peek(l) - '0';
+            if(d2 > 7) break;
+            next(l);
+            uint8_t d3 = peek(l) - '0';
+            if(d3 > 7) break;
+            next(l);
+            if(d1 > 3)
+            {
+                msg = "Value exceeds the maximum for one byte(0o377).";
+                break;
+            }
+
+            *value = (d1 << 6) | (d2 << 3) | d3;
+            return 1;
+        }
+        case 'r': // Carriage Return
+            *value = 0x0D;
+            return 1;
+        case 't': // Horizontal Tab
+            *value = 0x09;
+            return 1;
+        case 'u': {
+            uint32_t val = 0;
+            for(int i = 0; i < 4; ++i)
+            {
+                uint8_t v = g_hex_char_to_val[(size_t)peek(l)];
+                if(v == 0)
+                {
+                    msg = "'\\u' must be followed by exactly 4 hexadecimal digits(0-F).";
+                    break;
+                }
+                next(l);
+                val = (val << 4) | (v - 1);
+            }
+
+            *value = val;
+            goto UNICODE;
+        }
+        case 'U': {
+            uint32_t val = 0;
+            for(int i = 0; i < 8; ++i)
+            {
+                uint8_t v = g_hex_char_to_val[(size_t)peek(l)];
+                if(v == 0)
+                {
+                    msg = "'\\U' must be followed by exactly 8 hexadecimal digits(0-F).";
+                    break;
+                }
+                next(l);
+                val = (val << 4) | (v - 1);
+            }
+            if(val > 0x10FFFF)
+            {
+                msg = "Invalid universal character code.";
+                break;
+            }
+
+            *value = val;
+            goto UNICODE;
+        }
+        case 'v': // Vertical Tab
+            *value = 0x0B;
+            return 1;
+        case 'x': { // Arbitrary Hex Value
+            msg = "'\\x' must be followed by exactly 2 hexadecimal digits(0-F).";
+            uint8_t d1 = g_hex_char_to_val[(size_t)peek(l)];
+            if(d1 == 0) break;
+            next(l);
+            uint8_t d2 = g_hex_char_to_val[(size_t)peek(l)];
+            if(d1 == 0) break;
+            next(l);
+
+            *value = ((d1 - 1) << 4) | (d2 - 1);
+            return 1;
+        }
+        case '\"': // Double quote
+            *value = 0x22;
+            return 1;
+        case '\'': // Single quote
+            *value = 0x27;
+            return 1;
+        case '0': // Null character
+            *value = 0x00;
+            return 1;
+        case '\\':
+            *value = 0x5C;
+            return 1;
+        case '?':
+            *value = 0x3F;
+            return 1;
+        default:
+            msg = "Invalid escape sequence.";
             break;
         }
 
-        *value = ((p[0] - '0') << 6) | ((p[1] - '0') << 3) | (p[2] - '0');
-        p += 3;
-        break;
+        loc.len = get_col(l) - loc.col_num;
+        sic_error_at(loc, "%s", msg);
+        return 0;
     }
-    case 'r': // Carriage Return
-        *value = 0x0D;
-        break;
-    case 't': // Horizontal Tab
-        *value = 0x09;
-        break;
-    case 'u': {
-        uint32_t val = 0;
-        for(int i = 0; i < 4; ++i)
-        {
-            uint8_t v = g_hex_char_to_val[(uint8_t)p[i]];
-            if(v == 0)
-            {
-                success = false;
-                goto END;
-            }
-            val = (val << 4) | (v - 1);
-        }
+    else if(next_utf8(l, value) == 0)
+        return 0;
 
-        *value = val;
-        p += 4;
-        break;
-    }
-    case 'U': {
-        uint32_t val = 0;
-        for(int i = 0; i < 8; ++i)
-        {
-            uint8_t v = g_hex_char_to_val[(uint8_t)p[i]];
-            if(v == 0)
-            {
-                success = false;
-                goto END;
-            }
-            val = (val << 4) | (v - 1);
-        }
-
-        *value = val;
-        p += 8;
-        break;
-    }
-    case 'v': // Vertical Tab
-        *value = 0x0B;
-        break;
-    case 'x': { // Arbitrary Hex Value
-        if(!c_is_hex(p[0]) || !c_is_hex(p[1])) // Not a hex character
-        {
-            success = false;
-            break;
-        }
-
-        uint8_t hi = g_hex_char_to_val[(uint8_t)p[0]] - 1;
-        uint8_t lo = g_hex_char_to_val[(uint8_t)p[1]] - 1;
-        *value = (hi << 4) | lo;
-        p += 2;
-        break;
-    }
-    case '\"': // Double quote
-        *value = 0x22;
-        break;
-    case '\'': // Single quote
-        *value = 0x27;
-        break;
-    case '0': // Null character
-        *value = 0x00;
-        break;
-    case '\\':
-        *value = 0x5C;
-        break;
-    case '?':
-        *value = 0x3F;
-        break;
-    default:
-        success = false;
-        break;
-    }
-
-END:
-    *pos = p;
-    return success;
+UNICODE:
+    // If we are here, value is a unicode codepoint that
+    // now needs to be converted to the encoding specified
+    // by the literal width
+    if(literal_size == 1) return unicode_to_utf8(value);
+    SIC_TODO();
 }
 
-static inline size_t unicode_to_utf8(uint32_t codepoint, char* utf8_buf)
+static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint)
 {
-    if(codepoint <= 0x7F)
+    SourceLoc loc;
+    uint32_t point;
+    ByteSize len;
+    const uint8_t* const p = (uint8_t*)l->cur_pos;
+
+    if (p[0] < 0x80) 
     {
-        utf8_buf[0] = (char)codepoint;
-        return 1;
+        point = p[0];
+        len = 1;
     }
+    else if ((p[0] & 0xE0) == 0xC0) 
+    {
+        if ((p[1] & 0xC0) != 0x80) 
+            goto ERR;
+
+        point = ((p[0] & 0x1F) << 6) | 
+                (p[1] & 0x3F);
+
+        if (point < 0x80) goto ERR;
+        len = 2;
+    }
+    else if ((p[0] & 0xF0) == 0xE0) 
+    {
+        if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) 
+            goto ERR;
+
+        point = ((p[0] & 0x0F) << 12) |
+                ((p[1] & 0x3F) << 6) |
+                (p[2] & 0x3F);
+
+        if (point < 0x800) goto ERR;
+        if (point >= 0xD800 && point <= 0xDFFF) goto ERR;
+        len = 3;
+    }
+    else if ((p[0] & 0xF8) == 0xF0) 
+    {
+        if ((p[1] & 0xC0) != 0x80 ||
+            (p[2] & 0xC0) != 0x80 ||
+            (p[3] & 0xC0) != 0x80) goto ERR;
+
+        point = ((p[0] & 0x07) << 18) |
+                ((p[1] & 0x3F) << 12) |
+                ((p[2] & 0x3F) << 6) |
+                (p[3] & 0x3F);
+        if (point < 0x10000 || point > 0x10FFFF) goto ERR;
+        len = 4;
+    }
+    else
+        goto ERR;
+
+    *codepoint = point;
+    advance(l, len);
+    return len;
+
+ERR:
+    loc.file = lexer_file_id(l);
+    loc.col_num  = get_col(l);
+    loc.line_num = l->cur_line;
+    loc.len = 1;
+    next(l);
+    sic_error_at(loc, "Invalid utf-8 encoded character.");
+    return 0;
+}
+
+static inline ByteSize unicode_to_utf8(uint32_t* value)
+{
+    uint32_t codepoint = *value;
+    char* utf8_buf = (char*)value;
+    if(codepoint <= 0x7F)
+        return 1; // Do nothing
     if(codepoint <= 0x7FF)
     {
         utf8_buf[0] = 0xC0 | (codepoint >> 6);
@@ -822,17 +902,13 @@ static inline size_t unicode_to_utf8(uint32_t codepoint, char* utf8_buf)
         utf8_buf[2] = 0x80 | (codepoint & 0x3F);
         return 3;
     }
-    if(codepoint <= 0x10FFFF)
-    {
-        utf8_buf[0] = 0xF0 | (codepoint >> 18);
-        utf8_buf[1] = 0x80 | ((codepoint >> 12) & 0x3F);
-        utf8_buf[2] = 0x80 | ((codepoint >> 6) & 0x3F);
-        utf8_buf[3] = 0x80 | (codepoint & 0x3F);
-        return 4;
-    }
-    // TODO: ERROR HERE PROPERLY
-    sic_fatal_error("Bad unicode.");
-    return -1;
+
+    SIC_ASSERT(codepoint <= 0x10FFFF);
+    utf8_buf[0] = 0xF0 | (codepoint >> 18);
+    utf8_buf[1] = 0x80 | ((codepoint >> 12) & 0x3F);
+    utf8_buf[2] = 0x80 | ((codepoint >> 6) & 0x3F);
+    utf8_buf[3] = 0x80 | (codepoint & 0x3F);
+    return 4;
 }
 
 static inline bool consume(Lexer* l, char c)
@@ -870,6 +946,11 @@ static inline uint32_t get_col(Lexer* l)
     return (uintptr_t)l->cur_pos - (uintptr_t)l->line_start + 1;
 }
 
+static inline FileId lexer_file_id(Lexer* l)
+{
+    return l->la_buf.buf[0].loc.file;
+}
+
 static inline bool c_is_hex(char c)
 {
     return g_hex_char_to_val[(uint8_t)c] != 0;
@@ -880,7 +961,7 @@ static inline void lexer_error_at_current(Lexer* l, Token* t, const char* msg, .
     va_list va;
     va_start(va, msg);
     SourceLoc loc;
-    loc.file = l->la_buf.buf[0].loc.file;
+    loc.file = lexer_file_id(l);
     loc.col_num  = get_col(l);
     loc.line_num = l->cur_line;
     loc.len = 1;

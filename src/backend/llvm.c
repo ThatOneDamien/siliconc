@@ -1332,9 +1332,11 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_BYTE:
     case TYPE_UBYTE:
         return type->llvm_ref = LLVMInt8Type();
+    case TYPE_CHAR16:
     case TYPE_SHORT:
     case TYPE_USHORT:
         return type->llvm_ref = LLVMInt16Type();
+    case TYPE_CHAR32:
     case TYPE_INT:
     case TYPE_UINT:
         return type->llvm_ref = LLVMInt32Type();
@@ -1460,6 +1462,8 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
         lvalue->value = LLVMBuildTrunc(c->builder, lvalue->value, LLVMInt1Type(), "");
         return;
     case TYPE_CHAR:
+    case TYPE_CHAR16:
+    case TYPE_CHAR32:
     case TYPE_BYTE:
     case TYPE_UBYTE:
     case TYPE_SHORT:

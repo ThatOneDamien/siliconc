@@ -12,6 +12,8 @@ extern Type* const g_type_voidptr;
 extern Type* const g_type_void;
 extern Type* const g_type_bool;
 extern Type* const g_type_char;
+extern Type* const g_type_char16;
+extern Type* const g_type_char32;
 extern Type* const g_type_byte;
 extern Type* const g_type_ubyte;
 extern Type* const g_type_short;
@@ -172,6 +174,11 @@ static inline bool type_is_unsigned(Type* ty)
 {
     static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
     return type_is_integer(ty) && ((ty->kind & 1) == 1);
+}
+
+static inline bool type_is_char(Type* ty)
+{
+    return ty->kind >= TYPE_CHAR_START && ty->kind <= TYPE_CHAR_END;
 }
 
 static inline bool type_is_float(Type* ty)
