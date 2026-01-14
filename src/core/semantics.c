@@ -668,7 +668,7 @@ static bool analyze_declaration(ObjVar* decl)
         Type* rhs_ctype = rhs_type->canonical;
         if(kind == TYPE_AUTO)
         {
-            if(rhs_type->kind == TYPE_ANON_ARRAY)
+            if(rhs_type->kind == TYPE_INIT_LIST)
             {
                 sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
                              "For array literals, please declare a type.");
@@ -697,16 +697,16 @@ static bool analyze_declaration(ObjVar* decl)
                 }
                 decl->type_loc.type = rhs_type;
             }
-            else if(rhs_type->kind == TYPE_ANON_ARRAY)
+            else if(rhs_type->kind == TYPE_INIT_LIST)
             {
-                if(decl->initial_val->expr.init_list.size == 0)
+                if(decl->initial_val->expr.array_init.size == 0)
                 {
                     sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
                     goto ERR;
                 }
 
                 decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
-                decl->type_loc.type->array.static_len = decl->initial_val->expr.init_list.max + 1;
+                decl->type_loc.type->array.static_len = decl->initial_val->expr.array_init.max + 1;
                 implicit_cast(&decl->initial_val, decl->type_loc.type);
             }
         }

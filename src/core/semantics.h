@@ -26,6 +26,7 @@ struct SemaContext
     bool         in_ptr : 1;
     bool         in_typedef : 1;
     bool         in_global_init : 1;
+
 };
 
 typedef struct ObjStack ObjStack;
@@ -42,6 +43,7 @@ extern ObjStack     g_obj_stack;
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
 bool       analyze_expr(ASTExpr* expr);
+bool       analyze_lvalue(ASTExpr* expr, bool allow_func);
 bool       analyze_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_enum(ObjEnum* enum_, Type** o_type);

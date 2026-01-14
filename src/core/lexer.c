@@ -594,7 +594,7 @@ static inline void extract_base_10(Lexer* l, Token* t)
     
     bool is_float = false;
 
-    if(peek(l) == '.')
+    if(peek(l) == '.' && peek_next(l) != '.')
     {
         if(peek_prev(l) == '_')
             goto END_UND;

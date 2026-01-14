@@ -28,7 +28,7 @@ extern Type* const g_type_isize;
 extern Type* const g_type_usize;
 extern Type* const g_type_float;
 extern Type* const g_type_double;
-extern Type* const g_type_anon_arr;
+extern Type* const g_type_init_list;
 extern Type* const g_type_str_lit;
 extern Type* const g_type_auto;
 

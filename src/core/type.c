@@ -59,12 +59,12 @@ BUILTIN_TYPE_DEF(s_ulong , TYPE_ULONG , 8);
 BUILTIN_TYPE_DEF(s_float , TYPE_FLOAT , 4);
 BUILTIN_TYPE_DEF(s_double, TYPE_DOUBLE, 8);
 
-TYPE_DEF(s_invalid , TYPE_INVALID);
-TYPE_DEF(s_void    , TYPE_VOID, .ptr_cache = &s_voidptr);
-TYPE_DEF(s_voidptr , TYPE_POINTER, .pointer_base = &s_void);
-TYPE_DEF(s_anon_arr, TYPE_ANON_ARRAY);
-TYPE_DEF(s_str_lit , TYPE_STRING_LIT);
-TYPE_DEF(s_auto    , TYPE_AUTO);
+TYPE_DEF(s_invalid  , TYPE_INVALID);
+TYPE_DEF(s_void     , TYPE_VOID, .ptr_cache = &s_voidptr);
+TYPE_DEF(s_voidptr  , TYPE_POINTER, .pointer_base = &s_void);
+TYPE_DEF(s_init_list, TYPE_INIT_LIST);
+TYPE_DEF(s_str_lit  , TYPE_STRING_LIT);
+TYPE_DEF(s_auto     , TYPE_AUTO);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);
 ALIAS_TYPE_DEF(s_uptr , s_uptr_obj);
@@ -72,30 +72,30 @@ ALIAS_TYPE_DEF(s_isize, s_isize_obj);
 ALIAS_TYPE_DEF(s_usize, s_usize_obj);
 
 // Builtin-types
-Type* const g_type_invalid  = &s_invalid;
-Type* const g_type_voidptr  = &s_voidptr;
-Type* const g_type_void     = &s_void;
-Type* const g_type_bool     = &s_bool;
-Type* const g_type_char     = &s_char;
-Type* const g_type_char16   = &s_char16;
-Type* const g_type_char32   = &s_char32;
-Type* const g_type_byte     = &s_byte;
-Type* const g_type_ubyte    = &s_ubyte;
-Type* const g_type_short    = &s_short;
-Type* const g_type_ushort   = &s_ushort;
-Type* const g_type_int      = &s_int;
-Type* const g_type_uint     = &s_uint;
-Type* const g_type_long     = &s_long;
-Type* const g_type_ulong    = &s_ulong;
-Type* const g_type_float    = &s_float;
-Type* const g_type_double   = &s_double;
-Type* const g_type_anon_arr = &s_anon_arr;
-Type* const g_type_str_lit  = &s_str_lit;
-Type* const g_type_auto     = &s_auto;
-Type* const g_type_iptr     = &s_iptr;
-Type* const g_type_uptr     = &s_uptr;
-Type* const g_type_isize    = &s_isize;
-Type* const g_type_usize    = &s_usize;
+Type* const g_type_invalid   = &s_invalid;
+Type* const g_type_voidptr   = &s_voidptr;
+Type* const g_type_void      = &s_void;
+Type* const g_type_bool      = &s_bool;
+Type* const g_type_char      = &s_char;
+Type* const g_type_char16    = &s_char16;
+Type* const g_type_char32    = &s_char32;
+Type* const g_type_byte      = &s_byte;
+Type* const g_type_ubyte     = &s_ubyte;
+Type* const g_type_short     = &s_short;
+Type* const g_type_ushort    = &s_ushort;
+Type* const g_type_int       = &s_int;
+Type* const g_type_uint      = &s_uint;
+Type* const g_type_long      = &s_long;
+Type* const g_type_ulong     = &s_ulong;
+Type* const g_type_float     = &s_float;
+Type* const g_type_double    = &s_double;
+Type* const g_type_init_list = &s_init_list;
+Type* const g_type_str_lit   = &s_str_lit;
+Type* const g_type_auto      = &s_auto;
+Type* const g_type_iptr      = &s_iptr;
+Type* const g_type_uptr      = &s_uptr;
+Type* const g_type_isize     = &s_isize;
+Type* const g_type_usize     = &s_usize;
 
 static Type* builtin_type_lookup[] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
@@ -234,7 +234,7 @@ bool type_equal(Type* t1, Type* t2)
         return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_RUNTIME_ARRAY:
-    case TYPE_ANON_ARRAY:
+    case TYPE_INIT_LIST:
     case TYPE_STRING_LIT:
         return false;
     case TYPE_ALIAS:
@@ -284,8 +284,8 @@ ByteSize type_size(Type* ty)
     case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_STRING_LIT:
@@ -325,8 +325,8 @@ uint32_t type_alignment(Type* ty)
     case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_STRING_LIT:
@@ -379,9 +379,9 @@ const char* type_to_string(Type* type)
     case TYPE_STRUCT:
     case TYPE_UNION:
         return str_format("%s", type->struct_->header.symbol);
-    case TYPE_ANON_ARRAY:
-        return "array literal";
     case TYPE_PS_ARRAY:
+    case TYPE_INIT_LIST:
+        return "initializer list";
     case TYPE_RUNTIME_ARRAY:
         return str_format("%s[*]", type_to_string(type->array.elem_type));
     case TYPE_STRING_LIT:

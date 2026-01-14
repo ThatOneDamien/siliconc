@@ -172,8 +172,8 @@ bool implicit_cast_vararg(ASTExpr** arg)
     case TYPE_FLOAT:
         implicit_cast_ensured(arg, g_type_double);
         return true;
-    case TYPE_ANON_ARRAY:
-        sic_error_at(expr->loc, "Cannot pass untyped array literal as a variadic argument.");
+    case TYPE_INIT_LIST:
+        sic_error_at(expr->loc, "Cannot pass initializer list as a variadic argument.");
         return false;
     case TYPE_STRING_LIT:
         implicit_cast_ensured(arg, type_pointer_to(g_type_char));
@@ -271,8 +271,13 @@ static bool rule_str_to_ptr(CastParams* params)
     return true;
 }
 
-static bool rule_anon_to_arr(CastParams* params)
+static bool rule_init_list_to_arr(CastParams* params)
 {
+    if(params->inner->kind != EXPR_ARRAY_INIT_LIST)
+    {
+        CAST_ERROR("Casting from %s to %s is not allowed.",
+                   type_to_string(params->from), type_to_string(params->to));
+    }
     if(params->to_kind == TYPE_RUNTIME_ARRAY)
     {
         // NOTE: This can be improved later on if I add some runtime checks. Don't plan on doing that
@@ -301,7 +306,7 @@ static bool rule_anon_to_arr(CastParams* params)
     }
 
     SIC_ASSERT(params->inner->kind == EXPR_ARRAY_INIT_LIST);
-    InitList* list = &params->inner->expr.init_list;
+    ArrInitList* list = &params->inner->expr.array_init;
     for(uint32_t i = 0; i < list->size; ++i)
     {
         if(list->data[i].const_index >= arr_size)
@@ -316,6 +321,23 @@ static bool rule_anon_to_arr(CastParams* params)
 
         if(!can_cast(list->data[i].init_value, elem_type))
             return false;
+    }
+
+    return true;
+}
+
+static bool rule_init_list_to_struct(CastParams* params)
+{
+    if(params->inner->kind != EXPR_STRUCT_INIT_LIST)
+    {
+        CAST_ERROR("Casting from %s to %s is not allowed.",
+                   type_to_string(params->from), type_to_string(params->to));
+    }
+
+    StructInitList* list = &params->inner->expr.struct_init;
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        // if()
     }
 
     return true;
@@ -532,8 +554,8 @@ static void cast_reinterpret(ASTExpr* cast, UNUSED ASTExpr* inner,
     cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
-static void cast_anon_arr(ASTExpr* cast, ASTExpr* inner,
-                          UNUSED Type* from, UNUSED Type* to)
+static void cast_init_list(ASTExpr* cast, ASTExpr* inner,
+                           UNUSED Type* from, UNUSED Type* to)
 {
     // This is different than the parameter 'to'. This is the unaltered
     // type we are casting to, without any reduction.
@@ -550,34 +572,35 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
     rule.conversion(cast, inner, from_reduced, to_reduced);
 }
 
-#define NOALLW { NULL              , NULL }
-#define NOTDEF { rule_not_defined  , NULL }
-#define TOVOID { rule_explicit_only, cast_any_to_void }
-#define INTINT { rule_size_change  , cast_int_to_int }
-#define INTBOO { rule_always       , cast_int_to_bool }
-#define INTFLT { rule_always       , cast_int_to_float }
-#define INTPTR { rule_explicit_only, cast_int_to_ptr }
-#define FLTFLT { rule_size_change  , cast_float_to_float }
-#define FLTBOO { rule_explicit_only, cast_float_to_bool }
-#define FLTINT { rule_explicit_only, cast_float_to_int }
-#define PTRBOO { rule_explicit_only, cast_ptr_to_bool }
-#define PTRINT { rule_explicit_only, cast_ptr_to_int }
-#define PTRPTR { rule_ptr_to_ptr   , cast_ptr_to_ptr }
-#define STRPTR { rule_str_to_ptr   , cast_reinterpret }
-#define ANNARR { rule_anon_to_arr  , cast_anon_arr }
-#define DISTIN { rule_distinct     , cast_distinct }
+#define NOALLW { NULL                    , NULL }
+#define NOTDEF { rule_not_defined        , NULL }
+#define TOVOID { rule_explicit_only      , cast_any_to_void }
+#define INTINT { rule_size_change        , cast_int_to_int }
+#define INTBOO { rule_always             , cast_int_to_bool }
+#define INTFLT { rule_always             , cast_int_to_float }
+#define INTPTR { rule_explicit_only      , cast_int_to_ptr }
+#define FLTFLT { rule_size_change        , cast_float_to_float }
+#define FLTBOO { rule_explicit_only      , cast_float_to_bool }
+#define FLTINT { rule_explicit_only      , cast_float_to_int }
+#define PTRBOO { rule_explicit_only      , cast_ptr_to_bool }
+#define PTRINT { rule_explicit_only      , cast_ptr_to_int }
+#define PTRPTR { rule_ptr_to_ptr         , cast_ptr_to_ptr }
+#define STRPTR { rule_str_to_ptr         , cast_reinterpret }
+#define ILSARR { rule_init_list_to_arr   , cast_init_list }
+#define ILSSTU { rule_init_list_to_struct, cast_init_list }
+#define DISTIN { rule_distinct           , cast_distinct }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    // FROM             TO:   VOID    BOOL    INT     FLOAT   PTR     ARRAY   STRUCT  ANONAR  DIST
-    [CAST_GROUP_VOID]     = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
-    [CAST_GROUP_BOOL]     = { TOVOID, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INT]      = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_FLOAT]    = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_PTR]      = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_STRUCT]   = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ANON_ARR] = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, ANNARR, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_DISTINCT] = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
+    // FROM              TO:   VOID    BOOL    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
+    [CAST_GROUP_VOID]      = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
+    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]       = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
+    [CAST_GROUP_DISTINCT]  = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
 };
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
@@ -605,8 +628,8 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_ENUM_DISTINCT]  = CAST_GROUP_DISTINCT + 1,
     [TYPE_STRUCT]         = CAST_GROUP_STRUCT + 1,
     [TYPE_UNION]          = CAST_GROUP_STRUCT + 1,
-    [TYPE_ANON_ARRAY]     = CAST_GROUP_ANON_ARR + 1,
-    [TYPE_STRING_LIT]     = CAST_GROUP_ANON_ARR + 1,
+    [TYPE_INIT_LIST]      = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_STRING_LIT]     = CAST_GROUP_INIT_LIST + 1,
 };
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)

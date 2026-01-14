@@ -30,7 +30,6 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
     Object* next = hashmap_get(&start->module_ns, symloc.sym);
     if(next == NULL)
     {
-        SIC_ERROR_DBG("Here");
         // TODO: Make the message display the full path of the module.
         sic_error_at(symloc.loc, "Module \'%s\' does not exist in module \'%s\'.",
                      symloc.sym, start->header.symbol);

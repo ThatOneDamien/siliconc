@@ -54,8 +54,10 @@ typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
 typedef union  ConstantValue    ConstantValue;
 typedef struct ASTExprConstant  ASTExprConstant;
-typedef struct InitListEntry    InitListEntry;
-typedef struct InitList         InitList;
+typedef struct ArrInitEntry     ArrInitEntry;
+typedef struct ArrInitList      ArrInitList;
+typedef struct StructInitEntry  StructInitEntry;
+typedef struct StructInitList   StructInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
 typedef struct ASTExprRange     ASTExprRange;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
@@ -316,23 +318,36 @@ struct ASTExprCast
     CastKind kind;
 };
 
-struct InitListEntry
+struct ArrInitEntry
 {
     union
     {
         ASTExpr* arr_index;
-        ASTExpr* member;
         uint64_t const_index;
     };
     ASTExpr* init_value;
 };
 
-struct InitList
+struct ArrInitList
 {
-    InitListEntry* data;
-    uint32_t       capacity;
-    uint32_t       size;
-    uint64_t       max;
+    ArrInitEntry* data;
+    uint32_t      capacity;
+    uint32_t      size;
+    uint64_t      max;
+};
+
+struct StructInitEntry
+{
+    SymbolLoc member;
+    ASTExpr*  init_value;
+};
+
+struct StructInitList
+{
+    StructInitEntry* data;
+    uint32_t         capacity;
+    uint32_t         size;
+    uint64_t         max;
 };
 
 union ConstantValue
@@ -407,7 +422,8 @@ struct ASTExpr
         ASTExprCast     cast;
         ASTExprConstant constant;
         Object*         ident;
-        InitList        init_list;
+        ArrInitList     array_init;
+        StructInitList  struct_init;
         ASTExprMAccess  member_access;
         ASTExprRange    range;
         ModulePath      pre_sema_ident;

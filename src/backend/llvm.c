@@ -634,7 +634,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
     }
 
     SIC_ASSERT(lhs->type->kind == TYPE_STATIC_ARRAY);
-    InitList* list = &expr->expr.init_list;
+    ArrInitList* list = &expr->expr.array_init;
     for(uint64_t i = 0; i < lhs->type->array.static_len; ++i)
     {
         LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usize), i, false);
@@ -980,9 +980,9 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
 
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
 {
-    SIC_ASSERT(expr->type != g_type_anon_arr);
+    SIC_ASSERT(expr->type != g_type_init_list);
     SIC_ASSERT(expr->const_eval);
-    InitList* list = &expr->expr.init_list;
+    ArrInitList* list = &expr->expr.array_init;
     if(list->size == 0)
         return LLVMConstNull(get_llvm_type(c, expr->type));
 
@@ -1382,8 +1382,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_STRING_LIT:
@@ -1489,8 +1489,8 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_ANON_ARRAY:
     case TYPE_AUTO:
+    case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_STRING_LIT:

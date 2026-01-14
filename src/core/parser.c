@@ -103,7 +103,7 @@ static inline void     recover_top_level(Lexer* l);
 static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
 static inline ASTExpr* new_expr(Lexer* l, ExprKind kind);
 static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind);
-static inline void     declare_obj_in_module(ObjModule* module, Object* global);
+static inline void     declare_obj(Lexer* l, Object* global);
 
 static ASTStmt s_bad_stmt = {0};
 static ASTExpr s_bad_expr = {0};
@@ -186,7 +186,7 @@ static bool parse_top_level(Lexer* l)
     if(type == NULL)
         return false;
     da_append(&l->module->types, type);
-    declare_obj_in_module(l->module, type);
+    declare_obj(l, type);
     return true;
 }
 
@@ -221,7 +221,7 @@ static bool parse_function_decl(Lexer* l, Visibility vis)
     func->func_type = type_func_ptr(&func->signature);
     func->func_type->visibility = vis;
     da_append(&l->module->funcs, func);
-    declare_obj_in_module(l->module, &func->header);
+    declare_obj(l, &func->header);
 
     if(try_consume(l, TOKEN_SEMI))
         return true;
@@ -259,20 +259,23 @@ static bool parse_import(Lexer* l, Visibility vis)
         EXPECT_IDENT_OR_RET(false);
         da_reserve(&path, path.size + 1);
         path.data[path.size++] = (SymbolLoc){ .sym = peek(l)->sym, .loc = peek(l)->loc };
+        advance(l);
         if(try_consume(l, TOKEN_NAMESPACE))
             continue;
 
         if(try_consume(l, TOKEN_AS))
+        {
             EXPECT_IDENT_OR_RET(false);
+            advance(l);
+        }
 
         da_compact(&path);
         ObjImport* import = CALLOC_STRUCT(ObjImport);
-        import->header.symbol = peek(l)->sym;
-        import->header.loc = peek(l)->loc;
+        import->header.symbol = peek_prev(l)->sym;
+        import->header.loc = peek_prev(l)->loc;
         import->header.kind = OBJ_IMPORT;
         import->header.visibility = vis;
         import->unresolved = path;
-        advance(l);
         da_append(&l->module->imports, import);
         break;
     }
@@ -406,7 +409,7 @@ static bool parse_global_var_decl(Lexer* l, Visibility vis)
 
     CONSUME_OR_RET(TOKEN_SEMI, false);
     da_append(&l->module->vars, var);
-    declare_obj_in_module(l->module, &var->header);
+    declare_obj(l, &var->header);
     return true;
 }
 
@@ -908,8 +911,13 @@ static ASTStmt* parse_if(Lexer* l)
     if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
     if(try_consume(l, TOKEN_ELSE))
     {
-        EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
-        if_stmt->else_stmt = parse_stmt_block(l);
+        if(tok_equal(l, TOKEN_IF))
+            if_stmt->else_stmt = parse_if(l);
+        else
+        {
+            EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
+            if_stmt->else_stmt = parse_stmt_block(l);
+        }
         if(stmt_is_bad(if_stmt->else_stmt)) return BAD_STMT;
     }
 
@@ -1239,19 +1247,21 @@ static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
 static ASTExpr* parse_struct_init_list(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_STRUCT_INIT_LIST);
-    InitList* list = &expr->expr.init_list;
+    StructInitList* list = &expr->expr.struct_init;
     advance(l);
     while(true)
     {
         da_reserve(list, list->size + 1);
-        InitListEntry* entry = list->data + list->size;
+        StructInitEntry* entry = list->data + list->size;
         switch(peek(l)->kind)
         {
         case TOKEN_IDENT:
+            list->size++;
             if(peek_next(l)->kind != TOKEN_COLON)
                 break;
-            entry->member = parse_identifier_expr(l);
-            list->size++;
+            entry->member.sym = peek(l)->sym;
+            entry->member.loc = peek(l)->loc;
+            advance(l);
             advance(l);
             break;
         case TOKEN_RBRACE:
@@ -1268,9 +1278,10 @@ static ASTExpr* parse_struct_init_list(Lexer* l)
         if(!try_consume(l, TOKEN_COMMA))
             break;
     }
-    da_compact(list);
 OUTER:
+    da_compact(list);
     CONSUME_OR_RET(TOKEN_RBRACE, BAD_EXPR);
+    expr->type = g_type_init_list;
     return expr;
 }
 
@@ -1289,7 +1300,7 @@ static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
 static ASTExpr* parse_array_init_list(Lexer* l)
 {
     ASTExpr* expr = new_expr(l, EXPR_ARRAY_INIT_LIST);
-    InitList* list = &expr->expr.init_list;
+    ArrInitList* list = &expr->expr.array_init;
     advance(l);
     while(!tok_equal(l, TOKEN_RBRACKET))
     {
@@ -1299,7 +1310,7 @@ static ASTExpr* parse_array_init_list(Lexer* l)
             return BAD_EXPR;
         }
         da_reserve(list, list->size + 1);
-        InitListEntry* entry = list->data + list->size;
+        ArrInitEntry* entry = list->data + list->size;
         ASSIGN_EXPR_OR_RET(entry->init_value, BAD_EXPR);
         list->size++;
         if(try_consume(l, TOKEN_COLON))
@@ -1313,7 +1324,7 @@ static ASTExpr* parse_array_init_list(Lexer* l)
 
     da_compact(list);
     CONSUME_OR_RET(TOKEN_RBRACKET, BAD_EXPR);
-    expr->type = g_type_anon_arr;
+    expr->type = g_type_init_list;
     return expr;
 
 }
@@ -1340,6 +1351,35 @@ static ASTExpr* parse_paren_expr(Lexer* l)
     ASTExpr* inside_expr = parse_expr(l);
     CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
     return inside_expr;
+}
+
+static ASTExpr* parse_negation(Lexer* l)
+{
+    SourceLoc loc = peek(l)->loc;
+    TokenKind kind = peek(l)->kind;
+    advance(l);
+    ASTExpr* inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
+    if(expr_is_bad(inner)) return BAD_EXPR;
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        if(inner->expr.constant.kind == CONSTANT_INTEGER)
+        {
+            // FIXME: Check bounds.
+            inner->expr.constant.val.i = -inner->expr.constant.val.i;
+            return inner;
+        }
+        if(inner->expr.constant.kind == CONSTANT_FLOAT)
+        {
+            inner->expr.constant.val.f = -inner->expr.constant.val.f;
+            return inner;
+        }
+    }
+    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    expr->loc = loc;
+    expr->kind = EXPR_UNARY;
+    expr->expr.unary.kind = tok_to_unary_op(kind);
+    expr->expr.unary.inner = inner;
+    return expr;
 }
 
 static ASTExpr* parse_unary_prefix(Lexer* l)
@@ -1419,7 +1459,7 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
+    expr->type = val > INT32_MAX ? (val > INT64_MAX ? g_type_ulong : g_type_long) : g_type_int;
 
     // TODO: Deal with the suffix.
     return expr;
@@ -1621,6 +1661,7 @@ static inline bool expect_ident(Lexer* l)
     if(tok_equal(l, TOKEN_IDENT))
         return true;
 
+    SIC_ERROR_DBG("Bruh");
     sic_diagnostic_after(DIAG_ERROR, peek_prev(l)->loc, NULL, "Expected identifier.");
     return false;
 
@@ -1710,9 +1751,9 @@ static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
 
 }
 
-static inline void declare_obj_in_module(ObjModule* module, Object* global)
+static inline void declare_obj(Lexer* l, Object* global)
 {
-    HashMap* map = &module->symbol_ns;
+    HashMap* map = &l->module->symbol_ns;
     Object* other = hashmap_get(map, global->symbol);
 
     if(other != NULL)
@@ -1747,7 +1788,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LBRACKET]        = { parse_array_init_list, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
-    [TOKEN_SUB]             = { parse_unary_prefix, parse_binary, PREC_ADD_SUB },
+    [TOKEN_SUB]             = { parse_negation, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_QUESTION]        = { NULL, parse_ternary, PREC_TERNARY },
     [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },

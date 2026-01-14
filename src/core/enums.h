@@ -49,7 +49,7 @@ typedef enum : int8_t
     CAST_GROUP_PTR,
     CAST_GROUP_ARRAY,
     CAST_GROUP_STRUCT,
-    CAST_GROUP_ANON_ARR,
+    CAST_GROUP_INIT_LIST,
     CAST_GROUP_DISTINCT,
     __CAST_GROUP_COUNT,
 } CastGroup;
@@ -246,12 +246,16 @@ typedef enum : uint8_t
     TOKEN_INVALID = 0,
 
     TOKEN_IDENT,            // Identifier
+
     TOKEN_BIN_INT_LITERAL,
+    TOKEN_NUMERIC_LITERAL_START = TOKEN_BIN_INT_LITERAL,
     TOKEN_OCT_INT_LITERAL,
     TOKEN_DEC_INT_LITERAL,
     TOKEN_HEX_INT_LITERAL,
-    TOKEN_CHAR_LITERAL,
     TOKEN_FLOAT_LITERAL,
+    TOKEN_NUMERIC_LITERAL_END = TOKEN_FLOAT_LITERAL,
+
+    TOKEN_CHAR_LITERAL,
     TOKEN_STRING_LITERAL,
 
 
@@ -398,7 +402,6 @@ typedef enum : uint8_t
     TYPE_CHAR_END       = TYPE_CHAR32,
 
     TYPE_BYTE,
-    TYPE_UBYTE,
     TYPE_SHORT,
     TYPE_USHORT,
     TYPE_INT,
@@ -429,8 +432,8 @@ typedef enum : uint8_t
     TYPE_USER_DEF_END   = TYPE_UNION,
 
     // Pre-semantic types. After analyzing the type these should never appear
-    TYPE_ANON_ARRAY, // Anonymous array literals before being casted (i.e. [4, 3])
     TYPE_AUTO,
+    TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
     TYPE_PS_ARRAY,
     TYPE_PS_USER,
     TYPE_STRING_LIT,

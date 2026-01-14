@@ -142,7 +142,10 @@ def check_test_result(should_pass: bool, kind: str, proc_res, output: str | None
         result.passed  = False
         result.message = f'{kind} encountered a segfault.'
         result.details = proc_res.stderr
-
+    elif rc == -5:
+        result.passed  = False
+        result.message = f'{kind} encountered a debug break.'
+        result.details = proc_res.stderr
     else:
         result.passed  = False
         result.message = f'{kind} encountered an unknown error/signal (Code: {rc})'

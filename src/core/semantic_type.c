@@ -84,7 +84,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
         if(type->status == STATUS_RESOLVED) return true;
         if(!resolve_typeof(type_ref, flags, err_loc, err_str)) break;
         return true;
-    case TYPE_ANON_ARRAY:
+    case TYPE_INIT_LIST:
     case TYPE_STRING_LIT:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();
@@ -165,9 +165,9 @@ static bool resolve_typeof(Type** type_ref, ResolutionFlags flags, SourceLoc err
         return false;
 
     Type* inner_ty = inner->type;
-    if(inner_ty->kind == TYPE_ANON_ARRAY)
+    if(inner_ty->kind == TYPE_INIT_LIST)
     {
-        sic_error_at(inner->loc, "Cannot get type of array initializer list.");
+        sic_error_at(inner->loc, "Cannot get type of array/struct initializer list.");
         return false;
     }
     if(inner_ty->kind == TYPE_STRING_LIT)
