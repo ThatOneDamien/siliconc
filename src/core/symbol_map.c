@@ -31,6 +31,7 @@ static SymbolMap s_sym_map;
 
 Symbol g_sym_len;
 Symbol g_sym_main;
+Symbol g_attr_list[__ATTR_COUNT];
 
 void sym_map_init(void)
 {
@@ -52,6 +53,13 @@ void sym_map_init(void)
     kind = TOKEN_IDENT;
     g_sym_len = SYM_ADD("len");
     g_sym_main = SYM_ADD("main");
+    
+    kind = TOKEN_ATTRIBUTE_IDENT;
+    g_attr_list[ATTR_INLINE]    = SYM_ADD("@inline");
+    g_attr_list[ATTR_NODISCARD] = SYM_ADD("@nodiscard");
+    g_attr_list[ATTR_NOINLINE]  = SYM_ADD("@noinline");
+    g_attr_list[ATTR_PACKED]    = SYM_ADD("@packed");
+    g_attr_list[ATTR_PURE]      = SYM_ADD("@pure");
 }
 
 Symbol sym_map_addn(const char* str, uint32_t len, TokenKind* kind)

@@ -23,19 +23,20 @@ struct ExprParseRule
 
 // Top-level grammar
 static bool parse_top_level(Lexer* l);
+static bool parse_attributes(Lexer* l, AttrDA* attrs);
 static bool parse_module_path(Lexer* l, ModulePath* out);
-static bool parse_function_decl(Lexer* l, Visibility vis);
+static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs);
 static bool parse_import(Lexer* l, Visibility vis);
 static bool parse_module_decl(Lexer* l, Visibility vis);
 static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unnamed);
-static bool parse_global_var_decl(Lexer* l, Visibility vis);
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs);
 
 // Types
 static Visibility  parse_visibility(Lexer* l);
-static Object*     parse_enum_decl(Lexer* l, Visibility vis);
-static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool nested);
-static Object*     parse_bitfield_decl(Lexer* l, Visibility vis);
-static Object*     parse_typedef(Lexer* l, Visibility vis);
+static Object*     parse_bitfield_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static Object*     parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested);
+static Object*     parse_typedef(Lexer* l, Visibility vis, AttrDA attrs);
 static bool        parse_type_or_expr(Lexer* l, TypeLoc* type_loc, ASTExpr** expr, bool allow_func);
 static inline bool parse_type(Lexer* l, TypeLoc* type_loc, bool allow_func)
 {
@@ -138,6 +139,8 @@ void parse_source_file(FileId fileid)
 static bool parse_top_level(Lexer* l)
 {
     if(try_consume(l, TOKEN_SEMI)) return true; // Ignore semicolons
+    AttrDA attrs = {0};
+    if(!parse_attributes(l, &attrs)) return false;
     Visibility vis = parse_visibility(l);
     ObjKind kind = OBJ_UNION;
     Object* type;
@@ -146,15 +149,15 @@ static bool parse_top_level(Lexer* l)
     case TOKEN_SEMI:
     case TOKEN_BITFIELD:
         advance(l);
-        type = parse_bitfield_decl(l, vis);
+        type = parse_bitfield_decl(l, vis, attrs);
         break;
     case TOKEN_ENUM:
         advance(l);
-        type = parse_enum_decl(l, vis);
+        type = parse_enum_decl(l, vis, attrs);
         break;
     case TOKEN_FN:
         advance(l);
-        return parse_function_decl(l, vis);
+        return parse_function_decl(l, vis, attrs);
     case TOKEN_IMPORT:
         advance(l);
         return parse_import(l, vis);
@@ -166,11 +169,11 @@ static bool parse_top_level(Lexer* l)
         FALLTHROUGH;
     case TOKEN_UNION:
         advance(l);
-        type = parse_struct_decl(l, kind, vis, false);
+        type = parse_struct_decl(l, kind, vis, attrs, false);
         break;
     case TOKEN_TYPEDEF:
         advance(l);
-        type = parse_typedef(l, vis);
+        type = parse_typedef(l, vis, attrs);
         break;
     case TOKEN_CT_ASSERT: {
         ASTStmt* res = parse_ct_assert(l);
@@ -180,13 +183,40 @@ static bool parse_top_level(Lexer* l)
         return true;
     }
     default: 
-        return parse_global_var_decl(l, vis);
+        return parse_global_var_decl(l, vis, attrs);
     }
 
     if(type == NULL)
         return false;
     da_append(&l->module->types, type);
     declare_obj(l, type);
+    return true;
+}
+
+static bool parse_attributes(Lexer* l, AttrDA* attrs)
+{
+    while(tok_equal(l, TOKEN_ATTRIBUTE_IDENT))
+    {
+        Attr attr;
+        attr.symbol = peek(l)->sym;
+        attr.loc = peek(l)->loc;
+        advance(l);
+        for(AttrKind i = 0; i < __ATTR_COUNT; ++i)
+        {
+            if(g_attr_list[i] == attr.symbol)
+            {
+                attr.kind = i;
+                goto FOUND;
+            }
+        }
+
+        attr.kind = ATTR_CUSTOM;
+        SIC_TODO_MSG("User attributes not implemented");
+FOUND:
+        // TODO: parse arguments
+        da_append(attrs, attr);
+    }
+    da_compact(attrs);
     return true;
 }
 
@@ -204,7 +234,7 @@ static bool parse_module_path(Lexer* l, ModulePath* out)
     return true;
 }
 
-static bool parse_function_decl(Lexer* l, Visibility vis)
+static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs)
 {
     EXPECT_IDENT_OR_RET(false);
     ObjFunc* func = CALLOC_STRUCT(ObjFunc);
@@ -212,6 +242,7 @@ static bool parse_function_decl(Lexer* l, Visibility vis)
     func->header.loc = peek(l)->loc;
     func->header.kind = OBJ_FUNC;
     func->header.visibility = vis;
+    func->header.attrs = attrs;
     advance(l);
 
     CONSUME_OR_RET(TOKEN_LPAREN, false);
@@ -389,11 +420,12 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
     return true;
 }
 
-static bool parse_global_var_decl(Lexer* l, Visibility vis)
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs)
 {
     ObjVar* var = CALLOC_STRUCT(ObjVar);
     var->header.kind = OBJ_VAR;
     var->header.visibility = vis;
+    var->header.attrs = attrs;
     var->kind = VAR_GLOBAL;
 
     if(!parse_type(l, &var->type_loc, false))
@@ -428,7 +460,12 @@ static Visibility parse_visibility(Lexer* l)
     }
 }
 
-static Object* parse_enum_decl(Lexer* l, Visibility vis)
+static Object* parse_bitfield_decl(UNUSED Lexer* l, UNUSED Visibility vis, UNUSED AttrDA attrs)
+{
+    SIC_TODO();
+}
+
+static Object* parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
 {
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(NULL);
@@ -437,6 +474,7 @@ static Object* parse_enum_decl(Lexer* l, Visibility vis)
     enum_->header.loc = peek(l)->loc;
     enum_->header.visibility = vis;
     enum_->header.kind = OBJ_ENUM;
+    enum_->header.attrs = attrs;
     Type* type = enum_->type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ENUM_DISTINCT : TYPE_ENUM;
     type->visibility = vis;
@@ -494,7 +532,7 @@ static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
                 continue;
             }
 
-            Object* inner = parse_struct_decl(l, OBJ_STRUCT, VIS_PUBLIC, true);
+            Object* inner = parse_struct_decl(l, OBJ_STRUCT, VIS_PUBLIC, (AttrDA){}, true);
             if(inner == NULL) return false;
             type_loc.type = obj_as_struct(inner)->type_ref;
             ObjVar* member = CALLOC_STRUCT(ObjVar);
@@ -516,7 +554,7 @@ static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
                 continue;
             }
 
-            Object* inner = parse_struct_decl(l, OBJ_UNION, VIS_PUBLIC, true);
+            Object* inner = parse_struct_decl(l, OBJ_UNION, VIS_PUBLIC, (AttrDA){}, true);
             if(inner == NULL) return false;
             type_loc.type = obj_as_struct(inner)->type_ref;
             ObjVar* member = CALLOC_STRUCT(ObjVar);
@@ -555,7 +593,7 @@ static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
     return true;
 }
 
-static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool nested)
+static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested)
 {
     if(!nested)
     {
@@ -567,6 +605,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool ne
     struct_->header.loc = peek_prev(l)->loc;
     struct_->header.visibility = vis;
     struct_->header.kind = kind;
+    struct_->header.attrs = attrs;
     Type* type = struct_->type_ref = CALLOC_STRUCT(Type);
     type->kind = kind == OBJ_STRUCT ? TYPE_STRUCT : TYPE_UNION;
     type->visibility = vis;
@@ -580,12 +619,8 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, bool ne
     return &struct_->header;
 }
 
-static Object* parse_bitfield_decl(UNUSED Lexer* l, UNUSED Visibility vis)
-{
-    SIC_TODO();
-}
 
-static Object* parse_typedef(Lexer* l, Visibility vis)
+static Object* parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
 {
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(NULL);
@@ -594,6 +629,7 @@ static Object* parse_typedef(Lexer* l, Visibility vis)
     typedef_->header.loc = peek(l)->loc;
     typedef_->header.visibility = vis;
     typedef_->header.kind = OBJ_TYPEDEF;
+    typedef_->header.attrs = attrs;
     advance(l);
 
     Type* type = typedef_->type_ref = CALLOC_STRUCT(Type);

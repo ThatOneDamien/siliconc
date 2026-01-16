@@ -37,6 +37,7 @@ extern ASTStmt* g_bad_stmt;
 
 extern Symbol   g_sym_len;
 extern Symbol   g_sym_main;
+extern Symbol   g_attr_list[__ATTR_COUNT];
 
 extern const uint8_t g_hex_char_to_val[256];
 

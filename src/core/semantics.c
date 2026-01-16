@@ -3,6 +3,7 @@
 
 static inline void analyze_main();
 static void analyze_function_body(ObjFunc* function);
+static bool analyze_attributes(AttrDA attrs, ObjKind kind);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
 static bool analyze_stmt_block(ASTStmt* stmt);
 static void analyze_break(ASTStmt* stmt);
@@ -274,6 +275,43 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     return true;
 }
 
+bool analyze_global_var(ObjVar* var)
+{
+    if(var->header.status == STATUS_RESOLVED) return var->header.kind != OBJ_INVALID;
+    if(var->header.status == STATUS_RESOLVING)
+    {
+        set_cyclic_def(&var->header);
+        return false;
+    }
+
+    bool prev = g_sema->in_global_init;
+    g_sema->in_global_init = true;
+    var->header.status = STATUS_RESOLVING;
+
+    if(!analyze_declaration(var))
+    {
+        g_sema->in_global_init = true;
+        check_cyclic_def(&var->header, var->header.loc);
+        return false;
+    }
+    g_sema->in_global_init = prev;
+
+    if(var->initial_val != NULL && !var->initial_val->const_eval)
+    {
+        sic_error_at(var->header.loc, "Global variable must be initialized with a compile-time evaluable value.");
+        var->header.kind = OBJ_INVALID;
+        var->header.status = STATUS_RESOLVED;
+        return false;
+    }
+
+    if(var->type_loc.type->visibility < var->header.visibility)
+        // TODO: Make this error print the actual visibility of both.
+        sic_error_at(var->header.loc, "Global variable's type has less visibility than the object itself.");
+
+    var->header.status = STATUS_RESOLVED;
+    return true;
+}
+
 static inline void analyze_main()
 {
     Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
@@ -341,41 +379,58 @@ static void analyze_function_body(ObjFunc* func)
     pop_scope(scope);
 }
 
-bool analyze_global_var(ObjVar* var)
+static UNUSED bool analyze_attributes(AttrDA attrs, ObjKind kind)
 {
-    if(var->header.status == STATUS_RESOLVED) return var->header.kind != OBJ_INVALID;
-    if(var->header.status == STATUS_RESOLVING)
+    bool valid = true;
+    for(uint32_t i = 0; i < attrs.size; ++i)
     {
-        set_cyclic_def(&var->header);
-        return false;
+        Attr* attr = attrs.data + i;
+        switch(attr->kind)
+        {
+        case ATTR_INLINE:
+            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            continue;
+        case ATTR_NODISCARD:
+            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            continue;
+        case ATTR_NOINLINE:
+            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            continue;
+        case ATTR_PACKED:
+            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(kind != OBJ_STRUCT)
+            {
+                sic_error_at(attr->loc, "Attribute @packed can only be applied to struct definitions.");
+                attr->kind = ATTR_INVALID;
+                valid = false;
+            }
+            continue;
+        case ATTR_PURE:
+            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            continue;
+        case ATTR_CUSTOM:
+            SIC_TODO();
+        case ATTR_INVALID:
+            SIC_UNREACHABLE();
+        }
+
+    TOO_MANY_ARGS:
+        sic_error_at(attr->loc, "Attribute %s does not have any parameters.", attr->symbol);
+        attr->kind = ATTR_INVALID;
+        valid = false;
+        continue;
+    ONLY_FUNCTION:
+        sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
+        attr->kind = ATTR_INVALID;
+        valid = false;
+        continue;
     }
 
-    bool prev = g_sema->in_global_init;
-    g_sema->in_global_init = true;
-    var->header.status = STATUS_RESOLVING;
-
-    if(!analyze_declaration(var))
-    {
-        g_sema->in_global_init = true;
-        check_cyclic_def(&var->header, var->header.loc);
-        return false;
-    }
-    g_sema->in_global_init = prev;
-
-    if(var->initial_val != NULL && !var->initial_val->const_eval)
-    {
-        sic_error_at(var->header.loc, "Global variable must be initialized with a compile-time evaluable value.");
-        var->header.kind = OBJ_INVALID;
-        var->header.status = STATUS_RESOLVED;
-        return false;
-    }
-
-    if(var->type_loc.type->visibility < var->header.visibility)
-        // TODO: Make this error print the actual visibility of both.
-        sic_error_at(var->header.loc, "Global variable's type has less visibility than the object itself.");
-
-    var->header.status = STATUS_RESOLVED;
-    return true;
+    return valid;
 }
 
 static void analyze_stmt(ASTStmt* stmt, bool add_scope)

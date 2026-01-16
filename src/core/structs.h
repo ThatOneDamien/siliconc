@@ -27,6 +27,7 @@ typedef struct Token            Token;
 typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
 typedef struct SymbolLoc        SymbolLoc;
+typedef struct ModulePath       ModulePath;
 
 // Type Structs
 typedef struct TypeArray        TypeArray;
@@ -45,9 +46,10 @@ typedef struct ObjVarDA         ObjVarDA;
 typedef struct ASTExprDA        ASTExprDA;
 typedef struct ASTCaseDA        ASTCaseDA;
 typedef struct SourceFileDA     SourceFileDA;
+typedef struct AttrDA           AttrDA;
 
 // AST Structs
-typedef struct ModulePath       ModulePath;
+typedef struct Attr             Attr;
 typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
@@ -291,7 +293,20 @@ struct SourceFileDA
     uint32_t    size;
 };
 
+struct AttrDA
+{
+    Attr*    data;
+    uint32_t capacity;
+    uint32_t size;
+};
 
+struct Attr
+{
+    Symbol    symbol;
+    SourceLoc loc;
+    AttrKind  kind;
+    ASTExprDA args;
+};
 
 struct ASTExprAAccess
 {
@@ -531,6 +546,7 @@ struct Object
     ObjKind       kind;
     Visibility    visibility;
     ResolveStatus status;
+    AttrDA        attrs;
     void*         llvm_ref;
 };
 

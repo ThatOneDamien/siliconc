@@ -3,6 +3,18 @@
 
 typedef enum : uint8_t
 {
+    ATTR_INLINE,
+    ATTR_NODISCARD,
+    ATTR_NOINLINE,
+    ATTR_PACKED,
+    ATTR_PURE,
+    ATTR_CUSTOM,
+    __ATTR_COUNT = ATTR_CUSTOM,
+    ATTR_INVALID,
+} AttrKind;
+
+typedef enum : uint8_t
+{
     BINARY_INVALID = 0,
     BINARY_ADD,
     BINARY_SUB,
@@ -246,6 +258,7 @@ typedef enum : uint8_t
     TOKEN_INVALID = 0,
 
     TOKEN_IDENT,            // Identifier
+    TOKEN_ATTRIBUTE_IDENT,  // @Identifier
 
     TOKEN_BIN_INT_LITERAL,
     TOKEN_NUMERIC_LITERAL_START = TOKEN_BIN_INT_LITERAL,
@@ -402,6 +415,7 @@ typedef enum : uint8_t
     TYPE_CHAR_END       = TYPE_CHAR32,
 
     TYPE_BYTE,
+    TYPE_UBYTE,
     TYPE_SHORT,
     TYPE_USHORT,
     TYPE_INT,

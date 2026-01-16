@@ -21,6 +21,7 @@ typedef struct
 static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
 static inline void     extract_ct_identifier(Lexer* l, Token* t);
+static inline void     extract_attr_identifier(Lexer* l, Token* t);
 static inline void     extract_char_literal(Lexer* l, Token* t, ByteSize literal_size);
 static inline void     extract_string_literal(Lexer* l, Token* t, ByteSize literal_size);
 static inline void     extract_raw_string_literal(Lexer* l, Token* t);
@@ -334,6 +335,9 @@ void lexer_advance(Lexer* l)
     case '#':
         extract_ct_identifier(l, t);
         return;
+    case '@':
+        extract_attr_identifier(l, t);
+        return;
     default:
         t->loc.len = 1;
         sic_error_at(t->loc, "Invalid/unknown character. For now, siliconc does not support "
@@ -414,6 +418,16 @@ static inline void extract_ct_identifier(Lexer* l, Token* t)
         sic_error_at(t->loc, "Unknown compile-time identifier.");
         t->kind = TOKEN_INVALID;
     }
+}
+
+static inline void extract_attr_identifier(Lexer* l, Token* t)
+{
+    while(c_is_undalphanum(peek(l)))
+        next(l);
+
+    t->loc.len = get_col(l) - t->loc.col_num;
+    t->kind = TOKEN_ATTRIBUTE_IDENT;
+    t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
 }
 
 static inline void extract_char_literal(Lexer* l, Token* t, ByteSize literal_size)
