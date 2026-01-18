@@ -16,6 +16,7 @@ typedef uint32_t    BitSize;
 typedef uint32_t    ByteSize;
 
 // Compiler-Wide Data Structures
+typedef struct Int128           Int128;
 typedef struct HashEntry        HashEntry;
 typedef struct HashMap          HashMap;
 typedef struct MemArena         MemArena;
@@ -94,6 +95,12 @@ typedef struct ObjVar           ObjVar;
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
 typedef struct CompilerContext  CompilerContext;
+
+struct Int128
+{
+    uint64_t hi;
+    uint64_t lo;
+};
 
 struct HashEntry
 {
@@ -365,21 +372,22 @@ struct StructInitList
     uint64_t         max;
 };
 
-union ConstantValue
-{
-    uint64_t   i;
-    double     f;
-    struct
-    {
-        char*  str;
-        size_t str_len;
-    };
-};
 
 struct ASTExprConstant
 {
     ConstantKind  kind;
-    ConstantValue val;
+    union
+    {
+        Int128   i;
+        double   f;
+        bool     b;
+        uint32_t c; // char
+        struct
+        {
+            char*  str;
+            size_t str_len;
+        };
+    } val;
 };
 
 struct ASTExprMAccess

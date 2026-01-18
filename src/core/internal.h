@@ -22,6 +22,8 @@ extern Type* const g_type_int;
 extern Type* const g_type_uint;
 extern Type* const g_type_long;
 extern Type* const g_type_ulong;
+extern Type* const g_type_int128;
+extern Type* const g_type_uint128;
 extern Type* const g_type_iptr;
 extern Type* const g_type_uptr;
 extern Type* const g_type_isize;
@@ -111,15 +113,11 @@ bool        type_equal(Type* t1, Type* t2);
 ByteSize    type_size(Type* ty);
 ByteSize    type_alignment(Type* ty);
 const char* type_to_string(Type* type);
-static inline bool type_is_builtin(Type* ty)
+static inline bool type_kind_is_integer(TypeKind kind)
 {
-    return ty->kind >= TYPE_BUILTIN_START && ty->kind <= TYPE_BUILTIN_END;
+    return kind >= TYPE_INTEGER_START && kind <= TYPE_INTEGER_END;
 }
-
-static inline bool type_is_integer(Type* ty)
-{
-    return ty->kind >= TYPE_INTEGER_START && ty->kind <= TYPE_INTEGER_END;
-}
+static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->kind); }
 
 static inline Type* type_to_unsigned(Type* ty)
 {
@@ -165,17 +163,21 @@ static inline Type* type_to_signed(Type* ty)
     }
 }
 
-static inline bool type_is_signed(Type* ty)
+static inline bool type_kind_is_signed(TypeKind kind)
 {
     static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
-    return type_is_integer(ty) && ((ty->kind & 1) == 0);
+    SIC_ASSERT(type_kind_is_integer(kind));
+    return (kind & 1) == 0;
 }
+static inline bool type_is_signed(Type* ty) { return type_kind_is_signed(ty->kind); }
 
-static inline bool type_is_unsigned(Type* ty)
+static inline bool type_kind_is_unsigned(TypeKind kind)
 {
     static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
-    return type_is_integer(ty) && ((ty->kind & 1) == 1);
+    SIC_ASSERT(type_kind_is_integer(kind));
+    return (kind & 1) == 1;
 }
+static inline bool type_is_unsigned(Type* ty) { return type_kind_is_unsigned(ty->kind); }
 
 static inline bool type_is_char(Type* ty)
 {

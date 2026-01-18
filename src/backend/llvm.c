@@ -78,6 +78,7 @@ static LLVMBasicBlockRef create_basic_block(const char* label);
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label);
 static void              append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
 static void              use_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
+static LLVMValueRef      get_llvm_const_int(CodegenContext* c, Int128 val, Type* type);
 static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
 static LLVMTypeRef       get_llvm_func_type(CodegenContext* c, Type* type);
 static LLVMValueRef      get_llvm_ref(CodegenContext* c, Object* obj);
@@ -513,7 +514,7 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
         if(cas->expr == NULL)
             continue;
         SIC_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
-        LLVMAddCase(switch_val, LLVMConstInt(get_llvm_type(c, cas->expr->type), cas->expr->expr.constant.val.i, false), cas->llvm_block_ref);
+        LLVMAddCase(switch_val, get_llvm_const_int(c, cas->expr->expr.constant.val.i, cas->expr->type), cas->llvm_block_ref);
     }
     c->break_bb = prev_break;
     append_old_basic_block(c, exit_block);
@@ -917,11 +918,22 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
     result->kind = GEN_VAL_RVALUE;
     switch(constant->kind)
     {
-    case CONSTANT_INTEGER:
-        result->value = LLVMConstInt(get_llvm_type(c, expr->type), constant->val.i, false);
+    case CONSTANT_BOOL:
+        result->value = LLVMConstInt(LLVMInt1Type(), constant->val.b, false);
         return;
+    case CONSTANT_CHAR:
+        SIC_TODO();
     case CONSTANT_FLOAT:
         result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->val.f);
+        return;
+    case CONSTANT_INTEGER:
+        result->value = get_llvm_const_int(c, constant->val.i, expr->type);
+        return;
+    case CONSTANT_POINTER:
+        // FIXME: Changed pointer logic.
+        SIC_TODO();
+        // result->value = expr->expr.constant.val.i == 0 ? LLVMConstPointerNull(c->ptr_type) :
+        //                                                  LLVMConstPointerCast(LLVMConstInt(LLVMInt64Type(), constant->val.i, false), c->ptr_type);
         return;
     case CONSTANT_STRING: {
         LLVMValueRef str = LLVMConstString(constant->val.str, constant->val.str_len, false);
@@ -933,10 +945,6 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         result->value = global_string;
         return;
     }
-    case CONSTANT_POINTER:
-        result->value = expr->expr.constant.val.i == 0 ? LLVMConstPointerNull(c->ptr_type) :
-                                                         LLVMConstPointerCast(LLVMConstInt(LLVMInt64Type(), constant->val.i, false), c->ptr_type);
-        return;
     case CONSTANT_INVALID:
         break;
     }
@@ -1299,6 +1307,23 @@ static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
     LLVMPositionBuilderAtEnd(c->builder, block);
 }
 
+static LLVMValueRef get_llvm_const_int(CodegenContext* c, Int128 val, Type* type)
+{
+    type = type_reduce(type);
+	switch (type->kind)
+	{
+		case TYPE_INT128:
+		case TYPE_UINT128:
+		{
+			uint64_t words[2] = { val.lo, val.hi };
+			return LLVMConstIntOfArbitraryPrecision(get_llvm_type(c, type), 2, words);
+		}
+		default:
+            SIC_ASSERT(type_is_integer(type) || type->kind == TYPE_BOOL);
+			return LLVMConstInt(get_llvm_type(c, type), val.lo, false);
+	}
+}
+
 static void emit_llvm_ir(CodegenContext* c, const char* out_path)
 {
     char* error;
@@ -1343,6 +1368,9 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_LONG:
     case TYPE_ULONG:
         return type->llvm_ref = LLVMInt64Type();
+    case TYPE_INT128:
+    case TYPE_UINT128:
+        return type->llvm_ref = LLVMInt128Type();
     case TYPE_FLOAT:
         return type->llvm_ref = LLVMFloatType();
     case TYPE_DOUBLE:
@@ -1472,6 +1500,8 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_UINT:
     case TYPE_LONG:
     case TYPE_ULONG:
+    case TYPE_INT128:
+    case TYPE_UINT128:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER:

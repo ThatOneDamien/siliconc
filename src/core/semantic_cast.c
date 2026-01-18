@@ -377,28 +377,33 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
     {
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.kind = CONSTANT_INTEGER;
-        cast->expr.constant.val.i = inner->expr.constant.val.i;
         cast->const_eval = true;
         uint32_t from_bit_width = from->canonical->builtin.bit_size;
         uint32_t to_bit_width = to->canonical->builtin.bit_size;
+        Int128 val = inner->expr.constant.val.i;
         if(to_bit_width == 64)
+        {
+            cast->expr.constant.val.i = val;
             return;
+        }
 
-        uint64_t val = cast->expr.constant.val.i;
         uint32_t shift = 64 - to_bit_width; 
         bool to_signed = type_is_signed(to);
         if(from_bit_width < to_bit_width) // Extending
         {
             if(to_signed || type_is_unsigned(from))
+            {
+                cast->expr.constant.val.i = val;
                 return;
-            cast->expr.constant.val.i = (val << shift) >> shift;
+            }
+            cast->expr.constant.val.i = i128_lshr64(i128_shl64(val, shift), shift);
             return;
         }
 
         if(to_signed)
-            cast->expr.constant.val.i = (int64_t)(val << shift) >> shift;
+            cast->expr.constant.val.i = i128_ashr64(i128_shl64(val, shift), shift);
         else
-            cast->expr.constant.val.i = (val << shift) >> shift;
+            cast->expr.constant.val.i = i128_lshr64(i128_shl64(val, shift), shift);
         return;
     }
 
@@ -418,8 +423,8 @@ static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
-        cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->expr.constant.val.b = (inner->expr.constant.val.i.hi != 0 || inner->expr.constant.val.i.lo != 0);
+        cast->expr.constant.kind = CONSTANT_BOOL;
         cast->const_eval = true;
         return;
     }
@@ -432,7 +437,7 @@ static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner, Type* from, UNUSED 
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.f = (double)inner->expr.constant.val.i;
+        cast->expr.constant.val.f = i128_to_float(inner->expr.constant.val.i, from->kind);
         cast->expr.constant.kind = CONSTANT_FLOAT;
         cast->const_eval = true;
         return;
@@ -450,7 +455,7 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner,
     {
         cast->kind = EXPR_CONSTANT;
         cast->expr.constant.val.i = inner->expr.constant.val.i;
-        cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->expr.constant.kind = CONSTANT_POINTER;
         cast->const_eval = true;
         return;
     }
@@ -479,8 +484,8 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = (inner->expr.constant.val.f != 0.0);
-        cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->expr.constant.val.b = (inner->expr.constant.val.f != 0.0);
+        cast->expr.constant.kind = CONSTANT_BOOL;
         cast->const_eval = true;
         return;
     }
@@ -493,7 +498,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, 
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = (uint64_t)inner->expr.constant.val.f;
+        cast->expr.constant.val.i = i128_from_double(inner->expr.constant.val.f, to->kind);
         cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->const_eval = true;
         return;
@@ -511,8 +516,8 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = (inner->expr.constant.val.i != 0);
-        cast->expr.constant.kind = CONSTANT_INTEGER;
+        cast->expr.constant.val.b = (inner->expr.constant.val.i.hi != 0 || inner->expr.constant.val.i.lo != 0);
+        cast->expr.constant.kind = CONSTANT_BOOL;
         return;
     }
 
@@ -591,25 +596,26 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 #define DISTIN { rule_distinct           , cast_distinct }
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    // FROM              TO:   VOID    BOOL    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
-    [CAST_GROUP_VOID]      = { NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
-    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INT]       = { TOVOID, INTBOO, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
-    [CAST_GROUP_DISTINCT]  = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
+    // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
+    [CAST_GROUP_VOID]      = { NOTDEF, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
+    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, NOTDEF, INTINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_CHAR]      = { TOVOID, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]       = { TOVOID, INTBOO, NOTDEF, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, NOTDEF, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, NOTDEF, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
+    [CAST_GROUP_DISTINCT]  = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
 };
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_VOID]           = CAST_GROUP_VOID + 1,
     [TYPE_BOOL]           = CAST_GROUP_BOOL + 1,
-    [TYPE_CHAR]           = CAST_GROUP_INT + 1,
-    [TYPE_CHAR16]         = CAST_GROUP_INT + 1,
-    [TYPE_CHAR32]         = CAST_GROUP_INT + 1,
+    [TYPE_CHAR]           = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR16]         = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR32]         = CAST_GROUP_CHAR + 1,
     [TYPE_BYTE]           = CAST_GROUP_INT + 1,
     [TYPE_UBYTE]          = CAST_GROUP_INT + 1,
     [TYPE_SHORT]          = CAST_GROUP_INT + 1,
@@ -618,6 +624,8 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_UINT]           = CAST_GROUP_INT + 1,
     [TYPE_LONG]           = CAST_GROUP_INT + 1,
     [TYPE_ULONG]          = CAST_GROUP_INT + 1,
+    [TYPE_INT128]         = CAST_GROUP_INT + 1,
+    [TYPE_UINT128]        = CAST_GROUP_INT + 1,
     [TYPE_FLOAT]          = CAST_GROUP_FLOAT + 1,
     [TYPE_DOUBLE]         = CAST_GROUP_FLOAT + 1,
     [TYPE_POINTER]        = CAST_GROUP_PTR + 1,

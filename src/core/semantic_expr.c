@@ -234,7 +234,7 @@ static bool analyze_array_access(ASTExpr* expr)
 
     if(index_expr->kind == EXPR_CONSTANT)
     {
-        uint64_t idx = index_expr->expr.constant.val.i;
+        uint64_t idx = index_expr->expr.constant.val.i.lo;
         if(arr_t->kind == TYPE_STATIC_ARRAY && idx >= arr_t->array.static_len)
         {
             sic_diagnostic_at(DIAG_WARNING, expr->loc,
@@ -277,7 +277,7 @@ static bool analyze_array_init_list(ASTExpr* expr)
         ArrInitEntry* entry = list->data + i;
         if(entry->arr_index != NULL)
         {
-            if(!implicit_cast(&entry->arr_index, g_type_ulong))
+            if(!implicit_cast(&entry->arr_index, g_type_usize))
                 valid = false;
             else if(entry->arr_index->kind != EXPR_CONSTANT)
             {
@@ -286,7 +286,7 @@ static bool analyze_array_init_list(ASTExpr* expr)
             }
             else
             {
-                entry->const_index = entry->arr_index->expr.constant.val.i;
+                entry->const_index = entry->arr_index->expr.constant.val.i.lo;
                 next_index = entry->const_index + 1;
             }
         }

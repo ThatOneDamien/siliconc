@@ -56,6 +56,7 @@ typedef enum : int8_t
     CAST_GROUP_INVALID = -1,
     CAST_GROUP_VOID = 0,
     CAST_GROUP_BOOL,
+    CAST_GROUP_CHAR,
     CAST_GROUP_INT,
     CAST_GROUP_FLOAT,
     CAST_GROUP_PTR,
@@ -93,10 +94,12 @@ typedef enum : uint8_t
 typedef enum : uint8_t
 {
     CONSTANT_INVALID = 0,
-    CONSTANT_INTEGER,
+    CONSTANT_BOOL,
+    CONSTANT_CHAR,
     CONSTANT_FLOAT,
-    CONSTANT_STRING,
+    CONSTANT_INTEGER,
     CONSTANT_POINTER,
+    CONSTANT_STRING,
 } ConstantKind;
 
 typedef enum : uint8_t
@@ -374,6 +377,8 @@ typedef enum : uint8_t
     TOKEN_UINT,
     TOKEN_LONG,
     TOKEN_ULONG,
+    TOKEN_INT128,
+    TOKEN_UINT128,
     TOKEN_FLOAT,
     TOKEN_DOUBLE,
 
@@ -408,13 +413,13 @@ typedef enum : uint8_t
     TYPE_NUMERIC_START  = TYPE_BOOL,
 
     TYPE_CHAR,
-    TYPE_INTEGER_START  = TYPE_CHAR,
     TYPE_CHAR_START     = TYPE_CHAR,
     TYPE_CHAR16,
     TYPE_CHAR32,
     TYPE_CHAR_END       = TYPE_CHAR32,
 
     TYPE_BYTE,
+    TYPE_INTEGER_START  = TYPE_BYTE,
     TYPE_UBYTE,
     TYPE_SHORT,
     TYPE_USHORT,
@@ -422,7 +427,9 @@ typedef enum : uint8_t
     TYPE_UINT,
     TYPE_LONG,
     TYPE_ULONG,
-    TYPE_INTEGER_END    = TYPE_ULONG,
+    TYPE_INT128,
+    TYPE_UINT128,
+    TYPE_INTEGER_END    = TYPE_UINT128,
 
     TYPE_FLOAT,
     TYPE_FLOAT_START    = TYPE_FLOAT,
@@ -490,7 +497,9 @@ typedef enum : uint8_t
             case TYPE_INT:    \
             case TYPE_UINT:   \
             case TYPE_LONG:   \
-            case TYPE_ULONG
+            case TYPE_ULONG:  \
+            case TYPE_INT128: \
+            case TYPE_UINT128
                 
 #define FLOAT_TYPES           \
             TYPE_FLOAT:       \

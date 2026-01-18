@@ -44,20 +44,22 @@ static Type name =                      \
 
 static Type s_voidptr;
 
-BUILTIN_TYPE_DEF(s_bool  , TYPE_BOOL  , 1);
-BUILTIN_TYPE_DEF(s_char  , TYPE_CHAR  , 1);
-BUILTIN_TYPE_DEF(s_char16, TYPE_CHAR16, 2);
-BUILTIN_TYPE_DEF(s_char32, TYPE_CHAR32, 4);
-BUILTIN_TYPE_DEF(s_byte  , TYPE_BYTE  , 1);
-BUILTIN_TYPE_DEF(s_ubyte , TYPE_UBYTE , 1);
-BUILTIN_TYPE_DEF(s_short , TYPE_SHORT , 2);
-BUILTIN_TYPE_DEF(s_ushort, TYPE_USHORT, 2);
-BUILTIN_TYPE_DEF(s_int   , TYPE_INT   , 4);
-BUILTIN_TYPE_DEF(s_uint  , TYPE_UINT  , 4);
-BUILTIN_TYPE_DEF(s_long  , TYPE_LONG  , 8);
-BUILTIN_TYPE_DEF(s_ulong , TYPE_ULONG , 8);
-BUILTIN_TYPE_DEF(s_float , TYPE_FLOAT , 4);
-BUILTIN_TYPE_DEF(s_double, TYPE_DOUBLE, 8);
+BUILTIN_TYPE_DEF(s_bool   , TYPE_BOOL   , 1);
+BUILTIN_TYPE_DEF(s_char   , TYPE_CHAR   , 1);
+BUILTIN_TYPE_DEF(s_char16 , TYPE_CHAR16 , 2);
+BUILTIN_TYPE_DEF(s_char32 , TYPE_CHAR32 , 4);
+BUILTIN_TYPE_DEF(s_byte   , TYPE_BYTE   , 1);
+BUILTIN_TYPE_DEF(s_ubyte  , TYPE_UBYTE  , 1);
+BUILTIN_TYPE_DEF(s_short  , TYPE_SHORT  , 2);
+BUILTIN_TYPE_DEF(s_ushort , TYPE_USHORT , 2);
+BUILTIN_TYPE_DEF(s_int    , TYPE_INT    , 4);
+BUILTIN_TYPE_DEF(s_uint   , TYPE_UINT   , 4);
+BUILTIN_TYPE_DEF(s_long   , TYPE_LONG   , 8);
+BUILTIN_TYPE_DEF(s_ulong  , TYPE_ULONG  , 8);
+BUILTIN_TYPE_DEF(s_int128 , TYPE_INT128 , 16);
+BUILTIN_TYPE_DEF(s_uint128, TYPE_UINT128, 16);
+BUILTIN_TYPE_DEF(s_float  , TYPE_FLOAT  , 4);
+BUILTIN_TYPE_DEF(s_double , TYPE_DOUBLE , 8);
 
 TYPE_DEF(s_invalid  , TYPE_INVALID);
 TYPE_DEF(s_void     , TYPE_VOID, .ptr_cache = &s_voidptr);
@@ -87,6 +89,8 @@ Type* const g_type_int       = &s_int;
 Type* const g_type_uint      = &s_uint;
 Type* const g_type_long      = &s_long;
 Type* const g_type_ulong     = &s_ulong;
+Type* const g_type_int128    = &s_int128;
+Type* const g_type_uint128   = &s_uint128;
 Type* const g_type_float     = &s_float;
 Type* const g_type_double    = &s_double;
 Type* const g_type_init_list = &s_init_list;
@@ -97,7 +101,7 @@ Type* const g_type_uptr      = &s_uptr;
 Type* const g_type_isize     = &s_isize;
 Type* const g_type_usize     = &s_usize;
 
-static Type* builtin_type_lookup[] = {
+static Type* builtin_type_lookup[TOKEN_TYPENAME_END - TOKEN_TYPENAME_START + 1] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
     [TOKEN_BOOL    - TOKEN_TYPENAME_START] = &s_bool,
     [TOKEN_CHAR    - TOKEN_TYPENAME_START] = &s_char,
@@ -111,12 +115,14 @@ static Type* builtin_type_lookup[] = {
     [TOKEN_UINT    - TOKEN_TYPENAME_START] = &s_uint,
     [TOKEN_LONG    - TOKEN_TYPENAME_START] = &s_long,
     [TOKEN_ULONG   - TOKEN_TYPENAME_START] = &s_ulong,
+    [TOKEN_INT128  - TOKEN_TYPENAME_START] = &s_int128,
+    [TOKEN_UINT128 - TOKEN_TYPENAME_START] = &s_uint128,
+    [TOKEN_FLOAT   - TOKEN_TYPENAME_START] = &s_float,
+    [TOKEN_DOUBLE  - TOKEN_TYPENAME_START] = &s_double,
     [TOKEN_IPTR    - TOKEN_TYPENAME_START] = &s_iptr,
     [TOKEN_UPTR    - TOKEN_TYPENAME_START] = &s_uptr,
     [TOKEN_ISIZE   - TOKEN_TYPENAME_START] = &s_isize,
     [TOKEN_USIZE   - TOKEN_TYPENAME_START] = &s_usize,
-    [TOKEN_FLOAT   - TOKEN_TYPENAME_START] = &s_float,
-    [TOKEN_DOUBLE  - TOKEN_TYPENAME_START] = &s_double,
 };
 
 void builtin_type_init()

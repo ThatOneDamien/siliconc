@@ -659,20 +659,24 @@ static bool parse_type_or_expr(Lexer* l, TypeLoc* type_loc, ASTExpr** expr, bool
     case TOKEN_VOID:
     case TOKEN_BOOL:
     case TOKEN_CHAR:
-    case TOKEN_UBYTE:
+    case TOKEN_CHAR16:
+    case TOKEN_CHAR32:
     case TOKEN_BYTE:
-    case TOKEN_USHORT:
+    case TOKEN_UBYTE:
     case TOKEN_SHORT:
-    case TOKEN_UINT:
+    case TOKEN_USHORT:
     case TOKEN_INT:
-    case TOKEN_ULONG:
+    case TOKEN_UINT:
     case TOKEN_LONG:
+    case TOKEN_ULONG:
+    case TOKEN_INT128:
+    case TOKEN_UINT128:
+    case TOKEN_FLOAT:
+    case TOKEN_DOUBLE:
     case TOKEN_IPTR:
     case TOKEN_UPTR:
     case TOKEN_ISIZE:
     case TOKEN_USIZE:
-    case TOKEN_FLOAT:
-    case TOKEN_DOUBLE:
         ty = type_from_token(kind);
         advance(l);
         goto TYPE_SUFFIX;
@@ -1400,8 +1404,7 @@ static ASTExpr* parse_negation(Lexer* l)
     {
         if(inner->expr.constant.kind == CONSTANT_INTEGER)
         {
-            // FIXME: Check bounds.
-            inner->expr.constant.val.i = -inner->expr.constant.val.i;
+            inner->expr.constant.val.i = i128_neg(inner->expr.constant.val.i);
             return inner;
         }
         if(inner->expr.constant.kind == CONSTANT_FLOAT)
@@ -1431,106 +1434,80 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
 
 }
 
-static ASTExpr* parse_binary_literal(Lexer* l)
+static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    advance(l);
 
-    const char* src = peek_prev(l)->start;
-    uint64_t val = 0;
+    const char* src = peek(l)->start;
+    Int128 val = (Int128){ 0, 0 };
     for(uint32_t i = 2; i < expr->loc.len; ++i)
     {
         if(src[i] == '_')
             continue;
-        if(val > (UINT64_MAX >> 1))
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
-        val = (val << 1) + src[i] - '0';
+        if(val.hi > (UINT64_MAX >> bits_per_digit))
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum supported integer literal value.");
+        uint64_t hex_val = g_hex_char_to_val[(uint8_t)src[i]] - 1;
+        SIC_ASSERT(hex_val < 16);
+        val = i128_add64(i128_shl64(val, bits_per_digit), hex_val);
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
+    if(val.hi != 0)
+        expr->type = g_type_uint128;
+    else if(val.lo > UINT32_MAX)
+        expr->type = g_type_ulong;
+    else
+        expr->type = g_type_uint;
 
     // TODO: Deal with the suffix.
-    return expr;
-}
 
-static ASTExpr* parse_octal_literal(Lexer* l)
-{
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
-
-    const char* src = peek_prev(l)->start;
-    uint64_t val = 0;
-    for(uint32_t i = 2; i < expr->loc.len; ++i)
-    {
-        if(src[i] == '_')
-            continue;
-        if(val > (UINT64_MAX >> 3))
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
-        val = (val << 3) + src[i] - '0';
-    }
-
-    expr->expr.constant.val.i = val;
-    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
-
-    // TODO: Deal with the suffix.
     return expr;
+
 }
+
+static ASTExpr* parse_binary_literal(Lexer* l) { return parse_pow_2_int_literal(l, 1); }
+static ASTExpr* parse_octal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 3); }
+static ASTExpr* parse_hexadecimal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 4); }
 
 static ASTExpr* parse_decimal_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    advance(l);
 
-    const char* src = peek_prev(l)->start;
-    uint64_t val = 0;
+    const char* src = peek(l)->start;
+    Int128 val = (Int128){ 0, 0 };
     for(uint32_t i = 0; i < expr->loc.len; ++i)
     {
         if(src[i] == '_')
             continue;
         uint64_t digit = src[i] - '0';
-        if(val > (UINT64_MAX - digit) / 10)
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
-        val = (val * 10) + digit;
+        uint64_t prev = val.hi;
+        val = i128_add64(i128_mult64(val, 10), digit);
+        if(val.hi < prev)
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum supported integer literal value.");
     }
 
     expr->expr.constant.val.i = val;
-    expr->type = val > INT32_MAX ? (val > INT64_MAX ? g_type_ulong : g_type_long) : g_type_int;
+    if(val.hi > INT64_MAX)
+        expr->type = g_type_uint128;
+    else if(val.hi != 0)
+        expr->type = g_type_int128;
+    else if(val.lo > INT32_MAX)
+        expr->type = g_type_long;
+    else
+        expr->type = g_type_int;
 
     // TODO: Deal with the suffix.
-    return expr;
-}
 
-static ASTExpr* parse_hexadecimal_literal(Lexer* l)
-{
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
     advance(l);
-
-    const char* src = peek_prev(l)->start;
-    uint64_t val = 0;
-    for(uint32_t i = 2; i < expr->loc.len; ++i)
-    {
-        if(src[i] == '_')
-            continue;
-        if(val > (UINT64_MAX >> 4))
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum possible 64 bit value.");
-        uint64_t hex_val = g_hex_char_to_val[(uint8_t)src[i]] - 1;
-        SIC_ASSERT(hex_val < 16);
-        val = (val << 4) + hex_val;
-    }
-
-    expr->expr.constant.val.i = val;
-    expr->type = val > UINT32_MAX ? g_type_ulong : g_type_uint;
-
-    // TODO: Deal with the suffix.
     return expr;
-    
 }
+
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    expr->expr.constant.val.i = peek(l)->chr.val; // Hack for now
+    expr->expr.constant.val.c = peek(l)->chr.val;
     switch(peek(l)->chr.size)
     {
     case 1:
@@ -1552,8 +1529,7 @@ static ASTExpr* parse_char_literal(Lexer* l)
 static ASTExpr* parse_float_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_FLOAT);
-    advance(l);
-    const char* src = peek_prev(l)->start;
+    const char* src = peek(l)->start;
     double val = 0.0f;
     uint32_t index = 0;
     while(true)
@@ -1591,6 +1567,7 @@ static ASTExpr* parse_float_literal(Lexer* l)
 END:
     expr->type = val > FLT_MAX ? g_type_double : g_type_float;
     expr->expr.constant.val.f = val;
+    advance(l);
     return expr;
 }
 
@@ -1606,8 +1583,8 @@ static ASTExpr* parse_string_literal(Lexer* l)
 
 static ASTExpr* parse_bool_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    expr->expr.constant.val.i = peek(l)->kind == TOKEN_TRUE;
+    ASTExpr* expr = new_constant(l, CONSTANT_BOOL);
+    expr->expr.constant.val.b = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
     return expr;
@@ -1616,7 +1593,7 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 static ASTExpr* parse_nullptr(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_POINTER);
-    expr->expr.constant.val.i = 0;
+    expr->expr.constant.val.i = (Int128){ 0, 0 };
     expr->type = g_type_voidptr;
     advance(l);
     return expr;
@@ -1667,6 +1644,7 @@ static inline void parser_error(Lexer* l, const char* message, ...)
     va_list va;
     va_start(va, message);
     sic_diagnostic_atv(DIAG_ERROR, peek(l)->loc, message, va);
+    advance(l);
     va_end(va);
 }
 

@@ -53,6 +53,49 @@ struct ScratchBuffer
     size_t len;
 };
 
+// arith.c
+#define INT128_MIN  ((Int128){ INT64_MIN, 0 })
+#define INT128_MAX  ((Int128){ INT64_MAX, UINT64_MAX })
+#define UINT128_MIN ((Int128){ 0, 0 })
+#define UINT128_MAX ((Int128){ UINT64_MAX, UINT64_MAX })
+Int128   i128_add(Int128 lhs, Int128 rhs);
+Int128   i128_add64(Int128 lhs, uint64_t rhs);
+Int128   i128_sub(Int128 lhs, Int128 rhs);
+Int128   i128_sub64(Int128 lhs, uint64_t rhs);
+Int128   i128_and(Int128 lhs, Int128 rhs);
+Int128   i128_or(Int128 lhs, Int128 rhs);
+Int128   i128_xor(Int128 lhs, Int128 rhs);
+Int128   i128_neg(Int128 lhs);
+Int128   i128_not(Int128 lhs);
+Int128   i128_mult(Int128 lhs, Int128 rhs);
+Int128   i128_mult64(Int128 lhs, uint64_t rhs);
+char     *i128_to_string(Int128 op, uint64_t base, bool is_signed, bool use_prefix);
+bool     i128_is_neg(Int128 op);
+int      i128_ucmp(Int128 lhs, Int128 rhs);
+int      i128_scmp(Int128 lhs, Int128 rhs);
+int      i128_cmp(Int128 lhs, Int128 rhs, TypeKind kind);
+Int128   i128_shl64(Int128 lhs, uint64_t amount);
+Int128   i128_shl(Int128 lhs, Int128 rhs);
+Int128   i128_ashr64(Int128 lhs, uint64_t amount);
+Int128   i128_ashr(Int128 lhs, Int128 rhs);
+Int128   i128_lshr64(Int128 lhs, uint64_t amount);
+Int128   i128_lshr(Int128 lhs, Int128 rhs);
+Int128   i128_udiv(Int128 lhs, Int128 rhs);
+Int128   i128_sdiv(Int128 lhs, Int128 rhs);
+Int128   i128_urem(Int128 lhs, Int128 rhs);
+Int128   i128_srem(Int128 lhs, Int128 rhs);
+void     i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem);
+double   i128_to_float(Int128 op, TypeKind kind);
+double   i128_to_float_signed(Int128 op);
+double   i128_to_float_unsigned(Int128 op);
+bool     i128_is_zero(Int128 op);
+uint32_t i128_clz(const Int128 *op);
+uint32_t i128_ctz(const Int128 *op);
+Int128   i128_from_signed(int64_t i);
+Int128   i128_from_double(double x, TypeKind kind);
+Int128   i128_unsigned_from_double(double x);
+Int128   i128_signed_from_double(double x);
+
 // hash.c - Hashmap functions
 void    hashmap_reserve(HashMap* map, uint32_t entry_cnt);
 void    hashmap_put(HashMap* map, Symbol key, Object* val);
