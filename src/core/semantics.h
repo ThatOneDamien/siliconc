@@ -71,12 +71,12 @@ static inline void const_int_correct(ASTExpr* expr)
     SIC_ASSERT(expr->kind == EXPR_CONSTANT &&
                expr->expr.constant.kind == CONSTANT_INTEGER);
     Type* ctype = expr->type->canonical;
-    BitSize shift = ctype->builtin.bit_size;
-    Int128 val = i128_shl64(expr->expr.constant.val.i, shift);
+    BitSize shift = 128 - ctype->builtin.bit_size;
+    Int128 val = i128_shl64(expr->expr.constant.i, shift);
     if(type_is_signed(ctype))
-        expr->expr.constant.val.i = i128_ashr64(val, shift);
+        expr->expr.constant.i = i128_ashr64(val, shift);
     else
-        expr->expr.constant.val.i = i128_lshr64(val, shift);
+        expr->expr.constant.i = i128_lshr64(val, shift);
 }
 
 static inline bool expr_ensure_lvalue(ASTExpr* expr)

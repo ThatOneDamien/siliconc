@@ -109,7 +109,7 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     new_cast->evaluated = true;
     new_cast->type = desired;
 
-    rule.conversion(new_cast, prev, params.from, params.to);
+    rule.conversion(new_cast, prev, params.from->canonical, params.to->canonical);
 
     *expr_to_cast = new_cast;
     return true;
@@ -295,7 +295,7 @@ static bool rule_init_list_to_arr(CastParams* params)
             CAST_ERROR("String literal can only be casted to char[], ubyte[], or byte[].");
             return false;
         }
-        uint64_t str_len = params->inner->expr.constant.val.str_len;
+        uint64_t str_len = params->inner->expr.constant.str.len;
         if(arr_size >= str_len)
         {
             CAST_ERROR("Length of array(%lu) is smaller than length of string literal(%lu).",
@@ -380,30 +380,30 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
         cast->const_eval = true;
         uint32_t from_bit_width = from->canonical->builtin.bit_size;
         uint32_t to_bit_width = to->canonical->builtin.bit_size;
-        Int128 val = inner->expr.constant.val.i;
-        if(to_bit_width == 64)
+        Int128 val = inner->expr.constant.i;
+        if(to_bit_width == 128)
         {
-            cast->expr.constant.val.i = val;
+            cast->expr.constant.i = val;
             return;
         }
 
-        uint32_t shift = 64 - to_bit_width; 
+        uint32_t shift = 128 - to_bit_width; 
         bool to_signed = type_is_signed(to);
         if(from_bit_width < to_bit_width) // Extending
         {
             if(to_signed || type_is_unsigned(from))
             {
-                cast->expr.constant.val.i = val;
+                cast->expr.constant.i = val;
                 return;
             }
-            cast->expr.constant.val.i = i128_lshr64(i128_shl64(val, shift), shift);
+            cast->expr.constant.i = i128_lshr64(i128_shl64(val, shift), shift);
             return;
         }
 
         if(to_signed)
-            cast->expr.constant.val.i = i128_ashr64(i128_shl64(val, shift), shift);
+            cast->expr.constant.i = i128_ashr64(i128_shl64(val, shift), shift);
         else
-            cast->expr.constant.val.i = i128_lshr64(i128_shl64(val, shift), shift);
+            cast->expr.constant.i = i128_lshr64(i128_shl64(val, shift), shift);
         return;
     }
 
@@ -423,7 +423,7 @@ static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.b = (inner->expr.constant.val.i.hi != 0 || inner->expr.constant.val.i.lo != 0);
+        cast->expr.constant.b = (inner->expr.constant.i.hi != 0 || inner->expr.constant.i.lo != 0);
         cast->expr.constant.kind = CONSTANT_BOOL;
         cast->const_eval = true;
         return;
@@ -437,7 +437,7 @@ static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner, Type* from, UNUSED 
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.f = i128_to_float(inner->expr.constant.val.i, from->kind);
+        cast->expr.constant.f = i128_to_float(inner->expr.constant.i, from->kind);
         cast->expr.constant.kind = CONSTANT_FLOAT;
         cast->const_eval = true;
         return;
@@ -454,7 +454,7 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.i = inner->expr.constant.i;
         cast->expr.constant.kind = CONSTANT_POINTER;
         cast->const_eval = true;
         return;
@@ -469,7 +469,7 @@ static void cast_float_to_float(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.f = inner->expr.constant.val.f;
+        cast->expr.constant.f = inner->expr.constant.f;
         cast->expr.constant.kind = CONSTANT_FLOAT;
         cast->const_eval = true;
         return;
@@ -484,7 +484,7 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.b = (inner->expr.constant.val.f != 0.0);
+        cast->expr.constant.b = (inner->expr.constant.f != 0.0);
         cast->expr.constant.kind = CONSTANT_BOOL;
         cast->const_eval = true;
         return;
@@ -498,7 +498,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, 
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = i128_from_double(inner->expr.constant.val.f, to->kind);
+        cast->expr.constant.i = i128_from_double(inner->expr.constant.f, to->kind);
         cast->expr.constant.kind = CONSTANT_INTEGER;
         cast->const_eval = true;
         return;
@@ -516,7 +516,7 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.b = (inner->expr.constant.val.i.hi != 0 || inner->expr.constant.val.i.lo != 0);
+        cast->expr.constant.b = (inner->expr.constant.i.hi != 0 || inner->expr.constant.i.lo != 0);
         cast->expr.constant.kind = CONSTANT_BOOL;
         return;
     }
@@ -531,7 +531,7 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.i = inner->expr.constant.i;
         cast->expr.constant.kind = CONSTANT_INTEGER;
         return;
     }
@@ -546,7 +546,7 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner,
     if(inner->kind == EXPR_CONSTANT)
     {
         cast->kind = EXPR_CONSTANT;
-        cast->expr.constant.val.i = inner->expr.constant.val.i;
+        cast->expr.constant.i = inner->expr.constant.i;
         cast->expr.constant.kind = CONSTANT_POINTER;
         return;
     }
@@ -581,7 +581,7 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 #define NOTDEF { rule_not_defined        , NULL }
 #define TOVOID { rule_explicit_only      , cast_any_to_void }
 #define INTINT { rule_size_change        , cast_int_to_int }
-#define INTBOO { rule_always             , cast_int_to_bool }
+#define INTBOO { rule_explicit_only      , cast_int_to_bool }
 #define INTFLT { rule_always             , cast_int_to_float }
 #define INTPTR { rule_explicit_only      , cast_int_to_ptr }
 #define FLTFLT { rule_size_change        , cast_float_to_float }

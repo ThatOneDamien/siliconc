@@ -84,6 +84,14 @@ typedef enum : uint8_t
     CAST_REINTERPRET,
 } CastKind;
 
+typedef enum : uint8_t
+{
+    CHAR_ENCODING_INVALID = 0,
+    CHAR_ENCODING_UTF8    = 1,
+    CHAR_ENCODING_UTF16   = 2,
+    CHAR_ENCODING_UTF32   = 4,
+} CharEncoding;
+
 // Could be expanded later to support multiple architectures.
 typedef enum : uint8_t
 {
@@ -215,6 +223,7 @@ typedef enum : uint8_t
     PREC_ADD_SUB,
     PREC_SHIFTS,
     PREC_MUL_DIV_MOD,
+    PREC_CAST,
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
@@ -408,9 +417,7 @@ typedef enum : uint8_t
 {
     TYPE_INVALID = 0,
     TYPE_VOID,
-    TYPE_BUILTIN_START  = TYPE_VOID,
     TYPE_BOOL,
-    TYPE_NUMERIC_START  = TYPE_BOOL,
 
     TYPE_CHAR,
     TYPE_CHAR_START     = TYPE_CHAR,
@@ -419,6 +426,7 @@ typedef enum : uint8_t
     TYPE_CHAR_END       = TYPE_CHAR32,
 
     TYPE_BYTE,
+    TYPE_NUMERIC_START  = TYPE_BYTE,
     TYPE_INTEGER_START  = TYPE_BYTE,
     TYPE_UBYTE,
     TYPE_SHORT,
@@ -436,7 +444,6 @@ typedef enum : uint8_t
     TYPE_DOUBLE,
     TYPE_FLOAT_END      = TYPE_DOUBLE,
     TYPE_NUMERIC_END    = TYPE_DOUBLE,
-    TYPE_BUILTIN_END    = TYPE_DOUBLE,
 
     TYPE_POINTER,
     TYPE_FUNC_PTR,

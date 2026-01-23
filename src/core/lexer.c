@@ -22,15 +22,15 @@ static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
 static inline void     extract_ct_identifier(Lexer* l, Token* t);
 static inline void     extract_attr_identifier(Lexer* l, Token* t);
-static inline void     extract_char_literal(Lexer* l, Token* t, ByteSize literal_size);
-static inline void     extract_string_literal(Lexer* l, Token* t, ByteSize literal_size);
+static inline void     extract_char_literal(Lexer* l, Token* t, CharEncoding encoding);
+static inline void     extract_string_literal(Lexer* l, Token* t, CharEncoding encoding);
 static inline void     extract_raw_string_literal(Lexer* l, Token* t);
 static inline void     extract_base_2(Lexer* l, Token* t);
 static inline void     extract_base_8(Lexer* l, Token* t);
 static inline void     extract_base_10(Lexer* l, Token* t);
 static inline void     extract_base_16(Lexer* l, Token* t);
 static inline bool     extract_num_suffix(Lexer* l, bool* is_float);
-static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, ByteSize literal_size);
+static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding encoding);
 static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint);
 static inline ByteSize unicode_to_utf8(uint32_t* value);
 static inline bool     consume(Lexer* l, char c);
@@ -230,12 +230,36 @@ void lexer_advance(Lexer* l)
             t->kind = TOKEN_SUB;
         break;
     case '\'':
-        // TODO: Change this to accept prefix.
-        extract_char_literal(l, t, 1);
-        return;
+        extract_char_literal(l, t, CHAR_ENCODING_UTF8);
+        break;
     case '\"':
-        // TODO: Change this to accept prefix.
-        extract_string_literal(l, t, 1);
+        extract_string_literal(l, t, CHAR_ENCODING_UTF8);
+        break;
+    case 'u':
+        switch(peek(l))
+        {
+        case '\'': 
+            extract_char_literal(l, t, CHAR_ENCODING_UTF16);
+            break;
+        case '\"':
+            extract_string_literal(l, t, CHAR_ENCODING_UTF16);
+            break;
+        default:
+            goto IDENT;
+        }
+        break;
+    case 'U':
+        switch(peek(l))
+        {
+        case '\'': 
+            extract_char_literal(l, t, CHAR_ENCODING_UTF32);
+            break;
+        case '\"':
+            extract_string_literal(l, t, CHAR_ENCODING_UTF32);
+            break;
+        default:
+            goto IDENT;
+        }
         break;
     case '`':
         extract_raw_string_literal(l, t);
@@ -298,7 +322,6 @@ void lexer_advance(Lexer* l)
     case 'R':
     case 'S':
     case 'T':
-    case 'U':
     case 'V':
     case 'W':
     case 'X':
@@ -324,12 +347,12 @@ void lexer_advance(Lexer* l)
     case 'r':
     case 's':
     case 't':
-    case 'u':
     case 'v':
     case 'w':
     case 'x':
     case 'y':
     case 'z':
+    IDENT:
         extract_identifier(l, t);
         return;
     case '#':
@@ -430,9 +453,9 @@ static inline void extract_attr_identifier(Lexer* l, Token* t)
     t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
 }
 
-static inline void extract_char_literal(Lexer* l, Token* t, ByteSize literal_size)
+static inline void extract_char_literal(Lexer* l, Token* t, CharEncoding encoding)
 {
-    ByteSize len = next_char_in_literal(l, &t->chr.val, 1);
+    ByteSize len = next_char_in_literal(l, &t->chr.val, CHAR_ENCODING_UTF8);
     if(len == 0)
         t->kind = TOKEN_INVALID;
 
@@ -455,7 +478,7 @@ static inline void extract_char_literal(Lexer* l, Token* t, ByteSize literal_siz
         lexer_error(l, t, "Multi-character char literals are not allowed.");
         return;
     }
-    if(len > literal_size)
+    if(len > (ByteSize)encoding)
     {
         lexer_error(l, t, "Value of char literal cannot fit in its containing "
                           "type. For char16 and char32 add prefix u/U respectively.");
@@ -464,7 +487,7 @@ static inline void extract_char_literal(Lexer* l, Token* t, ByteSize literal_siz
     t->kind = TOKEN_CHAR_LITERAL;
 }
 
-static inline void extract_string_literal(Lexer* l, Token* t, ByteSize literal_size)
+static inline void extract_string_literal(Lexer* l, Token* t, CharEncoding encoding)
 {
     StringBuilder sb;
     da_init(&sb, 256);
@@ -480,7 +503,7 @@ static inline void extract_string_literal(Lexer* l, Token* t, ByteSize literal_s
         }
 
         uint32_t value;
-        ByteSize len = next_char_in_literal(l, &value, literal_size);
+        ByteSize len = next_char_in_literal(l, &value, encoding);
         if(!errored && len == 0)
         {
             errored = true;
@@ -688,7 +711,7 @@ static inline bool extract_num_suffix(Lexer* l, bool* is_float)
     }
 }
 
-static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, ByteSize literal_size)
+static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding encoding)
 {
     if(peek(l) == '\\')
     {
@@ -827,8 +850,16 @@ UNICODE:
     // If we are here, value is a unicode codepoint that
     // now needs to be converted to the encoding specified
     // by the literal width
-    if(literal_size == 1) return unicode_to_utf8(value);
-    SIC_TODO();
+    switch(encoding)
+    {
+    case CHAR_ENCODING_UTF8:
+        return unicode_to_utf8(value);
+    case CHAR_ENCODING_UTF16:
+    case CHAR_ENCODING_UTF32:
+    default:
+        SIC_UNREACHABLE();
+    }
+    
 }
 
 static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint)

@@ -1404,12 +1404,12 @@ static ASTExpr* parse_negation(Lexer* l)
     {
         if(inner->expr.constant.kind == CONSTANT_INTEGER)
         {
-            inner->expr.constant.val.i = i128_neg(inner->expr.constant.val.i);
+            inner->expr.constant.i = i128_neg(inner->expr.constant.i);
             return inner;
         }
         if(inner->expr.constant.kind == CONSTANT_FLOAT)
         {
-            inner->expr.constant.val.f = -inner->expr.constant.val.f;
+            inner->expr.constant.f = -inner->expr.constant.f;
             return inner;
         }
     }
@@ -1451,7 +1451,7 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
         val = i128_add64(i128_shl64(val, bits_per_digit), hex_val);
     }
 
-    expr->expr.constant.val.i = val;
+    expr->expr.constant.i = val;
     if(val.hi != 0)
         expr->type = g_type_uint128;
     else if(val.lo > UINT32_MAX)
@@ -1487,10 +1487,10 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
             ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum supported integer literal value.");
     }
 
-    expr->expr.constant.val.i = val;
+    expr->expr.constant.i = val;
     if(val.hi > INT64_MAX)
         expr->type = g_type_uint128;
-    else if(val.hi != 0)
+    else if(val.hi != 0 || val.lo > INT64_MAX)
         expr->type = g_type_int128;
     else if(val.lo > INT32_MAX)
         expr->type = g_type_long;
@@ -1506,17 +1506,17 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
-    expr->expr.constant.val.c = peek(l)->chr.val;
-    switch(peek(l)->chr.size)
+    ASTExpr* expr = new_constant(l, CONSTANT_CHAR);
+    expr->expr.constant.c = peek(l)->chr.val;
+    switch(peek(l)->chr.encoding)
     {
-    case 1:
+    case CHAR_ENCODING_UTF8:
         expr->type = g_type_char;
         break;
-    case 2:
+    case CHAR_ENCODING_UTF16:
         expr->type = g_type_char16;
         break;
-    case 4:
+    case CHAR_ENCODING_UTF32:
         expr->type = g_type_char32;
         break;
     default:
@@ -1566,7 +1566,7 @@ static ASTExpr* parse_float_literal(Lexer* l)
 
 END:
     expr->type = val > FLT_MAX ? g_type_double : g_type_float;
-    expr->expr.constant.val.f = val;
+    expr->expr.constant.f = val;
     advance(l);
     return expr;
 }
@@ -1574,8 +1574,9 @@ END:
 static ASTExpr* parse_string_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_STRING);
-    expr->expr.constant.val.str = peek(l)->str.val;
-    expr->expr.constant.val.str_len = peek(l)->str.len;
+    expr->expr.constant.str.val = peek(l)->str.val;
+    expr->expr.constant.str.len = peek(l)->str.len;
+    expr->expr.constant.str.encoding = peek(l)->str.encoding;
     expr->type = g_type_str_lit;
     advance(l);
     return expr;
@@ -1584,7 +1585,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
 static ASTExpr* parse_bool_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_BOOL);
-    expr->expr.constant.val.b = peek(l)->kind == TOKEN_TRUE;
+    expr->expr.constant.b = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
     return expr;
@@ -1593,7 +1594,7 @@ static ASTExpr* parse_bool_literal(Lexer* l)
 static ASTExpr* parse_nullptr(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_POINTER);
-    expr->expr.constant.val.i = (Int128){ 0, 0 };
+    expr->expr.constant.i = (Int128){ 0, 0 };
     expr->type = g_type_voidptr;
     advance(l);
     return expr;
@@ -1830,7 +1831,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
     [TOKEN_RANGE]           = { NULL, parse_range, PREC_RANGE },
 
-    [TOKEN_AS]              = { NULL, parse_cast, PREC_PRIMARY_POSTFIX },
+    [TOKEN_AS]              = { NULL, parse_cast, PREC_CAST },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },

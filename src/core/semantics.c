@@ -550,7 +550,7 @@ static void analyze_if(ASTStmt* stmt)
     }
     if(if_stmt->cond->kind == EXPR_CONSTANT)
     {
-        if(if_stmt->cond->expr.constant.val.i)
+        if(if_stmt->cond->expr.constant.b)
         {
             sic_diagnostic_at(DIAG_WARNING, if_stmt->cond->loc,
                               "Condition always evaluates to true, consider "
@@ -622,9 +622,10 @@ static void analyze_switch(ASTStmt* stmt)
             for(uint32_t j = 0; j < i; ++j)
             {
                 ASTCase* other = swi->cases.data + j;
-                if(other->expr->expr.constant.val.i == cas->expr->expr.constant.val.i)
+                if(i128_ucmp(other->expr->expr.constant.i, cas->expr->expr.constant.i) == 0)
                 {
-                    sic_error_at(cas->expr->loc, "Duplicate case for value %lu.", cas->expr->expr.constant.val.i);
+                    // TODO: Fix print for i128
+                    sic_error_at(cas->expr->loc, "Duplicate case for value %lu.", cas->expr->expr.constant.i.hi);
                     sic_diagnostic_at(DIAG_NOTE, other->expr->loc, "Previous case statement here.");
                     goto CASE_BODY;
                 }
@@ -656,7 +657,7 @@ static void analyze_while(ASTStmt* stmt)
     analyze_stmt(while_stmt->body, true);
     g_sema->block_context = context;
     if(while_stmt->cond->kind == EXPR_CONSTANT &&
-       !while_stmt->cond->expr.constant.val.i)
+       !while_stmt->cond->expr.constant.b)
     {
         sic_diagnostic_at(DIAG_WARNING, while_stmt->cond->loc,
                           "Condition always evaluates to false, consider "
@@ -677,7 +678,7 @@ static void analyze_ct_assert(ASTStmt* stmt)
                                          "compile-time evaluable boolean value.");
         return;
     }
-    SIC_ASSERT(assert_->cond->expr.constant.kind == CONSTANT_INTEGER);
+    SIC_ASSERT(assert_->cond->expr.constant.kind == CONSTANT_BOOL);
     if(assert_->err_msg->kind != EXPR_CONSTANT ||
        assert_->err_msg->expr.constant.kind != CONSTANT_STRING)
     {
@@ -685,9 +686,9 @@ static void analyze_ct_assert(ASTStmt* stmt)
                                             "compile-time evaluable string.");
         return;
     }
-    if(!assert_->cond->expr.constant.val.i)
+    if(!assert_->cond->expr.constant.b)
     {
-        sic_error_at(stmt->loc, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.val.str);
+        sic_error_at(stmt->loc, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.str.val);
     }
 }
 
@@ -855,13 +856,16 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
     type->canonical = type->kind == TYPE_ENUM ? enum_->underlying.type : type;
 
     uint32_t scope = push_scope();
-    uint64_t last_value = -1;
+    Int128 next_value = (Int128){ 0, 0 };
     for(uint32_t i = 0; i < enum_->values.size; ++i)
     {
         ObjEnumValue* value = enum_->values.data[i];
         value->enum_type = type;
         if(value->raw_value == NULL)
-            value->const_value = ++last_value;
+        {
+            value->const_value = next_value;
+            next_value = i128_add64(next_value, 1);
+        }
         else if(!analyze_expr(value->raw_value))
             goto ERR;
         else if(value->raw_value->kind != EXPR_CONSTANT)
@@ -872,7 +876,10 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
         else if(!implicit_cast(&value->raw_value, enum_->underlying.type))
             goto ERR;
         else
-            last_value = value->const_value = value->raw_value->expr.constant.val.i;
+        {
+            value->const_value = value->raw_value->expr.constant.i;
+            next_value = i128_add64(value->const_value, 1);
+        }
         push_obj(&value->header);
     }
     pop_scope(scope);

@@ -17,6 +17,7 @@ typedef uint32_t    ByteSize;
 
 // Compiler-Wide Data Structures
 typedef struct Int128           Int128;
+typedef struct ConstString      ConstString;
 typedef struct HashEntry        HashEntry;
 typedef struct HashMap          HashMap;
 typedef struct MemArena         MemArena;
@@ -102,6 +103,13 @@ struct Int128
     uint64_t lo;
 };
 
+struct ConstString
+{
+    char*        val;
+    uint32_t     len;
+    CharEncoding encoding;
+};
+
 struct HashEntry
 {
     Symbol     key;
@@ -138,16 +146,12 @@ struct Token
     TokenKind   kind;
     union
     {
-        struct
-        {
-            char*  val;
-            size_t len;
-        } str;
+        ConstString str;
 
         struct
         {
-            uint32_t val;
-            ByteSize size;
+            uint32_t     val;
+            CharEncoding encoding;
         } chr;
 
         Symbol sym;
@@ -378,16 +382,12 @@ struct ASTExprConstant
     ConstantKind  kind;
     union
     {
-        Int128   i;
-        double   f;
-        bool     b;
-        uint32_t c; // char
-        struct
-        {
-            char*  str;
-            size_t str_len;
-        };
-    } val;
+        Int128      i;
+        double      f;
+        bool        b;
+        uint32_t    c; // char
+        ConstString str;
+    };
 };
 
 struct ASTExprMAccess
@@ -575,7 +575,7 @@ struct ObjEnumValue
     union
     {
         ASTExpr* raw_value;
-        uint64_t const_value;
+        Int128   const_value;
     };
 };
 

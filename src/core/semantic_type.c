@@ -123,7 +123,7 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
     if(arr->size_expr->kind == EXPR_CONSTANT)
     {
         SIC_ASSERT(arr->size_expr->expr.constant.kind == CONSTANT_INTEGER);
-        uint64_t length = arr->size_expr->expr.constant.val.i;
+        uint64_t length = arr->size_expr->expr.constant.i.lo;
         if(was_signed && (int64_t)length < 0)
         {
             sic_error_at(err_loc, "Array declared with a negative length(%ld).", (int64_t)length);

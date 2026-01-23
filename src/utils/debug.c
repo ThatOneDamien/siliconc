@@ -260,20 +260,22 @@ static void print_constant(const ASTExpr* expr)
         printf("Invalid Constant ]\n");
         break;
     case CONSTANT_INTEGER:
-        printf("Constant Integer val: %lu hex: 0x%lX] (Type: %s)\n",
-               constant->val.i, constant->val.i, debug_type_to_str(expr->type));
+        // printf("Constant Integer val: %lu hex: 0x%lX] (Type: %s)\n",
+        //        constant->i, constant->i, debug_type_to_str(expr->type));
         break;
     case CONSTANT_FLOAT:
-        printf("Constant Float val: %lf ] (Type: %s)\n",
-               constant->val.f, debug_type_to_str(expr->type));
+        // printf("Constant Float val: %lf ] (Type: %s)\n",
+        //        constant->f, debug_type_to_str(expr->type));
         break;
     case CONSTANT_STRING:
         printf("Constant String ]\n");
         break;
     case CONSTANT_POINTER:
-        printf("Constant Integer val: 0x%lX] (Type: %s)\n",
-               constant->val.i, debug_type_to_str(expr->type));
+        // printf("Constant Integer val: 0x%lX] (Type: %s)\n",
+        //        constant->i, debug_type_to_str(expr->type));
         break;
+    default:
+        SIC_TODO();
     }
 }
 

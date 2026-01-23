@@ -514,7 +514,7 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
         if(cas->expr == NULL)
             continue;
         SIC_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
-        LLVMAddCase(switch_val, get_llvm_const_int(c, cas->expr->expr.constant.val.i, cas->expr->type), cas->llvm_block_ref);
+        LLVMAddCase(switch_val, get_llvm_const_int(c, cas->expr->expr.constant.i, cas->expr->type), cas->llvm_block_ref);
     }
     c->break_bb = prev_break;
     append_old_basic_block(c, exit_block);
@@ -696,23 +696,23 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_signed(expr->type))
-            result->value = LLVMBuildSDiv(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_unsigned(expr->type))
-            result->value = LLVMBuildUDiv(c->builder, lhs.value, rhs.value, "");
-        else
+        if(type_is_float(expr->type))
             result->value = LLVMBuildFDiv(c->builder, lhs.value, rhs.value, "");
+        else if(type_is_signed(expr->type))
+            result->value = LLVMBuildSDiv(c->builder, lhs.value, rhs.value, "");
+        else
+            result->value = LLVMBuildUDiv(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_MOD:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_signed(expr->type))
-            result->value = LLVMBuildSRem(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_unsigned(expr->type))
-            result->value = LLVMBuildURem(c->builder, lhs.value, rhs.value, "");
-        else
+        if(type_is_float(expr->type))
             result->value = LLVMBuildFRem(c->builder, lhs.value, rhs.value, "");
+        else if(type_is_signed(expr->type))
+            result->value = LLVMBuildSRem(c->builder, lhs.value, rhs.value, "");
+        else
+            result->value = LLVMBuildURem(c->builder, lhs.value, rhs.value, "");
         return;
     case BINARY_LOG_OR:
         load_rvalue(c, &lhs);
@@ -919,24 +919,24 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
     switch(constant->kind)
     {
     case CONSTANT_BOOL:
-        result->value = LLVMConstInt(LLVMInt1Type(), constant->val.b, false);
+        result->value = LLVMConstInt(LLVMInt1Type(), constant->b, false);
         return;
     case CONSTANT_CHAR:
         SIC_TODO();
     case CONSTANT_FLOAT:
-        result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->val.f);
+        result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->f);
         return;
     case CONSTANT_INTEGER:
-        result->value = get_llvm_const_int(c, constant->val.i, expr->type);
+        result->value = get_llvm_const_int(c, constant->i, expr->type);
         return;
     case CONSTANT_POINTER:
         // FIXME: Changed pointer logic.
         SIC_TODO();
-        // result->value = expr->expr.constant.val.i == 0 ? LLVMConstPointerNull(c->ptr_type) :
-        //                                                  LLVMConstPointerCast(LLVMConstInt(LLVMInt64Type(), constant->val.i, false), c->ptr_type);
+        // result->value = expr->expr.constant.i == 0 ? LLVMConstPointerNull(c->ptr_type) :
+        //                                                  LLVMConstPointerCast(LLVMConstInt(LLVMInt64Type(), constant->i, false), c->ptr_type);
         return;
     case CONSTANT_STRING: {
-        LLVMValueRef str = LLVMConstString(constant->val.str, constant->val.str_len, false);
+        LLVMValueRef str = LLVMConstString(constant->str.val, constant->str.len, false);
         LLVMValueRef global_string = LLVMAddGlobal(c->llvm_module, LLVMTypeOf(str), ".str");
         LLVMSetGlobalConstant(global_string, true);
         LLVMSetLinkage(global_string, LLVMPrivateLinkage);
@@ -962,16 +962,16 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
         uint64_t size = expr->type->array.static_len;
         if(constant->kind == CONSTANT_STRING && type_is_array(expr->type))
         {
-            SIC_ASSERT(size > constant->val.str_len);
+            SIC_ASSERT(size > constant->str.len);
             char* str;
-            if((size - constant->val.str_len) > 1)
+            if((size - constant->str.len) > 1)
             {
                 str = MALLOC(size, sizeof(char));
-                memcpy(str, constant->val.str, constant->val.str_len);
-                memset(str + constant->val.str_len, 0, size - constant->val.str_len);
+                memcpy(str, constant->str.val, constant->str.len);
+                memset(str + constant->str.len, 0, size - constant->str.len);
             }
             else
-                str = constant->val.str;
+                str = constant->str.val;
             LLVMValueRef strref = LLVMConstString(str, size, true);
             FREE(str, size); // Attempt to free if we can.
             return strref;

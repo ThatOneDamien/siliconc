@@ -400,12 +400,17 @@ Int128 i128_srem(Int128 lhs, Int128 rhs)
 	return res;
 }
 
-Int128 i128_from_signed(int64_t i)
+Int128 i128_rem(Int128 lhs, Int128 rhs, TypeKind kind)
+{
+    return type_kind_is_signed(kind) ? i128_srem(lhs, rhs) : i128_urem(lhs, rhs);
+}
+
+Int128 i128_from_s64(int64_t i)
 {
 	return (Int128){ i < 0 ? UINT64_MAX : 0, (uint64_t)i };
 }
 
-UNUSED Int128 i128_from_unsigned(uint64_t i)
+Int128 i128_from_u64(uint64_t i)
 {
 	return (Int128){ 0, i };
 }
@@ -422,6 +427,11 @@ Int128 i128_sdiv(Int128 lhs, Int128 rhs)
 		return i128_neg(res);
 	}
 	return res;
+}
+
+Int128 i128_div(Int128 lhs, Int128 rhs, TypeKind kind)
+{
+    return type_kind_is_signed(kind) ? i128_sdiv(lhs, rhs) : i128_udiv(lhs, rhs);
 }
 
 bool int128_fits(Int128 val, TypeKind optype, TypeKind totype)
