@@ -144,6 +144,7 @@ typedef enum : uint8_t
     EXPR_RANGE,
     EXPR_STRUCT_INIT_LIST,
     EXPR_TERNARY,
+    EXPR_TUPLE,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
     EXPR_ZEROED_OUT,
@@ -449,15 +450,14 @@ typedef enum : uint8_t
     TYPE_FUNC_PTR,
     TYPE_STATIC_ARRAY,
     TYPE_RUNTIME_ARRAY,
+    TYPE_SLICE,
 
     TYPE_ALIAS,
-    TYPE_USER_DEF_START = TYPE_ALIAS,
     TYPE_ALIAS_DISTINCT,
     TYPE_ENUM,
     TYPE_ENUM_DISTINCT,
     TYPE_STRUCT,
     TYPE_UNION,
-    TYPE_USER_DEF_END   = TYPE_UNION,
 
     // Pre-semantic types. After analyzing the type these should never appear
     TYPE_AUTO,

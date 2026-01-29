@@ -362,7 +362,11 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
     }
     
     CONSUME_OR_RET(TOKEN_SEMI, false);
-    parse_source_file(find_and_open_module_path(new_mod));
+    FileId id = find_and_open_module_path(new_mod);
+    if(id == FILE_NULL)
+        return true;
+
+    parse_source_file(id);
     return true;
 }
 
@@ -1103,9 +1107,18 @@ static ASTStmt* parse_declaration(Lexer* l, TypeLoc type_loc)
 
     if(try_consume(l, TOKEN_ASSIGN))
     {
-        var->initial_val = parse_expr(l);
-        if(expr_is_bad(var->initial_val))
-            goto ERR;
+        if(peek(l)->kind == TOKEN_VOID && 
+           (peek_next(l)->kind == TOKEN_COMMA || 
+            peek_next(l)->kind == TOKEN_SEMI))
+        {
+            var->uninitialized = true;
+        }
+        else
+        {
+            var->initial_val = parse_expr(l);
+            if(expr_is_bad(var->initial_val))
+                goto ERR;
+        }
     }
 
     if(try_consume(l, TOKEN_SEMI))
@@ -1130,9 +1143,18 @@ static ASTStmt* parse_declaration(Lexer* l, TypeLoc type_loc)
 
         if(try_consume(l, TOKEN_ASSIGN))
         {
-            var->initial_val = parse_expr(l);
-            if(expr_is_bad(var->initial_val))
-                goto ERR;
+            if(peek(l)->kind == TOKEN_VOID && 
+               (peek_next(l)->kind == TOKEN_COMMA || 
+                peek_next(l)->kind == TOKEN_SEMI))
+            {
+                var->uninitialized = true;
+            }
+            else
+            {
+                var->initial_val = parse_expr(l);
+                if(expr_is_bad(var->initial_val))
+                    goto ERR;
+            }
         }
 
         da_append(decl_list, var);
@@ -1299,8 +1321,8 @@ static ASTExpr* parse_struct_init_list(Lexer* l)
             list->size++;
             if(peek_next(l)->kind != TOKEN_COLON)
                 break;
-            entry->member.sym = peek(l)->sym;
-            entry->member.loc = peek(l)->loc;
+            entry->unresolved_member.sym = peek(l)->sym;
+            entry->unresolved_member.loc = peek(l)->loc;
             advance(l);
             advance(l);
             break;
@@ -1388,9 +1410,26 @@ static ASTExpr* parse_paren_expr(Lexer* l)
 {
     SIC_ASSERT(peek(l)->kind == TOKEN_LPAREN);
     advance(l);
-    ASTExpr* inside_expr = parse_expr(l);
+    ASTExpr* expr;
+    ASSIGN_EXPR_OR_RET(expr, BAD_EXPR);
+    if(tok_equal(l, TOKEN_COMMA))
+    {
+        ASTExpr* inner = expr;
+        expr = CALLOC_STRUCT(ASTExpr);
+        expr->kind = EXPR_TUPLE;
+        // FIXME: Bad location, Im too lazy right now
+        expr->loc = peek(l)->loc;
+        expr->type = g_type_init_list;
+        da_append(&expr->expr.tuple, inner);
+        while(try_consume(l, TOKEN_COMMA))
+        {
+            ASSIGN_EXPR_OR_RET(inner, BAD_EXPR);
+            da_append(&expr->expr.tuple, inner);
+        }
+        da_compact(&expr->expr.tuple);
+    }
     CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
-    return inside_expr;
+    return expr;
 }
 
 static ASTExpr* parse_negation(Lexer* l)

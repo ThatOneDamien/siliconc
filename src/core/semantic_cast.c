@@ -1,6 +1,6 @@
 #include "semantics.h"
 
-#define CAST_ERROR(...) do { if(!params->silent) sic_error_at(params->cast_loc, __VA_ARGS__); } while(0)
+#define CAST_ERROR(...) do { if(!params->silent) sic_error_at(params->cast_loc, __VA_ARGS__); return false; } while(0)
 
 typedef struct CastParams CastParams;
 typedef struct CastRule   CastRule;
@@ -11,15 +11,15 @@ struct CastParams
     SourceLoc    cast_loc;
     Type*        from;
     Type*        to;
-    TypeKind     from_kind;
-    TypeKind     to_kind;
+    Type*        fromc; // Equivalent to from->canonical
+    Type*        toc;   // Equivalent to to->canonical
     bool         explicit;
     bool         silent;
 };
 
 struct CastRule
 {
-    bool (*able)(CastParams* params);
+    bool (*able)(const CastParams* const params);
     void (*conversion)(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to);
 };
 
@@ -39,8 +39,8 @@ bool analyze_cast(ASTExpr* cast)
     params.cast_loc  = cast->loc;
     params.from      = inner->type;
     params.to        = cast->type;
-    params.from_kind = params.from->canonical->kind;
-    params.to_kind   = params.to->canonical->kind;
+    params.fromc     = params.from->canonical;
+    params.toc       = params.to->canonical;
     params.explicit  = true;
     params.silent    = false;
 
@@ -51,7 +51,8 @@ bool analyze_cast(ASTExpr* cast)
         return true;
     }
 
-    CastRule rule = get_cast_rule(params.from_kind, params.to_kind);
+
+    CastRule rule = get_cast_rule(params.fromc->kind, params.toc->kind);
     if(rule.able == NULL)
     {
         sic_error_at(params.cast_loc, "Casting from %s to %s is not allowed.",
@@ -65,7 +66,7 @@ bool analyze_cast(ASTExpr* cast)
         return false;
     }
 
-    rule.conversion(cast, inner, params.from, params.to);
+    rule.conversion(cast, inner, params.fromc, params.toc);
     return true;
 }
 
@@ -80,14 +81,14 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     params.cast_loc  = prev->loc;
     params.from      = prev->type;
     params.to        = desired;
-    params.from_kind = params.from->canonical->kind;
-    params.to_kind   = params.to->canonical->kind;
+    params.fromc     = params.from->canonical;
+    params.toc       = params.to->canonical;
     params.explicit  = false;
     params.silent    = false;
     if(type_equal(params.from, params.to))
         return true;
 
-    CastRule rule = get_cast_rule(params.from_kind, params.to_kind);
+    CastRule rule = get_cast_rule(params.fromc->kind, params.toc->kind);
     if(rule.able == NULL)
     {
         sic_error_at(params.cast_loc, "Casting from %s to %s is not allowed.",
@@ -109,7 +110,7 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     new_cast->evaluated = true;
     new_cast->type = desired;
 
-    rule.conversion(new_cast, prev, params.from->canonical, params.to->canonical);
+    rule.conversion(new_cast, prev, params.fromc, params.toc);
 
     *expr_to_cast = new_cast;
     return true;
@@ -120,12 +121,11 @@ static bool can_cast_params(CastParams* params)
     if(type_equal(params->from, params->to))
         return true;
 
-    CastRule rule = get_cast_rule(params->from_kind, params->to_kind);
+    CastRule rule = get_cast_rule(params->fromc->kind, params->toc->kind);
     if(rule.able == NULL)
     {
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
-        return false;
     }
 
     return rule.able(params);
@@ -140,8 +140,8 @@ bool can_cast(ASTExpr* expr, Type* to)
     params.cast_loc  = expr->loc;
     params.from      = expr->type;
     params.to        = to;
-    params.from_kind = params.from->canonical->kind;
-    params.to_kind   = params.to->canonical->kind;
+    params.fromc     = params.from->canonical;
+    params.toc       = params.to->canonical;
     params.explicit  = false;
     params.silent    = false;
     return can_cast_params(&params);
@@ -151,8 +151,10 @@ bool can_cast(ASTExpr* expr, Type* to)
 void perform_cast(ASTExpr* cast)
 {
     ASTExpr* inner = cast->expr.cast.inner;
-    CastRule rule = get_cast_rule(inner->type->canonical->kind, cast->type->canonical->kind);
-    rule.conversion(cast, inner, inner->type, cast->type);
+    Type* inner_ty = inner->type->canonical;
+    Type* cast_ty = cast->type->canonical;
+    CastRule rule = get_cast_rule(inner_ty->kind, cast_ty->kind);
+    rule.conversion(cast, inner, inner_ty, cast_ty);
 }
 
 bool implicit_cast_vararg(ASTExpr** arg)
@@ -184,28 +186,26 @@ bool implicit_cast_vararg(ASTExpr** arg)
 }
 
 
-static bool rule_not_defined(UNUSED CastParams* params) { SIC_UNREACHABLE(); }
-static bool rule_always(UNUSED CastParams* params) { return true; }
-static bool rule_explicit_only(CastParams* params)
+static bool rule_not_defined(UNUSED const CastParams* const params) { SIC_UNREACHABLE(); }
+static bool rule_always(UNUSED const CastParams* const params) { return true; }
+static bool rule_explicit_only(const CastParams* const params)
 {
     if(params->explicit)
         return true;
     CAST_ERROR("%s cannot be implicitly converted to %s.",
                type_to_string(params->from), type_to_string(params->to));
-    return false;
 }
 
-static bool rule_size_change(CastParams* params)
+static bool rule_size_change(const CastParams* const params)
 {
     if(params->explicit)
         return true;
 
-    if(params->to_kind == TYPE_CHAR && params->from_kind != TYPE_CHAR)
+    if(params->toc->kind == TYPE_CHAR && params->fromc->kind != TYPE_CHAR)
     {
         CAST_ERROR("Casting from %s to char requires explicit cast."
                    "Use byte or ubyte for single byte integer.",
                    type_to_string(params->from));
-        return false;
     }
 
     if(type_size(params->from) <= type_size(params->to))
@@ -217,17 +217,16 @@ static bool rule_size_change(CastParams* params)
 
     CAST_ERROR("Narrowing integer type %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
-    return false;
 }
 
-static bool rule_ptr_to_ptr(CastParams* params)
+static bool rule_ptr_to_ptr(const CastParams* const params)
 {
     if(params->explicit)
         return true;
-    Type* from_ptr = params->from->pointer_base;
-    Type* to_ptr   = params->to->pointer_base;
-    if((params->from_kind == TYPE_POINTER && from_ptr->kind == TYPE_VOID) || 
-       (params->to_kind == TYPE_POINTER && to_ptr->kind == TYPE_VOID))
+    Type* from_ptr = params->fromc->pointer_base->canonical;
+    Type* to_ptr   = params->toc->pointer_base->canonical;
+    if((params->fromc->kind == TYPE_POINTER && from_ptr->kind == TYPE_VOID) || 
+       (params->toc->kind == TYPE_POINTER && to_ptr->kind == TYPE_VOID))
        return true;
 
     // if(params->)
@@ -249,58 +248,52 @@ static bool rule_ptr_to_ptr(CastParams* params)
 ERR:
     CAST_ERROR("Unable to implicitly cast between pointer types %s and %s.",
                type_to_string(params->from), type_to_string(params->to));
-    return false;
 }
 
-static bool rule_str_to_ptr(CastParams* params)
+static bool rule_str_to_ptr(const CastParams* const params)
 {
-    TypeKind kind = params->to->pointer_base->kind;
+    TypeKind kind = params->toc->pointer_base->canonical->kind;
 
-    if(params->from_kind != TYPE_STRING_LIT)
+    if(params->fromc->kind != TYPE_STRING_LIT)
     {
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
-        return false;
     }
 
     if(kind != TYPE_CHAR && kind != TYPE_UBYTE && kind != TYPE_BYTE)
     {
         CAST_ERROR("String literal can only be casted to char*, ubyte*, or byte*.");
-        return false;
     }
     return true;
 }
 
-static bool rule_init_list_to_arr(CastParams* params)
+static bool rule_init_list_to_arr(const CastParams* const params)
 {
     if(params->inner->kind != EXPR_ARRAY_INIT_LIST)
     {
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
-    if(params->to_kind == TYPE_RUNTIME_ARRAY)
+    if(params->toc->kind == TYPE_RUNTIME_ARRAY)
     {
         // NOTE: This can be improved later on if I add some runtime checks. Don't plan on doing that
         //       atm, but if I do, revisit this.
         CAST_ERROR("Cannot cast to runtime array because its length is not known at compile-time.");
-        return false;
     }
-    uint64_t arr_size = params->to->array.static_len; 
-    Type* elem_type = params->to->array.elem_type;
-    if(params->from_kind == TYPE_STRING_LIT)
+    uint64_t arr_size = params->toc->array.static_len; 
+    Type* elem_type = params->toc->array.elem_type->canonical;
+    if(params->fromc->kind == TYPE_STRING_LIT)
     {
         SIC_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
         if(elem_type->kind != TYPE_CHAR && elem_type->kind != TYPE_UBYTE && elem_type->kind != TYPE_BYTE)
         {
             CAST_ERROR("String literal can only be casted to char[], ubyte[], or byte[].");
-            return false;
         }
         uint64_t str_len = params->inner->expr.constant.str.len;
         if(arr_size >= str_len)
         {
             CAST_ERROR("Length of array(%lu) is smaller than length of string literal(%lu).",
                        arr_size, str_len);
-            return false;
         }
         return true;
     }
@@ -319,14 +312,14 @@ static bool rule_init_list_to_arr(CastParams* params)
             return false;
         }
 
-        if(!can_cast(list->data[i].init_value, elem_type))
+        if(!can_cast(list->data[i].init_value, params->toc->array.elem_type))
             return false;
     }
 
     return true;
 }
 
-static bool rule_init_list_to_struct(CastParams* params)
+static bool rule_init_list_to_struct(const CastParams* const params)
 {
     if(params->inner->kind != EXPR_STRUCT_INIT_LIST)
     {
@@ -334,30 +327,42 @@ static bool rule_init_list_to_struct(CastParams* params)
                    type_to_string(params->from), type_to_string(params->to));
     }
 
+    // ObjStruct* struct_ = params->to->canonical->struct_;
     StructInitList* list = &params->inner->expr.struct_init;
     for(uint32_t i = 0; i < list->size; ++i)
     {
-        // if()
+        StructInitEntry* entry = list->data + i;
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            if(list->data[j].unresolved_member.sym == entry->unresolved_member.sym)
+            {
+                sic_error_at(list->data[j].unresolved_member.loc, 
+                             "Duplicate assignment of member \'%s\'.", 
+                             entry->unresolved_member.sym);
+                sic_diagnostic_at(DIAG_NOTE, entry->unresolved_member.loc, "Previous assignment here.");
+                return false;
+            }
+        }
+        // if(entry-)
     }
 
     return true;
 }
 
-static bool rule_distinct(CastParams* params)
+static bool rule_distinct(const CastParams* const params)
 {
     if(!params->explicit)
     {
         CAST_ERROR("Casting from %s to %s requires an explicit cast.",
                    type_to_string(params->from), type_to_string(params->to));
-        return false;
     }
 
     CastParams new_params;
     new_params.inner     = params->inner;
     new_params.from      = params->from;
     new_params.to        = params->to;
-    new_params.from_kind = type_reduce(new_params.from)->kind;
-    new_params.to_kind   = type_reduce(new_params.to)->kind;
+    new_params.fromc     = type_reduce(new_params.from);
+    new_params.toc       = type_reduce(new_params.to);
     new_params.explicit  = true;
     new_params.silent    = params->silent;
     return can_cast_params(&new_params);

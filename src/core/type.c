@@ -223,6 +223,7 @@ bool type_equal(Type* t1, Type* t2)
     case FLOAT_TYPES:
         return true;
     case TYPE_POINTER:
+    case TYPE_SLICE:
         return type_equal(t1->pointer_base, t2->pointer_base);
     case TYPE_FUNC_PTR: {
         FuncSignature* s1 = t1->func_ptr;
@@ -274,9 +275,11 @@ ByteSize type_size(Type* ty)
         return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
-        return 8;
+        return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.static_len;
+    case TYPE_SLICE:
+        return g_compiler.target.ptr_size + type_size(g_type_usize);
     case TYPE_ALIAS_DISTINCT:
         return type_size(ty->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
@@ -314,11 +317,12 @@ uint32_t type_alignment(Type* ty)
         return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
-        // TODO: Make this specific to build arch
-        return 8;
+        return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:
         return type_alignment(ty->array.elem_type);
+    case TYPE_SLICE:
+        return MAX(g_compiler.target.ptr_size, type_alignment(g_type_usize));
     case TYPE_ALIAS_DISTINCT:
         return type_alignment(ty->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
@@ -373,23 +377,30 @@ const char* type_to_string(Type* type)
         scratch_append(type_to_string(sig->ret_type.type));
         return str_dupn(scratch_string(), g_scratch.len);
     }
+    case TYPE_RUNTIME_ARRAY:
+        return str_format("%s[*]", type_to_string(type->array.elem_type));
+    case TYPE_SLICE:
+        return str_format("%s[]", type_to_string(type->pointer_base));
     case TYPE_STATIC_ARRAY:
         return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.static_len);
     case TYPE_ALIAS:
         return str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
     case TYPE_ALIAS_DISTINCT:
-        return str_format("%s", type->typedef_->header.symbol);
+        return type->typedef_->header.symbol;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-        return str_format("%s", type->enum_->header.symbol);
-    case TYPE_STRUCT:
-    case TYPE_UNION:
-        return str_format("%s", type->struct_->header.symbol);
+        return type->enum_->header.symbol;
+    case TYPE_STRUCT: {
+        Symbol s = type->struct_->header.symbol;
+        return s ? s : "anonymous struct";
+    }
+    case TYPE_UNION: {
+        Symbol s = type->struct_->header.symbol;
+        return s ? s : "anonymous union";
+    }
     case TYPE_PS_ARRAY:
     case TYPE_INIT_LIST:
         return "initializer list";
-    case TYPE_RUNTIME_ARRAY:
-        return str_format("%s[*]", type_to_string(type->array.elem_type));
     case TYPE_STRING_LIT:
         return "string";
     case TYPE_INVALID:

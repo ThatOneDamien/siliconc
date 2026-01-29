@@ -109,12 +109,13 @@ FileId find_and_open_module_path(ObjModule* module)
 {
     // FIXME: Check overflow of buffer.
     const char* base_path = file_from_id(g_compiler.input_file)->rel_path;
-    char path[PATH_MAX];
+    char path_one[PATH_MAX];
+    char path_two[PATH_MAX];
     size_t len = 0;
     for(size_t i = 0; base_path[i] != '\0'; ++i)
         if(base_path[i] == '/')
             len = i + 1;
-    memcpy(path, base_path, len);
+    memcpy(path_one, base_path, len);
     ObjModuleDA stack = {0};
     ObjModule* temp = module;
     while(temp->parent != NULL)
@@ -126,14 +127,32 @@ FileId find_and_open_module_path(ObjModule* module)
     for(uint32_t i = stack.size - 1; i < stack.size; --i)
     {
         size_t next_len = strlen(stack.data[i]->header.symbol);
-        memcpy(path + len, stack.data[i]->header.symbol, next_len);
+        memcpy(path_one + len, stack.data[i]->header.symbol, next_len);
         len += next_len;
-        path[len++] = '/';
+        path_one[len++] = '/';
+    }
+    FREE(stack.data, stack.capacity * sizeof(ObjModule*));
+    memcpy(path_two, path_one, len);
+    strcpy(path_two + len - 1, ".si");
+    strcpy(path_one + len, "mod.si");
+    if(file_exists(path_one))
+    {
+        if(file_exists(path_two))
+        {
+            sic_error_at(module->header.loc, "Module %s has conflicting paths \'%s\' and \'%s\'. Please remove one.", 
+                         module->header.symbol, path_one, path_two);
+            return FILE_NULL;
+        }
+        return source_file_add_or_get(path_one, module);
     }
 
-    memcpy(path + len, "mod.si", sizeof("mod.si"));
-    FREE(stack.data, stack.capacity * sizeof(ObjModule*));
-    return source_file_add_or_get(path, module);
+    if(!file_exists(path_two))
+    {
+        sic_error_at(module->header.loc, "Module %s was not found at path \'%s\' or \'%s\'. Please add one of those files.", 
+                     module->header.symbol, path_one, path_two);
+        return FILE_NULL;
+    }
+    return source_file_add_or_get(path_two, module);
 }
 
 const char* convert_ext_to(const char* path, FileType desired)

@@ -911,11 +911,7 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
         ObjVar* member = struct_->members.data[i];
         if(!resolve_type(&member->type_loc.type, RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot be of type"))
         {
-            // FIXME: I believe this is wrong. I'm not sure the proper order in which to display the
-            // cyclic definitions, but I definitely need to make sure this works properly.
-            check_cyclic_def(&member->header, member->header.loc);
-            struct_->header.status = STATUS_RESOLVED;
-            struct_->header.kind = OBJ_INVALID;
+            check_cyclic_def(&struct_->header, struct_->header.loc);
             return false;
         }
         if(member->type_loc.type->visibility < struct_->header.visibility)
@@ -1018,10 +1014,7 @@ bool analyze_union(ObjStruct* union_, Type** o_type)
         ObjVar* member = union_->members.data[i];
         if(!resolve_type(&member->type_loc.type, RES_NORMAL, member->type_loc.loc, "Union member cannot be of type"))
         {
-            // FIXME: Just like in analyze_struct
-            check_cyclic_def(&member->header, member->header.loc);
-            union_->header.status = STATUS_RESOLVED;
-            union_->header.kind = OBJ_INVALID;
+            check_cyclic_def(&union_->header, union_->header.loc);
             return false;
         }
         if(member->type_loc.type->visibility < union_->header.visibility)

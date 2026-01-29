@@ -92,6 +92,8 @@ bool analyze_expr(ASTExpr* expr)
     case EXPR_TERNARY:
         success = analyze_ternary(expr);
         break;
+    case EXPR_TUPLE:
+        SIC_TODO();
     case EXPR_UNARY:
         success = analyze_unary(expr);
         break;
@@ -514,12 +516,15 @@ static bool analyze_struct_init_list(ASTExpr* expr)
     bool valid = true;
     bool seen_named = false;
     bool errored = false;
+    bool const_eval = true;
     StructInitList* list = &expr->expr.struct_init;
     for(uint32_t i = 0; i < list->size; ++i)
     {
         StructInitEntry* entry = list->data + i;
         if(!analyze_expr(entry->init_value)) valid = false;
-        if(entry->member.sym != NULL)
+        else if(!entry->init_value->const_eval)
+            const_eval = false;
+        if(entry->unresolved_member.sym != NULL)
             seen_named = true;
         else if(seen_named && !errored)
         {
@@ -528,6 +533,7 @@ static bool analyze_struct_init_list(ASTExpr* expr)
             valid = false;
         }
     }
+    expr->const_eval = const_eval;
     return valid;
 }
 
@@ -602,6 +608,7 @@ static bool resolve_member(ASTExpr* expr, ASTExpr* parent, bool lvalue)
         }
         break;
     case TYPE_RUNTIME_ARRAY:
+    case TYPE_SLICE:
         SIC_TODO();
     case TYPE_STRUCT:
     case TYPE_UNION: {
@@ -714,7 +721,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr, bool lvalue)
 
 static bool analyze_ct_alignof(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_alignof.type, RES_NORMAL, expr->expr.ct_sizeof.loc, "Cannot get alignment of unresolved type"))
+    if(!resolve_type(&expr->expr.ct_alignof.type, RES_NORMAL, expr->expr.ct_alignof.loc, "Cannot get alignment of unresolved type"))
         return false;
 
     ByteSize align = type_alignment(expr->expr.ct_alignof.type);
@@ -727,7 +734,10 @@ static bool analyze_ct_alignof(ASTExpr* expr)
 
 static bool analyze_ct_offsetof(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_offsetof.struct_.type, RES_ALLOW_ALL, LOC_NULL, NULL))
+    ASTExprCTOffset* off = &expr->expr.ct_offsetof;
+    if(!resolve_type(&off->struct_.type, RES_NORMAL, off->struct_.loc, "Cannot get offsetof member with base type"))
+        return false;
+    if(off->struct_.type->canonical->kind != TYPE_STRUCT)
     {
 
     }
@@ -1474,6 +1484,8 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
     case TYPE_UNION:
         expr->kind = EXPR_ZEROED_OUT;
         return;
+    case TYPE_SLICE:
+        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_RUNTIME_ARRAY:

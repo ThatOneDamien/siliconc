@@ -60,6 +60,7 @@ static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, Gen
 static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
+static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, ASTExpr* expr);
 static void     emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -594,6 +595,8 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_TERNARY:
         emit_ternary(c, expr, &result);
         return result;
+    case EXPR_TUPLE:
+        SIC_TODO();
     case EXPR_UNARY:
         emit_unary(c, expr, &result);
         return result;
@@ -666,11 +669,64 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
     result->value = lhs->value;
 }
 
+static void emit_struct_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* expr, GenValue* result)
+{
+    SIC_ASSERT(expr->kind == EXPR_STRUCT_INIT_LIST);
+    result->kind = GEN_VAL_ADDRESS;
+    if(expr->const_eval)
+    {
+        LLVMValueRef global = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, expr->type), "__anon.const");
+        LLVMSetGlobalConstant(global, true);
+        LLVMSetLinkage(global, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddress(global, LLVMGlobalUnnamedAddr);
+        LLVMSetInitializer(global, emit_const_array_init_list(c, expr));
+        LLVMBuildMemCpy(c->builder, 
+                        lhs->value, type_alignment(lhs->type), 
+                        global, type_alignment(expr->type), 
+                        LLVMConstInt(LLVMInt64Type(), type_size(expr->type), false));
+        result->value = global;
+        return;
+    }
+
+    SIC_ASSERT(lhs->type->kind == TYPE_STATIC_ARRAY);
+    ArrInitList* list = &expr->expr.array_init;
+    for(uint64_t i = 0; i < lhs->type->array.static_len; ++i)
+    {
+        LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usize), i, false);
+        GenValue index;
+        GenValue temp;
+        index.value = LLVMBuildGEP2(c->builder, get_llvm_type(c, lhs->type->array.elem_type), lhs->value, &indval, 1, "");
+        index.kind = GEN_VAL_ADDRESS;
+        index.type = lhs->type->array.elem_type;
+        for(uint32_t j = 0; j < list->size; ++j)
+        {
+            if(list->data[j].const_index == i)
+            {
+                ASTExpr cast;
+                cast.kind = EXPR_CAST;
+                cast.type = expr->type->array.elem_type;
+                cast.expr.cast.inner = list->data[j].init_value;
+                perform_cast(&cast);
+                emit_assign(c, &index, &cast, &temp);
+                goto NEXT_ENTRY;
+            }
+        }
+        
+        LLVMBuildStore(c->builder, LLVMConstNull(get_llvm_type(c, index.type)), index.value);
+
+    NEXT_ENTRY:;
+    }
+
+    result->value = lhs->value;
+}
+
 static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
     ASTExprBinary* binary = &expr->expr.binary;
     GenValue lhs = emit_expr(c, binary->lhs);
     GenValue rhs;
+    Type* expr_ctype = expr->type->canonical;
+    Type* lhs_ctype = binary->lhs->type->canonical;
     result->kind = GEN_VAL_RVALUE;
     switch(binary->kind)
     {
@@ -696,9 +752,9 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_float(expr->type))
+        if(type_is_float(expr_ctype))
             result->value = LLVMBuildFDiv(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_signed(expr->type))
+        else if(type_is_signed(expr_ctype))
             result->value = LLVMBuildSDiv(c->builder, lhs.value, rhs.value, "");
         else
             result->value = LLVMBuildUDiv(c->builder, lhs.value, rhs.value, "");
@@ -707,9 +763,9 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_float(expr->type))
+        if(type_is_float(expr_ctype))
             result->value = LLVMBuildFRem(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_signed(expr->type))
+        else if(type_is_signed(expr_ctype))
             result->value = LLVMBuildSRem(c->builder, lhs.value, rhs.value, "");
         else
             result->value = LLVMBuildURem(c->builder, lhs.value, rhs.value, "");
@@ -726,7 +782,7 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs_ctype) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOEQ, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntEQ, lhs.value, rhs.value, "");                    
         return;
@@ -734,7 +790,7 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs_ctype) ?
                     LLVMBuildFCmp(c->builder, LLVMRealONE, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntNE, lhs.value, rhs.value, "");                    
         return;
@@ -742,25 +798,25 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs_ctype) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSLT : LLVMIntULT, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSLT : LLVMIntULT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_LE:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs_ctype) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSLE : LLVMIntULE, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSLE : LLVMIntULE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GT:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs_ctype) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSGT : LLVMIntUGT, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSGT : LLVMIntUGT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GE:
         load_rvalue(c, &lhs);
@@ -768,7 +824,7 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &rhs);
         result->value = type_is_float(binary->lhs->type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGE, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(binary->lhs->type) ? LLVMIntSGE : LLVMIntUGE, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSGE : LLVMIntUGE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_SHL:
         load_rvalue(c, &lhs);
@@ -930,10 +986,9 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         result->value = get_llvm_const_int(c, constant->i, expr->type);
         return;
     case CONSTANT_POINTER:
-        // FIXME: Changed pointer logic.
-        SIC_TODO();
-        // result->value = expr->expr.constant.i == 0 ? LLVMConstPointerNull(c->ptr_type) :
-        //                                                  LLVMConstPointerCast(LLVMConstInt(LLVMInt64Type(), constant->i, false), c->ptr_type);
+        result->value = constant->i.hi == 0 && constant->i.lo == 0 ? 
+                                LLVMConstPointerNull(c->ptr_type) :
+                                LLVMConstPointerCast(get_llvm_const_int(c, constant->i, g_type_uptr), c->ptr_type);
         return;
     case CONSTANT_STRING: {
         LLVMValueRef str = LLVMConstString(constant->str.val, constant->str.len, false);
@@ -953,6 +1008,7 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
 
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
 {
+    SIC_ASSERT(expr->const_eval);
     switch(expr->kind)
     {
     case EXPR_ARRAY_INIT_LIST:
@@ -981,6 +1037,8 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
         emit_constant(c, expr, &v);
         return v.value;
     }
+    case EXPR_STRUCT_INIT_LIST:
+        return emit_const_struct_init_list(c, expr);
     default:
         return emit_expr(c, expr).value;
     }
@@ -991,27 +1049,58 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     SIC_ASSERT(expr->type != g_type_init_list);
     SIC_ASSERT(expr->const_eval);
     ArrInitList* list = &expr->expr.array_init;
+    Type* arr_type = expr->type->canonical;
     if(list->size == 0)
-        return LLVMConstNull(get_llvm_type(c, expr->type));
+        return LLVMConstNull(get_llvm_type(c, arr_type));
 
-    LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, expr->type->array.static_len);
+    LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, arr_type->array.static_len);
     for(uint32_t i = 0; i < list->size; ++i)
     {
         ASTExpr cast;
         cast.kind = EXPR_CAST;
-        cast.type = expr->type->array.elem_type;
+        cast.type = arr_type->array.elem_type;
         cast.expr.cast.inner = list->data[i].init_value;
         perform_cast(&cast);
         values[list->data[i].const_index] = emit_const_initializer(c, &cast);
     }
-    for(uint32_t i = 0; i < expr->type->array.static_len; ++i)
+    for(uint32_t i = 0; i < arr_type->array.static_len; ++i)
     {
         if(values[i] == NULL)
-            values[i] = LLVMConstNull(get_llvm_type(c, expr->type->array.elem_type));
+            values[i] = LLVMConstNull(get_llvm_type(c, arr_type->array.elem_type));
     }
-    return LLVMConstArray2(get_llvm_type(c, expr->type->array.elem_type), values, expr->type->array.static_len);
+    return LLVMConstArray2(get_llvm_type(c, arr_type->array.elem_type), values, arr_type->array.static_len);
 }
 
+static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, ASTExpr* expr)
+{
+    SIC_ASSERT(expr->const_eval);
+    (void)c;
+    (void)expr;
+    SIC_TODO();
+    // StructInitList* list = &expr->expr.struct_init;
+    // if(list->size == 0)
+    //     return LLVMConstNull(get_llvm_type(c, arr_type));
+    // LLVMConstInsertValue()
+    //
+    // ObjStruct* struct_ = expr->type->canonical;
+    //
+    // LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, arr_type->array.static_len);
+    // for(uint32_t i = 0; i < list->size; ++i)
+    // {
+    //     ASTExpr cast;
+    //     cast.kind = EXPR_CAST;
+    //     cast.type = arr_type->array.elem_type;
+    //     cast.expr.cast.inner = list->data[i].init_value;
+    //     perform_cast(&cast);
+    //     values[list->data[i].const_index] = emit_const_initializer(c, &cast);
+    // }
+    // for(uint32_t i = 0; i < arr_type->array.static_len; ++i)
+    // {
+    //     if(values[i] == NULL)
+    //         values[i] = LLVMConstNull(get_llvm_type(c, arr_type->array.elem_type));
+    // }
+    // return LLVMConstArray2(get_llvm_type(c, arr_type->array.elem_type), values, arr_type->array.static_len);
+}
 
 static void emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
@@ -1214,6 +1303,11 @@ static void emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue
         emit_array_initialization(c, lhs, rhs, result);
         return;
     }
+    else if(rhs->kind == EXPR_STRUCT_INIT_LIST)
+    {
+        emit_struct_initialization(c, lhs, rhs, result);
+        return;
+    }
 
     GenValue rhsval = emit_expr(c, rhs);
     if(rhsval.kind == GEN_VAL_ADDRESS)
@@ -1382,6 +1476,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.static_len);
     case TYPE_RUNTIME_ARRAY:
         return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
+    case TYPE_SLICE:
+        SIC_TODO();
     case TYPE_ALIAS_DISTINCT:
         return type->llvm_ref = get_llvm_type(c, type->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
@@ -1515,6 +1611,8 @@ static void load_rvalue(CodegenContext* c, GenValue* lvalue)
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:
         return;
+    case TYPE_SLICE:
+        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_ALIAS:

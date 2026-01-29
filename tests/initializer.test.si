@@ -1,0 +1,56 @@
+/// test:   array_list 
+/// action: run
+/// result: pass
+fn main() -> int
+{
+    int[4] a = [0, 1, 2, 3];
+    usize i = 0;
+    while i < a.len {
+        if a[i] != i {
+            return 1;
+        }
+        i++;
+    }
+    return 0;
+}
+
+/// test:   inferred_array
+/// action: run
+/// result: pass
+fn main() -> int
+{
+    int[*] a = [0, 1, 2, 3, 4, 5];
+    usize i = 0;
+    if a.len != 6 { 
+        return 1; 
+    }
+    while i < a.len {
+        if a[i] != i {
+            return 1;
+        }
+        i++;
+    }
+    return 0;
+}
+
+/// test:   struct_list 
+/// action: run
+/// result: pass
+struct Test
+{
+    int   a;
+    float b;
+    ulong c;
+    bool  d;
+}
+
+fn main() -> int
+{
+    Test t = {
+        a: 1,
+        b: 1.2f,
+        c: 0xFAFFFFFFFFFFFFFF,
+        d: true,
+    };
+    return 0;
+}

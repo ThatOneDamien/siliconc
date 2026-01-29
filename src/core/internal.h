@@ -200,11 +200,6 @@ static inline bool type_is_array(Type* ty)
     return ty->kind == TYPE_STATIC_ARRAY || ty->kind == TYPE_RUNTIME_ARRAY;
 }
 
-static inline bool type_is_user_def(Type* ty)
-{
-    return ty->kind >= TYPE_USER_DEF_START && ty->kind <= TYPE_USER_DEF_END;
-}
-
 static inline bool type_is_trivially_copyable(Type* ty)
 {
     return !type_is_array(ty) && type_size(ty) <= 16;

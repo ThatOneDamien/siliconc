@@ -134,7 +134,6 @@ HANDLE_FLAG:
     if(g_compiler.input_file == FILE_NULL)
         sic_fatal_error("No input file provided.");
 
-    // TODO: Make this customizable through options
     if(!had_emit)
         g_compiler.emit_link = true;
 
@@ -151,7 +150,10 @@ HANDLE_FLAG:
         }
         g_compiler.out_name = str_dupn(scratch_string(), g_scratch.len);
     }
-    g_compiler.target = TARGET_x86_64;
+
+    // TODO: Make this customizable through options
+    g_compiler.target.kind = TARGET_x86_64;
+    g_compiler.target.ptr_size = sizeof(void*);
     g_compiler.ir_kind = IR_LLVM;
 }
 

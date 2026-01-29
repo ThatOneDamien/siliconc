@@ -27,7 +27,8 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
     case FLOAT_TYPES:
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
-    case TYPE_POINTER: {
+    case TYPE_POINTER:
+    case TYPE_SLICE: {
         if(type->status == STATUS_RESOLVED) return true;
         bool prev = g_sema->in_ptr;
         g_sema->in_ptr = true;

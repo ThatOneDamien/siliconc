@@ -66,6 +66,7 @@ typedef struct ASTExprMAccess   ASTExprMAccess;
 typedef struct ASTExprRange     ASTExprRange;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
+typedef struct ASTExprTuple     ASTExprTuple;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExprCTOffset  ASTExprCTOffset;
@@ -219,7 +220,7 @@ struct Type
         TypeArray       array;
         TypeBuiltin     builtin;
         FuncSignature*  func_ptr;
-        Type*           pointer_base;
+        Type*           pointer_base; // Used for both pointers and slices
         ASTExpr*        type_of;
         ModulePath      unresolved;
         ObjEnum*        enum_;
@@ -364,7 +365,11 @@ struct ArrInitList
 
 struct StructInitEntry
 {
-    SymbolLoc member;
+    union
+    {
+        SymbolLoc unresolved_member;
+        // ObjVar*   member;
+    };
     ASTExpr*  init_value;
 };
 
@@ -451,6 +456,7 @@ struct ASTExpr
         ASTExprRange    range;
         ModulePath      pre_sema_ident;
         ASTExprTernary  ternary;
+        ASTExprDA       tuple;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
 
@@ -642,31 +648,9 @@ struct ObjVar
     Object    header;
     TypeLoc   type_loc;
     ASTExpr*  initial_val;
+    bool      uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
     VarKind   kind;
 };
-
-
-
-// TODO: Optimization should be possible to make the average Object instance smaller.
-//       If it is possible, it would be done by making the shared resources a separate
-//       header struct called Object, then the other union kinds would be their own structs
-//       with the header to start.
-// struct Object
-// {
-//     union
-//     {
-//         ObjEnum      enum_;      // Components of enum typedef
-//         ObjEnumValue enum_val;   // Components of value in enum
-//         ObjFunc      func;       // Components of function
-//         Object*      import;     // Imported object
-//         Module*      module;     // Module reference
-//         ObjStruct    struct_;    // Components of bitfield, struct, or union
-//         Type*        type_alias; // Typedef alias
-//         ModulePath   unresolved_import;
-//         ObjVar       var;        // Components of variable
-//     };
-//
-// };
 
 struct SourceFile
 {
@@ -687,7 +671,11 @@ struct CompilerContext
     const char*   out_name;
     const char*   out_dir;
 
-    CompileTarget target;
+    struct
+    {
+        CompileTarget kind;
+        size_t        ptr_size;
+    } target;
     IRTarget      ir_kind;
 
     bool          emit_link : 1;
