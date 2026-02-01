@@ -219,6 +219,8 @@ bool type_equal(Type* t1, Type* t2)
     switch(t1->kind)
     {
     case TYPE_VOID:
+    case TYPE_BOOL:
+    case CHAR_TYPES:
     case INT_TYPES:
     case FLOAT_TYPES:
         return true;
@@ -270,6 +272,8 @@ ByteSize type_size(Type* ty)
     ty = ty->canonical;
     switch(ty->kind)
     {
+    case TYPE_BOOL:
+    case CHAR_TYPES:
     case INT_TYPES:
     case FLOAT_TYPES:
         return ty->builtin.byte_size;
@@ -312,8 +316,7 @@ uint32_t type_alignment(Type* ty)
     ty = ty->canonical;
     switch(ty->kind)
     {
-    case INT_TYPES:
-    case FLOAT_TYPES:
+    case NUMERIC_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
@@ -355,8 +358,7 @@ const char* type_to_string(Type* type)
     switch(type->kind)
     {
     case TYPE_VOID:
-    case INT_TYPES:
-    case FLOAT_TYPES:
+    case NUMERIC_TYPES:
         static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
         return tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
     case TYPE_POINTER:

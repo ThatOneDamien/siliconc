@@ -273,10 +273,10 @@ static inline ObjVar* obj_as_var(Object* o)
 
 #ifdef SI_DEBUG
 
-void print_token(Token* tok);
-void print_module(const ObjModule* module);
-void print_func(const ObjFunc* func);
-void print_stmt(const ASTStmt* stmt);
-void print_expr(const ASTExpr* expr);
+void print_token(const Token* tok);
+void print_module(const ObjModule* module, bool allow_unresolved);
+void print_func(const ObjFunc* func, bool allow_unresolved);
+void print_stmt(const ASTStmt* stmt, bool allow_unresolved);
+void print_expr(const ASTExpr* expr, bool allow_unresolved);
 
 #endif

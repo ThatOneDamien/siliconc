@@ -1,0 +1,16 @@
+/// test:   basic
+/// action: compile
+/// result: pass
+fn main()
+{
+    int a = 0;
+    int* b = &a;
+}
+
+/// test:   rvalue
+/// action: compile
+/// result: fail
+fn main()
+{
+    int* a = &(0);
+}

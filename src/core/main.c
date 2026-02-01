@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 #ifdef SI_DEBUG
     if(g_compiler.debug_output & DEBUG_PARSER)
     {
-        print_module(&g_compiler.top_module);
+        print_module(&g_compiler.top_module, true);
         printf("\n\n");
     }
 #endif

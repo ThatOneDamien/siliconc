@@ -190,6 +190,7 @@ extern ScratchBuffer g_scratch;
 
 PRINTF_FMT(1, 2)
 void scratch_appendf(const char* fmt, ...);
+void scratch_append_module_path(const ObjModule* module);
 PRINTF_FMT(1, 2)
 char* str_format(const char* fmt, ...);
 char* str_dupn(const char* str, size_t len);
@@ -219,6 +220,7 @@ static inline void scratch_append(const char* str)
 {
     scratch_appendn(str, strlen(str));
 }
+
 static inline const char* scratch_string(void)
 {
     g_scratch.data[g_scratch.len] = '\0';

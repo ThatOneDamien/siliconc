@@ -15,6 +15,12 @@ typedef enum : uint8_t
     BLOCK_SWITCH      = BLOCK_BREAKABLE,
 } BlockContext;
 
+typedef enum : uint8_t
+{
+    ANALYZE_VALUE,
+    ANALYZE_ADDRESS,
+} AnalysisKind;
+
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
@@ -43,7 +49,7 @@ extern ObjStack     g_obj_stack;
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
 bool       analyze_expr(ASTExpr* expr);
-bool       analyze_lvalue(ASTExpr* expr, bool allow_func);
+bool       analyze_lvalue(ASTExpr* expr);
 bool       analyze_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_enum(ObjEnum* enum_, Type** o_type);
@@ -59,7 +65,6 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
 Object*    find_obj(ModulePath* path);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
-bool       expr_is_lvalue(ASTExpr* expr);
 
 static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
 {
@@ -77,16 +82,6 @@ static inline void const_int_correct(ASTExpr* expr)
         expr->expr.constant.i = i128_ashr64(val, shift);
     else
         expr->expr.constant.i = i128_lshr64(val, shift);
-}
-
-static inline bool expr_ensure_lvalue(ASTExpr* expr)
-{
-    if(!expr_is_lvalue(expr))
-    {
-        sic_error_at(expr->loc, "Expression is not assignable.");
-        return false;
-    }
-    return true;
 }
 
 static inline bool obj_is_type(Object* obj)

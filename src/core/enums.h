@@ -149,7 +149,7 @@ typedef enum : uint8_t
     EXPR_UNARY,
     EXPR_ZEROED_OUT,
 
-    EXPR_UNRESOLVED_ARR,
+    EXPR_UNRESOLVED_ARROW,
     EXPR_UNRESOLVED_DOT,
     EXPR_UNRESOLVED_IDENT,
 
@@ -492,12 +492,13 @@ typedef enum : uint8_t
     VAR_MEMBER,
 } VarKind;
 
-#define INT_TYPES             \
-            TYPE_BOOL:        \
-            case TYPE_CHAR:   \
+#define CHAR_TYPES            \
+            TYPE_CHAR:        \
             case TYPE_CHAR16: \
-            case TYPE_CHAR32: \
-            case TYPE_BYTE:   \
+            case TYPE_CHAR32
+
+#define INT_TYPES             \
+            TYPE_BYTE:        \
             case TYPE_UBYTE:  \
             case TYPE_SHORT:  \
             case TYPE_USHORT: \
@@ -511,13 +512,20 @@ typedef enum : uint8_t
 #define FLOAT_TYPES           \
             TYPE_FLOAT:       \
             case TYPE_DOUBLE
+
+#define NUMERIC_TYPES         \
+            TYPE_BOOL:        \
+            case CHAR_TYPES:  \
+            case INT_TYPES:   \
+            case FLOAT_TYPES
                 
 #define SEMA_ONLY_EXPRS                 \
             EXPR_INVALID:               \
             case EXPR_TYPE_IDENT:       \
-            case EXPR_UNRESOLVED_ARR:   \
+            case EXPR_UNRESOLVED_ARROW: \
             case EXPR_UNRESOLVED_DOT:   \
             case EXPR_UNRESOLVED_IDENT: \
             case EXPR_CT_ALIGNOF:       \
             case EXPR_CT_OFFSETOF:      \
             case EXPR_CT_SIZEOF
+

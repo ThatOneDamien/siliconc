@@ -70,8 +70,11 @@ static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 
 static void     emit_add(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
 static void     emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result);
+static void     emit_store(CodegenContext* c, GenValue* lhs, GenValue* rhs, GenValue* result);
 static void     emit_br(CodegenContext* c, LLVMBasicBlockRef block);
 static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
+
+static void     store_default(CodegenContext* c, GenValue* ptr);
 
 static LLVMValueRef      emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
 static void              emit_var_alloca(CodegenContext* c, ObjVar* obj);
@@ -363,13 +366,20 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
     SIC_ASSERT(decl->kind == VAR_LOCAL);
     emit_var_alloca(c, decl);
     GenValue var;
-    var.type = decl->type_loc.type;
+    var.type = type_reduce(decl->type_loc.type);
     var.value = decl->header.llvm_ref;
     var.kind = GEN_VAL_ADDRESS;
-    if(decl->initial_val != NULL)
+    if(!decl->uninitialized)
     {
         GenValue temp;
-        emit_assign(c, &var, decl->initial_val, &temp);
+        if(decl->initial_val)
+        {
+            emit_assign(c, &var, decl->initial_val, &temp);
+        }
+        else
+        {
+            store_default(c, &var);
+        }
     }
 }
 
@@ -555,7 +565,7 @@ static void emit_while(CodegenContext* c, ASTStmt* stmt)
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
 {
     GenValue result;
-    result.type = expr->type;
+    result.type = type_reduce(expr->type);
     switch(expr->kind)
     {
     case EXPR_ARRAY_ACCESS:
@@ -725,8 +735,6 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
     ASTExprBinary* binary = &expr->expr.binary;
     GenValue lhs = emit_expr(c, binary->lhs);
     GenValue rhs;
-    Type* expr_ctype = expr->type->canonical;
-    Type* lhs_ctype = binary->lhs->type->canonical;
     result->kind = GEN_VAL_RVALUE;
     switch(binary->kind)
     {
@@ -752,9 +760,9 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_float(expr_ctype))
+        if(type_is_float(result->type))
             result->value = LLVMBuildFDiv(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_signed(expr_ctype))
+        else if(type_is_signed(result->type))
             result->value = LLVMBuildSDiv(c->builder, lhs.value, rhs.value, "");
         else
             result->value = LLVMBuildUDiv(c->builder, lhs.value, rhs.value, "");
@@ -763,9 +771,9 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        if(type_is_float(expr_ctype))
+        if(type_is_float(result->type))
             result->value = LLVMBuildFRem(c->builder, lhs.value, rhs.value, "");
-        else if(type_is_signed(expr_ctype))
+        else if(type_is_signed(result->type))
             result->value = LLVMBuildSRem(c->builder, lhs.value, rhs.value, "");
         else
             result->value = LLVMBuildURem(c->builder, lhs.value, rhs.value, "");
@@ -782,7 +790,7 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(lhs_ctype) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOEQ, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntEQ, lhs.value, rhs.value, "");                    
         return;
@@ -790,7 +798,7 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(lhs_ctype) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealONE, lhs.value, rhs.value, "") :
                     LLVMBuildICmp(c->builder, LLVMIntNE, lhs.value, rhs.value, "");                    
         return;
@@ -798,33 +806,33 @@ static void emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result)
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(lhs_ctype) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSLT : LLVMIntULT, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs.type) ? LLVMIntSLT : LLVMIntULT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_LE:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(lhs_ctype) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOLT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSLE : LLVMIntULE, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs.type) ? LLVMIntSLE : LLVMIntULE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GT:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(lhs_ctype) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGT, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSGT : LLVMIntUGT, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs.type) ? LLVMIntSGT : LLVMIntUGT, lhs.value, rhs.value, "");                    
         return;
     case BINARY_GE:
         load_rvalue(c, &lhs);
         rhs = emit_expr(c, binary->rhs);
         load_rvalue(c, &rhs);
-        result->value = type_is_float(binary->lhs->type) ?
+        result->value = type_is_float(lhs.type) ?
                     LLVMBuildFCmp(c->builder, LLVMRealOGE, lhs.value, rhs.value, "") :
-                    LLVMBuildICmp(c->builder, type_is_signed(lhs_ctype) ? LLVMIntSGE : LLVMIntUGE, lhs.value, rhs.value, "");                    
+                    LLVMBuildICmp(c->builder, type_is_signed(lhs.type) ? LLVMIntSGE : LLVMIntUGE, lhs.value, rhs.value, "");                    
         return;
     case BINARY_SHL:
         load_rvalue(c, &lhs);
@@ -1310,25 +1318,30 @@ static void emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue
     }
 
     GenValue rhsval = emit_expr(c, rhs);
-    if(rhsval.kind == GEN_VAL_ADDRESS)
+    emit_store(c, lhs, &rhsval, result);
+}
+
+static void emit_store(CodegenContext* c, GenValue* lhs, GenValue* rhs, GenValue* result)
+{
+    if(rhs->kind == GEN_VAL_ADDRESS)
     {
         if(type_is_trivially_copyable(rhs->type))
-            load_rvalue(c, &rhsval);
+            load_rvalue(c, rhs);
         else
         {
             LLVMBuildMemCpy(c->builder, 
                             lhs->value, type_alignment(lhs->type), 
-                            rhsval.value, type_alignment(rhs->type), 
+                            rhs->value, type_alignment(rhs->type), 
                             LLVMConstInt(LLVMInt64Type(), type_size(rhs->type), false));
             result->kind = GEN_VAL_ADDRESS;
-            result->value = rhsval.value;
+            result->value = rhs->value;
             return;
         }
     }
 
-    LLVMBuildStore(c->builder, rhsval.value, lhs->value);
+    LLVMBuildStore(c->builder, rhs->value, lhs->value);
     result->kind = GEN_VAL_RVALUE;
-    result->value = rhsval.value;
+    result->value = rhs->value;
 }
 
 static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
@@ -1349,6 +1362,48 @@ static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValu
         result->value = LLVMBuildFSub(c->builder, left->value, right->value, "");
     else
         result->value = LLVMBuildSub(c->builder, left->value, right->value, "");
+}
+
+static void store_default(CodegenContext* c, GenValue* ptr)
+{
+    // FIXME: I am temporarily setting most of the types to zero.
+    //        I still need to add the ability for structs/unions/enums 
+    //        to have default values.
+    LLVMTypeRef ty_ref = get_llvm_type(c, ptr->type);
+    switch(ptr->type->kind)
+    {
+    case NUMERIC_TYPES:
+    case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
+        LLVMBuildStore(c->builder, LLVMConstNull(ty_ref), ptr->value);
+        break;
+    case TYPE_STATIC_ARRAY:
+    case TYPE_STRUCT:
+    case TYPE_UNION:
+        LLVMBuildMemSet(c->builder, ptr->value, 
+                        LLVMConstInt(LLVMInt8Type(), 0, false), 
+                        LLVMConstInt(LLVMInt64Type(), type_size(ptr->type), false), 
+                        type_alignment(ptr->type));
+        break;
+    case TYPE_RUNTIME_ARRAY:
+        break;
+    case TYPE_SLICE:
+        SIC_TODO();
+    case TYPE_AUTO:
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+    case TYPE_INIT_LIST:
+    case TYPE_PS_ARRAY:
+    case TYPE_PS_USER:
+    case TYPE_STRING_LIT:
+    case TYPE_TYPEOF:
+    case __TYPE_COUNT:
+        SIC_UNREACHABLE();
+    }
 }
 
 static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align)

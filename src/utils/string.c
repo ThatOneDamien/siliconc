@@ -1,4 +1,5 @@
 #include "lib.h"
+#include "../core/internal.h"
 #include <stdarg.h>
 
 ScratchBuffer g_scratch = {{0}, 0};
@@ -11,7 +12,31 @@ void scratch_appendf(const char* fmt, ...)
     if(size + g_scratch.len > SCRATCH_SIZE)
         sic_fatal_error("Ran out of space in the scratch buffer. This shouldn't happen.");
     va_end(va);
+}
 
+void scratch_append_module_path(const ObjModule* module)
+{
+    if(module == &g_compiler.top_module)
+    {
+        g_scratch.len = 0;
+        return;
+    }
+    char temp[4096];
+    size_t len = 0;
+    while(true)
+    {
+        size_t mod_len = strlen(module->header.symbol);
+        if((len + mod_len + 2) > 4096) break;
+        len += mod_len;
+        memcpy(temp + 4096 - len, module->header.symbol, mod_len);
+        module = module->parent;
+        if(module == &g_compiler.top_module) break;
+        len += 2;
+        temp[4096 - len + 0] = ':';
+        temp[4096 - len + 1] = ':';
+    }
+    memcpy(g_scratch.data, temp + 4096 - len, len);
+    g_scratch.len = len;
 }
 
 char* str_format(const char* fmt, ...)

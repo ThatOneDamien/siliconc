@@ -23,8 +23,7 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
             break;
         }
         FALLTHROUGH;
-    case INT_TYPES:
-    case FLOAT_TYPES:
+    case NUMERIC_TYPES:
         SIC_ASSERT(type->status == STATUS_RESOLVED);
         return true;
     case TYPE_POINTER:

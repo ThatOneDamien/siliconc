@@ -197,7 +197,7 @@ static bool parse_attributes(Lexer* l, AttrDA* attrs)
 {
     while(tok_equal(l, TOKEN_ATTRIBUTE_IDENT))
     {
-        Attr attr;
+        Attr attr = {0};
         attr.symbol = peek(l)->sym;
         attr.loc = peek(l)->loc;
         advance(l);
@@ -1111,6 +1111,7 @@ static ASTStmt* parse_declaration(Lexer* l, TypeLoc type_loc)
            (peek_next(l)->kind == TOKEN_COMMA || 
             peek_next(l)->kind == TOKEN_SEMI))
         {
+            advance(l);
             var->uninitialized = true;
         }
         else
@@ -1286,7 +1287,7 @@ static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
 {
-    ASTExpr* access = new_expr(l, tok_equal(l, TOKEN_ARROW) ? EXPR_UNRESOLVED_ARR : 
+    ASTExpr* access = new_expr(l, tok_equal(l, TOKEN_ARROW) ? EXPR_UNRESOLVED_ARROW : 
                                                               EXPR_UNRESOLVED_DOT);
     advance(l);
     access->expr.unresolved_access.parent_expr = struct_expr;

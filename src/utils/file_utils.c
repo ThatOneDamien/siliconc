@@ -199,6 +199,14 @@ const char* create_tempfile(FileType ft)
         sic_fatal_error("Failed to create temporary file.");
 
     close(fd);
+    char* a = (char*)&s_tempfiles;
+    for(size_t i = 0; i < sizeof(StringDA); ++i)
+    {
+        char c = a[i];
+        if(32 <= c && c <= 126)
+            putc(c, stdout);
+    }
+
     da_append(&s_tempfiles, tmppath);
     return tmppath;
 }

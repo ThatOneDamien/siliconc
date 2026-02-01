@@ -3,7 +3,7 @@
 
 static inline void analyze_main();
 static void analyze_function_body(ObjFunc* function);
-static bool analyze_attributes(AttrDA attrs, ObjKind kind);
+static bool analyze_attributes(Object* obj);
 static void analyze_stmt(ASTStmt* stmt, bool add_scope);
 static bool analyze_stmt_block(ASTStmt* stmt);
 static void analyze_break(ASTStmt* stmt);
@@ -56,7 +56,7 @@ void analyze_module(ObjModule* module)
     g_sema = prev;
 #ifdef SI_DEBUG
     if(g_compiler.debug_output & DEBUG_SEMA)
-        print_module(module);
+        print_module(module, false);
 #endif
 }
 
@@ -74,6 +74,8 @@ bool analyze_function(ObjFunc* func)
 
     bool prev = g_sema->in_global_init;
     g_sema->in_global_init = true;
+
+    if(!analyze_attributes(&func->header)) success = false;
 
     if(!resolve_type(&func->signature.ret_type.type, RES_ALLOW_VOID, 
                      func->signature.ret_type.loc, "Function cannot have return type"))
@@ -288,9 +290,11 @@ bool analyze_global_var(ObjVar* var)
     g_sema->in_global_init = true;
     var->header.status = STATUS_RESOLVING;
 
+    analyze_attributes(&var->header);
+
     if(!analyze_declaration(var))
     {
-        g_sema->in_global_init = true;
+        g_sema->in_global_init = prev;
         check_cyclic_def(&var->header, var->header.loc);
         return false;
     }
@@ -379,8 +383,10 @@ static void analyze_function_body(ObjFunc* func)
     pop_scope(scope);
 }
 
-static UNUSED bool analyze_attributes(AttrDA attrs, ObjKind kind)
+static bool analyze_attributes(Object* obj)
 {
+    AttrDA attrs = obj->attrs;
+    ObjKind kind = obj->kind;
     bool valid = true;
     for(uint32_t i = 0; i < attrs.size; ++i)
     {
@@ -419,7 +425,7 @@ static UNUSED bool analyze_attributes(AttrDA attrs, ObjKind kind)
         }
 
     TOO_MANY_ARGS:
-        sic_error_at(attr->loc, "Attribute %s does not have any parameters.", attr->symbol);
+        sic_error_at(attr->loc, "Attribute %s should not have any parameters.", attr->symbol);
         attr->kind = ATTR_INVALID;
         valid = false;
         continue;
@@ -778,12 +784,11 @@ ERR:
 
 static void analyze_swap(ASTStmt* stmt)
 {
-    analyze_expr(stmt->stmt.swap.left);
-    analyze_expr(stmt->stmt.swap.right);
     ASTExpr* left = stmt->stmt.swap.left;
     ASTExpr* right = stmt->stmt.swap.right;
-    if(expr_is_bad(left) || expr_is_bad(right) ||
-       !expr_ensure_lvalue(left) || !expr_ensure_lvalue(right))
+    analyze_lvalue(left);
+    analyze_lvalue(right);
+    if(expr_is_bad(left) || expr_is_bad(right))
         return;
 
     if(!type_equal(left->type, right->type))

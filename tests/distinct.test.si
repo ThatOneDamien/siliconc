@@ -1,4 +1,4 @@
-/// test: valid
+/// test:   valid
 /// action: compile
 /// result: pass
 typedef distinct SpecialInt = int;
@@ -7,7 +7,7 @@ typedef distinct OtherSpecial = SpecialInt;
 SpecialInt a = 1 as SpecialInt;
 OtherSpecial b = 1 as OtherSpecial;
 
-/// test: invalid
+/// test:   invalid
 /// action: compile
 /// result: fail
 typedef distinct SpecialInt = int;

@@ -22,7 +22,7 @@
     do                                                                      \
     {                                                                       \
         if((da)->data == NULL)                                              \
-            da_init(da, desired_cap);                                       \
+            da_init((da), (desired_cap));                                   \
         else if((da)->capacity < (desired_cap))                             \
         {                                                                   \
             size_t new_cap = (desired_cap) << 1;                            \

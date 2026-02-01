@@ -441,6 +441,7 @@ struct ASTExpr
     ExprKind  kind;
     bool      evaluated : 1;
     bool      const_eval : 1;
+    bool      pure : 1;
 
     union
     {
