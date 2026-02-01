@@ -38,9 +38,9 @@ $(BUILD_DIR)/sic: $(RELEASE_OBJS)
 $(DEBUG_OBJS): $(INT_DIR)/debug/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
 	@echo 'Compiling $< (debug)'
-	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -DSI_DEBUG -ggdb -o $@ -c $<
+	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -DSI_DEBUG -D__FILE_NAME="\"$<\"" -ggdb -o $@ -c $<
 
 $(RELEASE_OBJS): $(INT_DIR)/release/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
 	@echo 'Compiling $< (release)'
-	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -O3 -o $@ -c $<
+	@$(CC) $(CFLAGS) $(EXTRACFLAGS) $(INC) -O3 -D__FILE_NAME="\"$<\"" -o $@ -c $<

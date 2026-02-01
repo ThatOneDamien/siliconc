@@ -175,13 +175,13 @@ static inline void sic_fatal_error(const char* message, ...)
 }
 
 #ifdef SI_DEBUG
-    #define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE__, __LINE__, __FUNCTION__)
-    #define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE__, __LINE__, __FUNCTION__, msg)
+    #define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE_NAME, __LINE__, __FUNCTION__)
+    #define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE_NAME, __LINE__, __FUNCTION__, msg)
 #else
     #define SIC_TODO()        static_assert(false, "TODO not implemented in release.")
     #define SIC_TODO_MSG(msg) static_assert(false, "TODO not implemented in release. " msg)
 #endif
-#define SIC_UNREACHABLE() sic_fatal_error("Compiler encountered an unexpected error, should be unreachable. %s:%d(%s)", __FILE__, __LINE__, __FUNCTION__)
+#define SIC_UNREACHABLE() sic_fatal_error("Compiler encountered an unexpected error, should be unreachable. %s:%d(%s)", __FILE_NAME, __LINE__, __FUNCTION__)
 
 
 // string.c - Scratch Buffer and String format
