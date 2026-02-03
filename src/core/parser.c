@@ -64,7 +64,7 @@ static inline ASTExpr* parse_expr(Lexer* l)
 }
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
-static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast);
+static ASTExpr* parse_cast(Lexer* l);
 static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond);
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
@@ -146,7 +146,6 @@ static bool parse_top_level(Lexer* l)
     Object* type;
     switch(peek(l)->kind)
     {
-    case TOKEN_SEMI:
     case TOKEN_BITFIELD:
         advance(l);
         type = parse_bitfield_decl(l, vis, attrs);
@@ -700,7 +699,7 @@ static bool parse_type_or_expr(Lexer* l, TypeLoc* type_loc, ASTExpr** expr, bool
         if(!parse_func_signature(l, sig, true))
             return false;
         ty = type_func_ptr(sig);
-        goto TYPE_SUFFIX;
+        goto END;
     case TOKEN_CT_TYPEOF:
         advance(l);
         CONSUME_OR_RET(TOKEN_LPAREN, false);
@@ -827,6 +826,7 @@ TYPE_SUFFIX:
             break;
     }
 
+END:
     type_loc->type = ty;
     return true;
 }
@@ -874,6 +874,10 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_CT_ASSERT:
         stmt = parse_ct_assert(l);
         break;
+    case TOKEN_CT_UNREACHABLE:
+        stmt = new_stmt(l, STMT_CT_UNREACHABLE);
+        advance(l);
+        return stmt;
     default:
         stmt = parse_expr_stmt(l);
         break;
@@ -1239,18 +1243,22 @@ static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
     return call;
 }
 
-static ASTExpr* parse_cast(Lexer* l, ASTExpr* expr_to_cast)
+static ASTExpr* parse_cast(Lexer* l)
 {
     ASTExpr* cast = new_expr(l, EXPR_CAST);
     advance(l);
+
+    CONSUME_OR_RET(TOKEN_LT, BAD_EXPR);
     
     TypeLoc type_loc;
     if(!parse_type(l, &type_loc, false))
         return BAD_EXPR;
-
-    cast->expr.cast.inner = expr_to_cast;
     cast->type = type_loc.type;
 
+    CONSUME_OR_RET(TOKEN_GT, BAD_EXPR);
+    CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
+    ASSIGN_EXPR_OR_RET(cast->expr.cast.inner, BAD_EXPR);
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
     return cast;
 }
 
@@ -1871,7 +1879,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_DECREM]          = { parse_unary_prefix, parse_incdec_postfix, PREC_PRIMARY_POSTFIX },
     [TOKEN_RANGE]           = { NULL, parse_range, PREC_RANGE },
 
-    [TOKEN_AS]              = { NULL, parse_cast, PREC_CAST },
+    [TOKEN_CAST]            = { parse_cast, NULL, PREC_NONE },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },

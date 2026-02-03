@@ -4,8 +4,8 @@
 typedef distinct SpecialInt = int;
 typedef distinct OtherSpecial = SpecialInt;
 
-SpecialInt a = 1 as SpecialInt;
-OtherSpecial b = 1 as OtherSpecial;
+SpecialInt a = cast<SpecialInt>(1);
+OtherSpecial b = cast<OtherSpecial>(1);
 
 /// test:   invalid
 /// action: compile

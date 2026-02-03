@@ -224,7 +224,6 @@ typedef enum : uint8_t
     PREC_ADD_SUB,
     PREC_SHIFTS,
     PREC_MUL_DIV_MOD,
-    PREC_CAST,
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
@@ -264,6 +263,7 @@ typedef enum : uint8_t
 
     STMT_CT_ASSERT,
     // STMT_CT_IF,
+    STMT_CT_UNREACHABLE,
 } StmtKind;
 
 typedef enum : uint8_t
@@ -347,6 +347,7 @@ typedef enum : uint8_t
     TOKEN_BITFIELD,
     TOKEN_BREAK,
     TOKEN_CASE,
+    TOKEN_CAST,
     TOKEN_CONST,
     TOKEN_CONTINUE,
     TOKEN_DEFAULT,
@@ -408,7 +409,8 @@ typedef enum : uint8_t
 	TOKEN_CT_OFFSETOF,
 	TOKEN_CT_SIZEOF,
 	TOKEN_CT_TYPEOF,
-    TOKEN_KEYWORD_END = TOKEN_CT_TYPEOF,
+	TOKEN_CT_UNREACHABLE,
+    TOKEN_KEYWORD_END = TOKEN_CT_UNREACHABLE,
 
     TOKEN_EOF,               // End Of File Token
     __TOKEN_COUNT

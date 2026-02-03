@@ -86,8 +86,9 @@ static inline bool token_is_keyword(TokenKind kind)
 void parse_source_file(FileId fileid);
 
 // Semantic analysis functions
-void analyze_module(ObjModule* module);
-void perform_cast(ASTExpr* cast);
+void  analyze_module(ObjModule* module);
+void  perform_cast(ASTExpr* cast);
+Attr* get_builtin_attribute(Object* obj, AttrKind kind);
 
 // Symbol map functions
 void   sym_map_init(void);

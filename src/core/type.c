@@ -309,7 +309,7 @@ ByteSize type_size(Type* ty)
     SIC_UNREACHABLE();
 }
 
-uint32_t type_alignment(Type* ty)
+ByteSize type_alignment(Type* ty)
 {
     SIC_ASSERT(ty != NULL);
     SIC_ASSERT(ty->status == STATUS_RESOLVED);

@@ -8,12 +8,12 @@
 #assert(13 % 4 == 1, "Fail");
 #assert((0x5 << 4) == 0x50, "Fail");
 #assert((0xFF00 >> 4) == 0xFF0, "Fail");
-#assert(((0x80000000 as uint) >>> 3) == 0xF0000000, "Fail");
+#assert((cast<uint>(0x80000000) >>> 3) == 0xF0000000, "Fail");
 #assert((0xC & 0xB) == 0x8, "Fail");
 #assert((0xC ^ 0xB) == 0x7, "Fail");
 #assert((0xC | 0xB) == 0xF, "Fail");
-#assert((-1 as uint) == 0xFFFFFFFF, "Fail");
-#assert((~1 as uint) == 0xFFFFFFFE, "Fail");
+#assert(cast<uint>(-1) == 0xFFFFFFFF, "Fail");
+#assert(cast<uint>(~1) == 0xFFFFFFFE, "Fail");
 #assert(!(false), "Fail");
 #assert(!(10 == 100), "Fail");
 #assert(true && true, "Fail");

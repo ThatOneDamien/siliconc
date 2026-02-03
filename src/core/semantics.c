@@ -316,6 +316,16 @@ bool analyze_global_var(ObjVar* var)
     return true;
 }
 
+Attr* get_builtin_attribute(Object* obj, AttrKind kind)
+{
+    SIC_ASSERT(obj != NULL);
+    SIC_ASSERT(kind < ATTR_CUSTOM);
+    for(uint32_t i = 0; i < obj->attrs.size; ++i)
+        if(obj->attrs.data[i].kind == kind)
+            return obj->attrs.data + i;
+    return NULL;
+}
+
 static inline void analyze_main()
 {
     Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
@@ -499,6 +509,9 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_CT_ASSERT:
         analyze_ct_assert(stmt);
         stmt->kind = STMT_NOP;
+        return;
+    case STMT_CT_UNREACHABLE:
+        stmt->always_returns = true;
         return;
     }
     SIC_UNREACHABLE();
@@ -911,6 +924,10 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
     }
 
     struct_->header.status = STATUS_RESOLVING;
+    analyze_attributes(&struct_->header);
+    bool packed = get_builtin_attribute(&struct_->header, ATTR_PACKED) != NULL;
+    if(packed)
+        struct_->align = 1;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         ObjVar* member = struct_->members.data[i];
@@ -927,10 +944,17 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
             struct_->header.kind = OBJ_INVALID;
             return false;
         }
-        uint32_t align = type_alignment(member->type_loc.type);
-        SIC_ASSERT(is_pow_of_2(align));
-        struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type_loc.type);
-        struct_->align = MAX(struct_->align, align);
+        if(packed)
+        {
+            struct_->size += type_size(member->type_loc.type);
+        }
+        else
+        {
+            uint32_t align = type_alignment(member->type_loc.type);
+            SIC_ASSERT(is_pow_of_2(align));
+            struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type_loc.type);
+            struct_->align = MAX(struct_->align, align);
+        }
     }
 
     struct_->size = ALIGN_UP(struct_->size, struct_->align);

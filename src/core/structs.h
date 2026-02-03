@@ -11,7 +11,7 @@ static_assert((LOOK_AHEAD_SIZE & 1) == 0, "Look ahead size must be power of 2");
 
 // Aliases
 typedef const char* Symbol;
-typedef uint8_t     FileId;
+typedef uint16_t    FileId;
 typedef uint32_t    BitSize;
 typedef uint32_t    ByteSize;
 
@@ -131,6 +131,9 @@ struct MemArena
     uint8_t* base;
     size_t   capacity;
     size_t   allocated;
+#ifdef SI_DEBUG
+
+#endif
 };
 
 struct SourceLoc
@@ -140,6 +143,8 @@ struct SourceLoc
     uint32_t len      : 12;
     uint32_t line_num : 32;
 };
+
+static_assert(sizeof(SourceLoc) == 8, "Check sizes");
 
 struct Token
 {
@@ -592,8 +597,8 @@ struct ObjFunc
     FuncSignature  signature;
     Type*          func_type;
     ASTStmt*       body;
-    uint32_t       swap_stmt_align;
-    uint32_t       swap_stmt_size;
+    ByteSize      swap_stmt_align;
+    ByteSize       swap_stmt_size;
 };
 
 struct ObjImport
@@ -630,8 +635,8 @@ struct ObjStruct
     {
         struct
         {
-            uint32_t size;
-            uint32_t align;
+            ByteSize size;
+            ByteSize align;
         };
         Type* largest_type;
     };

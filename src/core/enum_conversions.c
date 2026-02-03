@@ -60,6 +60,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_BITFIELD]        = "bitfield",
     [TOKEN_BREAK]           = "break",
     [TOKEN_CASE]            = "case",
+    [TOKEN_CAST]            = "cast",
     [TOKEN_CONST]           = "const",
     [TOKEN_CONTINUE]        = "continue",
     [TOKEN_DEFAULT]         = "default",
@@ -114,6 +115,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
 	[TOKEN_CT_OFFSETOF]     = "#offsetof",
 	[TOKEN_CT_SIZEOF]       = "#sizeof",
 	[TOKEN_CT_TYPEOF]       = "#typeof",
+    [TOKEN_CT_UNREACHABLE]  = "#unreachable",
 };
 
 static BinaryOpKind s_tok_to_bin_op[] = {
