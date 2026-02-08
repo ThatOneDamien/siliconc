@@ -3,13 +3,13 @@
 
 #include <string.h>
 
-#define at_eof(lex)         ((lex)->cur_pos[0] == '\0')
-#define peek(lex)           ((lex)->cur_pos[0])
-#define peek_next(lex)      ((lex)->cur_pos[1])
-#define peek_prev(lex)      ((lex)->cur_pos[-1])
-#define advance(lex, count) ((lex)->cur_pos += count)
-#define next(lex)           (++(lex)->cur_pos)
-#define backtrack(lex)      (--(lex)->cur_pos)
+#define peek(lex)           ((lex)->src[(lex)->pos])
+#define peek_next(lex)      ((lex)->src[(lex)->pos + 1])
+#define peek_prev(lex)      ((lex)->src[(lex)->pos - 1])
+#define advance(lex, count) do { (lex)->pos += count; } while(0)
+#define next(lex)           do { ++(lex)->pos; } while(0)
+#define backtrack(lex)      do { --(lex)->pos; } while(0)
+#define at_eof(lex)         (peek(lex) == '\0')
 
 typedef struct
 {
@@ -32,11 +32,10 @@ static inline void     extract_base_16(Lexer* l, Token* t);
 static inline bool     extract_num_suffix(Lexer* l, bool* is_float);
 static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding encoding);
 static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint);
+static inline void     next_with_nl(Lexer* l);
 static inline ByteSize unicode_to_utf8(uint32_t* value);
 static inline bool     consume(Lexer* l, char c);
-static inline char     next_nl(Lexer* l);
 static inline Token*   next_token_loc(Lexer* l);
-static inline uint32_t get_col(Lexer* l);
 static inline FileId   lexer_file_id(Lexer* l);
 static inline bool     c_is_hex(char c);
 
@@ -68,10 +67,11 @@ Lexer lexer_from_source(FileId fileid)
 {
     SourceFile* file = file_from_id(fileid);
     Lexer l;
-    l.module     = file->module;
-    l.cur_pos    = file->src;
-    l.cur_line   = 1;
-    l.line_start = l.cur_pos;
+    l.module = file->module;
+    l.src = file->src;
+    l.line_num = 1;
+    l.line_start = 0;
+    l.pos = 0;
     memset(&l.la_buf, 0, sizeof(LookAhead));
     l.la_buf.cur = 1;
     for(size_t i = 0; i < LOOK_AHEAD_SIZE - 1; ++i)
@@ -85,17 +85,17 @@ Lexer lexer_from_source(FileId fileid)
 
 void lexer_advance(Lexer* l)
 {
-    SIC_ASSERT(l != NULL);
-
-    skip_invisible(l);
-
-    Token* t = next_token_loc(l);
-    if(t->kind == TOKEN_EOF)
+    DBG_ASSERT(l != NULL);
+    if(lexer_peek(l)->kind == TOKEN_EOF)
         return;
 
-    t->loc.col_num  = get_col(l);
-    t->loc.line_num = l->cur_line;
-    t->start        = l->cur_pos;
+    skip_invisible(l);
+    Token* t = next_token_loc(l);
+
+    t->loc.start = l->pos;
+    t->line_col.line = l->line_num;
+    t->line_col.col = l->pos - l->line_start + 1; 
+    t->start = l->src + l->pos;
 
     if(at_eof(l))
     {
@@ -369,7 +369,7 @@ void lexer_advance(Lexer* l)
         return;
     }
 
-    t->loc.len = get_col(l) - t->loc.col_num;
+    t->loc.len = l->pos - t->loc.start;
 }
 
 static void skip_invisible(Lexer* l)
@@ -378,21 +378,25 @@ static void skip_invisible(Lexer* l)
     {
         switch(peek(l))
         {
-        case ' ':
-        case '\t':
-            next(l);
-            continue;
         case '\n':
+            l->line_num++;
             next(l);
-            l->line_start = l->cur_pos;
-            l->cur_line++;
+            l->line_start = l->pos;
+            continue;
+        case '\t':
+        case ' ':
+            next(l);
             continue;
         case '/':
             if(peek_next(l) == '/')
             {
                 advance(l, 2);
-                while(peek(l) != '\n' && !at_eof(l))
+                while(peek(l) != '\n')
+                {
+                    if(at_eof(l))
+                        return;
                     next(l);
+                }
                 continue;
             }
             if(peek_next(l) == '*')
@@ -407,7 +411,7 @@ static void skip_invisible(Lexer* l)
                         advance(l, 2);
                         break;
                     }
-                    next_nl(l);
+                    next_with_nl(l);
                 }
                 continue;
             }
@@ -424,7 +428,7 @@ static inline void extract_identifier(Lexer* l, Token* t)
     while(c_is_undalphanum(peek(l)))
         next(l);
 
-    t->loc.len = get_col(l) - t->loc.col_num;
+    t->loc.len = l->pos - t->loc.start;
     t->kind = TOKEN_IDENT;
     t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
 }
@@ -434,7 +438,7 @@ static inline void extract_ct_identifier(Lexer* l, Token* t)
     while(c_is_undalphanum(peek(l)))
         next(l);
 
-    t->loc.len = get_col(l) - t->loc.col_num;
+    t->loc.len = l->pos - t->loc.start;
     t->sym = sym_map_getn(t->start, t->loc.len, &t->kind);
     if(t->sym == NULL)
     {
@@ -448,7 +452,7 @@ static inline void extract_attr_identifier(Lexer* l, Token* t)
     while(c_is_undalphanum(peek(l)))
         next(l);
 
-    t->loc.len = get_col(l) - t->loc.col_num;
+    t->loc.len = l->pos - t->loc.start;
     t->kind = TOKEN_ATTRIBUTE_IDENT;
     t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
 }
@@ -542,7 +546,7 @@ static inline void extract_raw_string_literal(Lexer* l, Token* t)
             return;
         }
         da_append(&sb, c);
-        next_nl(l);
+        next_with_nl(l);
     }
 
     next(l);
@@ -718,11 +722,10 @@ static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding enc
         const char* msg;
         SourceLoc loc;
         loc.file = lexer_file_id(l);
-        loc.col_num = get_col(l);
-        loc.line_num = l->cur_line;
+        loc.start = l->pos;
 
-        next(l);
-        switch(*(l->cur_pos++))
+        advance(l, 2);
+        switch(peek_prev(l))
         {
         case 'a': // Audible Bell
             *value = 0x07;
@@ -839,7 +842,7 @@ static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding enc
             break;
         }
 
-        loc.len = get_col(l) - loc.col_num;
+        loc.len = l->pos - loc.start;
         sic_error_at(loc, "%s", msg);
         return 0;
     }
@@ -867,7 +870,7 @@ static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint)
     SourceLoc loc;
     uint32_t point;
     ByteSize len;
-    const uint8_t* const p = (uint8_t*)l->cur_pos;
+    const uint8_t* const p = (uint8_t*)l->src + l->pos;
 
     if (p[0] < 0x80) 
     {
@@ -920,12 +923,21 @@ static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint)
 
 ERR:
     loc.file = lexer_file_id(l);
-    loc.col_num  = get_col(l);
-    loc.line_num = l->cur_line;
+    loc.start = l->pos;
     loc.len = 1;
-    next(l);
     sic_error_at(loc, "Invalid utf-8 encoded character.");
+    next(l);
     return 0;
+}
+
+static inline void next_with_nl(Lexer* l)
+{
+    if(peek(l) == '\n')
+    {
+        l->line_num++;
+        l->line_start = l->pos + 1;
+    }
+    next(l);
 }
 
 static inline ByteSize unicode_to_utf8(uint32_t* value)
@@ -948,7 +960,7 @@ static inline ByteSize unicode_to_utf8(uint32_t* value)
         return 3;
     }
 
-    SIC_ASSERT(codepoint <= 0x10FFFF);
+    DBG_ASSERT(codepoint <= 0x10FFFF);
     utf8_buf[0] = 0xF0 | (codepoint >> 18);
     utf8_buf[1] = 0x80 | ((codepoint >> 12) & 0x3F);
     utf8_buf[2] = 0x80 | ((codepoint >> 6) & 0x3F);
@@ -958,6 +970,7 @@ static inline ByteSize unicode_to_utf8(uint32_t* value)
 
 static inline bool consume(Lexer* l, char c)
 {
+    DBG_ASSERT(c != '\n');
     if(peek(l) == c)
     {
         next(l);
@@ -966,29 +979,12 @@ static inline bool consume(Lexer* l, char c)
     return false;
 }
 
-static inline char next_nl(Lexer* l)
-{
-    char c = peek(l); 
-    if(c == '\n')
-    {
-        l->cur_line++;
-        l->line_start = l->cur_pos + 1;
-    }
-    next(l);
-    return c;
-}
-
 static inline Token* next_token_loc(Lexer* l)
 {
     Token* res = l->la_buf.buf + l->la_buf.head;
     l->la_buf.head = l->la_buf.cur;
     l->la_buf.cur = (l->la_buf.cur + 1) & LOOK_AHEAD_MASK;
     return res;
-}
-
-static inline uint32_t get_col(Lexer* l)
-{
-    return (uintptr_t)l->cur_pos - (uintptr_t)l->line_start + 1;
 }
 
 static inline FileId lexer_file_id(Lexer* l)
@@ -1007,8 +1003,7 @@ static inline void lexer_error_at_current(Lexer* l, Token* t, const char* msg, .
     va_start(va, msg);
     SourceLoc loc;
     loc.file = lexer_file_id(l);
-    loc.col_num  = get_col(l);
-    loc.line_num = l->cur_line;
+    loc.start = l->pos;
     loc.len = 1;
     sic_diagnostic_atv(DIAG_ERROR, loc, msg, va);
     va_end(va);
@@ -1019,7 +1014,7 @@ static inline void lexer_error(Lexer* l, Token* t, const char* msg, ...)
 {
     va_list va;
     va_start(va, msg);
-    t->loc.len = get_col(l) - t->loc.col_num;
+    t->loc.len = l->pos - t->loc.start;
     sic_diagnostic_atv(DIAG_ERROR, t->loc, msg, va);
     va_end(va);
     t->kind = TOKEN_INVALID;

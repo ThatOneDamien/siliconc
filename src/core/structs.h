@@ -25,6 +25,7 @@ typedef struct ScratchBuffer    ScratchBuffer;
 
 // Lexing Stage Structs
 typedef struct SourceLoc        SourceLoc;
+typedef struct LineCol          LineCol;
 typedef struct Token            Token;
 typedef struct LookAhead        LookAhead;
 typedef struct Lexer            Lexer;
@@ -56,7 +57,6 @@ typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
-typedef union  ConstantValue    ConstantValue;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct ArrInitEntry     ArrInitEntry;
 typedef struct ArrInitList      ArrInitList;
@@ -72,6 +72,7 @@ typedef struct ASTExprUAccess   ASTExprUAccess;
 typedef struct ASTExprCTOffset  ASTExprCTOffset;
 typedef struct ASTExpr          ASTExpr;
 typedef struct ASTBlock         ASTBlock;
+typedef struct ASTBreakCont     ASTBreakCont;
 typedef struct ASTCase          ASTCase;
 typedef struct ASTFor           ASTFor;
 typedef struct ASTIf            ASTIf;
@@ -138,17 +139,22 @@ struct MemArena
 
 struct SourceLoc
 {
-    FileId   file     : 8;
-    uint32_t col_num  : 12;
-    uint32_t len      : 12;
-    uint32_t line_num : 32;
+    FileId   file;
+    uint16_t len;
+    uint32_t start;
 };
-
 static_assert(sizeof(SourceLoc) == 8, "Check sizes");
+
+struct LineCol
+{
+    uint32_t line;
+    uint32_t col;
+};
 
 struct Token
 {
     SourceLoc   loc;
+    LineCol     line_col;
     TokenKind   kind;
     union
     {
@@ -176,9 +182,10 @@ struct LookAhead
 struct Lexer
 {
     ObjModule*  module;
-    const char* line_start;
-    const char* cur_pos;
-    uint32_t    cur_line;
+    const char* src;
+    uint32_t    line_num;
+    uint32_t    line_start;
+    uint32_t    pos;
     LookAhead   la_buf;
 };
 
@@ -392,11 +399,12 @@ struct ASTExprConstant
     ConstantKind  kind;
     union
     {
-        Int128      i;
-        double      f;
-        bool        b;
-        uint32_t    c; // char
-        ConstString str;
+        Int128        i; // Integer
+        double        f; // Float
+        bool          b; // Bool
+        uint32_t      c; // Char
+        ConstString   str; // String
+        ObjEnumValue* enum_; // Enum Value
     };
 };
 
@@ -477,6 +485,15 @@ struct ASTBlock
     ASTStmt* body;
 };
 
+struct ASTBreakCont
+{
+    union
+    {
+        SymbolLoc label;
+        ASTStmt*  target;
+    };
+};
+
 struct ASTCase
 {
     ASTExpr* expr;
@@ -486,9 +503,22 @@ struct ASTCase
 
 struct ASTFor
 {
-    ObjVar*  loop_var;
-    ASTExpr* collection;
-    ASTStmt* body;
+    SymbolLoc label;
+    union
+    {
+        struct
+        {
+            ObjVar*  loop_var;
+            ASTExpr* collection;
+            ASTStmt* body;
+        };
+
+        struct
+        {
+            void* continue_block;
+            void* break_block;
+        } backend;
+    };
 };
 
 struct ASTIf
@@ -511,14 +541,40 @@ struct ASTSwap
 
 struct ASTSwitch
 {
-    ASTExpr*  expr;
-    ASTCaseDA cases;
+    SymbolLoc label;
+    union
+    {
+        struct
+        {
+            ASTExpr*  expr;
+            ASTCaseDA cases;
+        };
+
+        struct
+        {
+            void* break_block;
+            // TODO: Add retry for use in goto case
+        } backend;
+    };
 };
 
 struct ASTWhile
 {
-    ASTExpr* cond;
-    ASTStmt* body;
+    SymbolLoc label;
+    union
+    {
+        struct
+        {
+            ASTExpr* cond;
+            ASTStmt* body;
+        };
+
+        struct
+        {
+            void* continue_block;
+            void* break_block;
+        } backend;
+    };
 };
 
 struct ASTCtAssert
@@ -537,12 +593,12 @@ struct ASTStmt
     union
     {
         ASTBlock  block;
+        ASTBreakCont break_cont;
+        ObjVar*   declaration;
         ASTExpr*  expr;
         ASTFor    for_;
         ASTIf     if_;
-        ObjVarDA  multi_decl;
         ASTReturn return_;
-        ObjVar*   single_decl;
         ASTSwap   swap;
         ASTSwitch switch_;
         ASTWhile  while_;
@@ -562,11 +618,13 @@ struct FuncSignature
 struct Object
 {
     Symbol        symbol;
+    Symbol        link_name;
     SourceLoc     loc;
     ObjKind       kind;
     Visibility    visibility;
     ResolveStatus status;
     AttrDA        attrs;
+    ObjModule*    module;
     void*         llvm_ref;
 };
 
@@ -597,8 +655,9 @@ struct ObjFunc
     FuncSignature  signature;
     Type*          func_type;
     ASTStmt*       body;
-    ByteSize      swap_stmt_align;
+    ByteSize       swap_stmt_align;
     ByteSize       swap_stmt_size;
+    bool           is_extern;
 };
 
 struct ObjImport
@@ -655,6 +714,9 @@ struct ObjVar
     TypeLoc   type_loc;
     ASTExpr*  initial_val;
     bool      uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
+    bool      is_const_binding;
+    bool      written;
+    bool      read;
     VarKind   kind;
 };
 
@@ -663,6 +725,12 @@ struct SourceFile
     const char* abs_path;
     const char* rel_path;
     const char* src;
+    struct
+    {
+        uint32_t* data;
+        uint32_t  size;
+        uint32_t  capacity;
+    } line_starts;
     ObjModule*  module;
 };
 

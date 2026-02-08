@@ -17,7 +17,7 @@ fn main() -> int
 }
 
 
-/// test:   simple2
+/// test:   assigned
 /// action: compile
 /// result: pass
 enum Something
@@ -28,7 +28,7 @@ enum Something
     D
 }
 
-/// test:   alias
+/// test:   aliased
 /// action: compile
 /// result: pass
 enum Something

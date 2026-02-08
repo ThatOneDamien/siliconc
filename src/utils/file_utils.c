@@ -47,7 +47,7 @@ void get_current_dir()
 
 FileId source_file_add_or_get(const char* path, ObjModule* module)
 {
-    SIC_ASSERT(path != NULL);
+    DBG_ASSERT(path != NULL);
 
     bool is_abs = path[0] == '/';
 
@@ -74,29 +74,51 @@ FileId source_file_add_or_get(const char* path, ObjModule* module)
     if(fd == -1)
         goto ERR;
 
-    long size = lseek(fd, 0, SEEK_END);
+    ssize_t size = lseek(fd, 0, SEEK_END);
 
     if(size < 0 || lseek(fd, 0, SEEK_SET) < 0)
         goto ERR;
 
-    char* buf = MALLOC(size + 2, sizeof(char));
+    if((size_t)size > (size_t)UINT32_MAX)
+        sic_fatal_error("Size of file \'%s\' exceeds maximum supported size (4GB).", path);
+
+    char* buf = MALLOC(size + 1, sizeof(char));
     file->src = buf;
-    long total_read = 0;
+    ssize_t total_read = 0;
     while(total_read < size)
     {
-        long bytes_read = read(fd, buf + total_read, size); 
+        ssize_t bytes_read = read(fd, buf + total_read, size); 
         if(bytes_read <= 0)
             goto ERR;
         total_read += bytes_read;
     }
 
-    if(buf[size - 1] == '\n')
-        buf[size] = '\0';
-    else
+    da_init(&file->line_starts, 2048);
+    da_append(&file->line_starts, 0);
+
+    // Normalize CRLF / CR / LF
+    ssize_t old = 0;
+    ssize_t new = 0;
+    while(old < size)
     {
-        buf[size] = '\n';
-        buf[size + 1] = '\0';
+        char c = buf[old];
+        if(c == '\r')
+        {
+            c = '\n';
+            if(buf[old + 1] == '\n') old++;
+        }
+
+        buf[new] = c;
+        if(c == '\n')
+            da_append(&file->line_starts, (uint32_t)new + 1);
+
+        old++;
+        new++;
     }
+    da_append(&file->line_starts, (uint32_t)new + 1);
+
+    buf[new] = '\0';
+    da_compact(&file->line_starts);
 
     return id + 1;
 ERR:
@@ -157,8 +179,8 @@ FileId find_and_open_module_path(ObjModule* module)
 
 const char* convert_ext_to(const char* path, FileType desired)
 {
-    SIC_ASSERT(path != NULL);
-    SIC_ASSERT(desired <= FT_SHARED);
+    DBG_ASSERT(path != NULL);
+    DBG_ASSERT(desired <= FT_SHARED);
     size_t ext_len;
     const char* new_ext = ft_to_extension(desired, &ext_len);
     const char* file_name;
@@ -179,14 +201,14 @@ const char* convert_ext_to(const char* path, FileType desired)
 
 bool file_exists(const char* path)
 {
-    SIC_ASSERT(path != NULL);
+    DBG_ASSERT(path != NULL);
     struct stat st;
     return stat(path, &st) == FILE_FOUND;
 }
 
 const char* create_tempfile(FileType ft)
 {
-    SIC_ASSERT(ft != FT_UNKNOWN);
+    DBG_ASSERT(ft != FT_UNKNOWN);
     static const char template[21] = "/tmp/siliconc-XXXXXX";
     size_t ext_len;
     const char* ext = ft_to_extension(ft, &ext_len);
@@ -219,7 +241,7 @@ void close_tempfiles(void)
 
 FileType get_filetype(const char* path)
 {
-    SIC_ASSERT(path != NULL);
+    DBG_ASSERT(path != NULL);
     const char* name;
     const char* ext;
     const char* end;
@@ -236,7 +258,7 @@ FileType get_filetype(const char* path)
 
 static inline const char* ft_to_extension(FileType ft, size_t* len)
 {
-    SIC_ASSERT(ft <= FT_SHARED);
+    DBG_ASSERT(ft <= FT_SHARED);
     *len = s_ft_to_ext[ft].len;
     return s_ft_to_ext[ft].ext;
 }
@@ -278,7 +300,7 @@ static const char* normalize_rel_path(const char* abs_path)
         char abs = *abs_path;
         if(cwd == '\0')
         {
-            SIC_ASSERT(abs != '\0');
+            DBG_ASSERT(abs != '\0');
             if(abs == '/')
                 return abs_path + 1;
             break;

@@ -45,22 +45,30 @@ void print_token(const Token* tok)
         repr = tok_kind_to_str(tok->kind);
         break;
     }
+    // FIXME: Fix this 
     printf("(%3d) %-15s: Line: %-6u Col: %-4u Len: %-4u \n", 
            tok->kind,
            repr,
-           tok->loc.line_num,
-           tok->loc.col_num,
+           tok->line_col.line,
+           tok->line_col.col,
            tok->loc.len);
 }
 
+
 void print_module(const ObjModule* module, bool allow_unresolved)
 {
-    SIC_ASSERT(module != NULL);
+    DBG_ASSERT(module != NULL);
     scratch_append_module_path(module);
     printf("Module: \'%s\' (%u Funcs, %u Global Vars)\n", 
            scratch_string(), module->funcs.size, module->vars.size);
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         print_func(module->funcs.data[i], allow_unresolved);
+}
+
+void print_type_obj(const Object* obj)
+{
+    DBG_ASSERT(obj_is_type(obj));
+
 }
 
 void print_func(const ObjFunc* func, bool allow_unresolved)
@@ -122,6 +130,9 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     case STMT_BREAK:
     case STMT_CONTINUE:
         return;
+    case STMT_DECLARATION:
+        print_declaration(stmt->stmt.declaration, depth + 1, allow_unresolved);
+        return;
     case STMT_EXPR_STMT:
         print_expr_at_depth(stmt->stmt.expr, depth + 1, NULL, allow_unresolved);
         return;
@@ -133,35 +144,10 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_stmt_at_depth(stmt->stmt.if_.then_stmt, depth + 1, "then", allow_unresolved);
         print_stmt_at_depth(stmt->stmt.if_.else_stmt, depth + 1, "else", allow_unresolved);
         return;
-    case STMT_MULTI_DECL: {
-        const ObjVarDA decls = stmt->stmt.multi_decl;
-        SIC_ASSERT(decls.size > 0);
-        print_declaration(decls.data[0], depth + 1, allow_unresolved);
-        size_t name_len = name ? strlen(name) + 2 : 0;
-        for(uint32_t i = 1; i < decls.size; ++i)
-        {
-            PRINT_DEPTH(depth);
-            for(size_t j = 0; j < name_len; ++j)
-                putc(' ', stdout);
-            printf("( Declaration )\n");
-            const ObjVar* decl = stmt->stmt.single_decl;
-            if(decl->initial_val != NULL)
-                print_expr_at_depth(decl->initial_val, depth + 1, decl->header.symbol, allow_unresolved);
-            else
-            {
-                PRINT_DEPTH(depth + 1);
-                printf("%s: ( Uninitialized )\n", decl->header.symbol);
-            }
-        }
-        return;
-    }
     case STMT_NOP:
         return;
     case STMT_RETURN:
         print_expr_at_depth(stmt->stmt.return_.ret_expr, depth + 1, NULL, allow_unresolved);
-        return;
-    case STMT_SINGLE_DECL:
-        print_declaration(stmt->stmt.single_decl, depth + 1, allow_unresolved);
         return;
     case STMT_SWAP:
         print_expr_at_depth(stmt->stmt.swap.left,  depth + 1, NULL, allow_unresolved);
@@ -320,12 +306,14 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
                debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_POINTER:
-        printf("Constant Integer val: 0x%lX] (Type: %s)\n",
+        printf("Constant Pointer val: 0x%lX] (Type: %s)\n",
                constant->i.lo, debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_STRING:
         printf("Constant String ]\n");
         return;
+    case CONSTANT_ENUM:
+        SIC_TODO();
     }
     SIC_UNREACHABLE();
 }
@@ -341,9 +329,6 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
     {
     case TYPE_INVALID:
         return HL_BLUE "<Invalid>" HL_STOP;
-    case TYPE_AUTO:
-        type_string = "<auto>";
-        break;
     case TYPE_TYPEOF:
         type_string = "<typeof(...)>";
         break;
@@ -373,13 +358,12 @@ static const char* s_stmt_type_strs[] = {
     [STMT_BLOCK]       = "Block",
     [STMT_BREAK]       = "Break",
     [STMT_CONTINUE]    = "Continue",
+    [STMT_DECLARATION] = "Declaration",
     [STMT_EXPR_STMT]   = "Expression",
     [STMT_FOR]         = "For Loop",
     [STMT_IF]          = "If Statement",
-    [STMT_MULTI_DECL]  = "Declaration",
     [STMT_NOP]         = "Nop",
     [STMT_RETURN]      = "Return Statement",
-    [STMT_SINGLE_DECL] = "Declaration",
     [STMT_SWAP]        = "Swap Statement",
     [STMT_SWITCH]      = "Switch Statement",
     [STMT_WHILE]       = "While Loop",

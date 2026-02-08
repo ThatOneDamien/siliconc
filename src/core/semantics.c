@@ -76,6 +76,7 @@ bool analyze_function(ObjFunc* func)
     g_sema->in_global_init = true;
 
     if(!analyze_attributes(&func->header)) success = false;
+    set_object_link_name(&func->header);
 
     if(!resolve_type(&func->signature.ret_type.type, RES_ALLOW_VOID, 
                      func->signature.ret_type.loc, "Function cannot have return type"))
@@ -135,7 +136,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     }
 
     import->header.status = STATUS_RESOLVING;
-
+    analyze_attributes(&import->header);
 
     // TODO: Check external modules as well. They arent added yet, but when they are
     // add them here.
@@ -291,6 +292,7 @@ bool analyze_global_var(ObjVar* var)
     var->header.status = STATUS_RESOLVING;
 
     analyze_attributes(&var->header);
+    set_object_link_name(&var->header);
 
     if(!analyze_declaration(var))
     {
@@ -318,8 +320,8 @@ bool analyze_global_var(ObjVar* var)
 
 Attr* get_builtin_attribute(Object* obj, AttrKind kind)
 {
-    SIC_ASSERT(obj != NULL);
-    SIC_ASSERT(kind < ATTR_CUSTOM);
+    DBG_ASSERT(obj != NULL);
+    DBG_ASSERT(kind < ATTR_CUSTOM);
     for(uint32_t i = 0; i < obj->attrs.size; ++i)
         if(obj->attrs.data[i].kind == kind)
             return obj->attrs.data + i;
@@ -361,6 +363,7 @@ static inline void analyze_main()
             goto BAD_SIG;
     }
 
+    main->link_name = main->symbol;
     return;
 
 BAD_SIG:
@@ -393,8 +396,26 @@ static void analyze_function_body(ObjFunc* func)
     pop_scope(scope);
 }
 
+static bool check_attribute_args(Attr* attr, uint32_t expected)
+{
+    if(attr->args.size < expected)
+    {
+        sic_error_at(attr->loc, "Too few arguments provided in attribute \'%s\'. Expected %u, got %u.",
+                     attr->symbol, expected, attr->args.size);
+        return false;
+    }
+    if(attr->args.size > expected)
+    {
+        sic_error_at(attr->loc, "Too many arguments provided in attribute \'%s\'. Expected %u, got %u.",
+                     attr->symbol, expected, attr->args.size);
+        return false;
+    }
+    return true;
+}
+
 static bool analyze_attributes(Object* obj)
 {
+    DBG_ASSERT(obj->status != STATUS_RESOLVED);
     AttrDA attrs = obj->attrs;
     ObjKind kind = obj->kind;
     bool valid = true;
@@ -403,30 +424,64 @@ static bool analyze_attributes(Object* obj)
         Attr* attr = attrs.data + i;
         switch(attr->kind)
         {
+        case ATTR_ABI:
+            SIC_TODO();
         case ATTR_INLINE:
-            if(attr->args.size != 0) goto TOO_MANY_ARGS;
-            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind != OBJ_FUNC)
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.",
+                             attr->symbol);
+                break;
+            }
             continue;
+        case ATTR_LINK_NAME: {
+            if(!check_attribute_args(attr, 1)) break;
+            ASTExpr* expr = attr->args.data[0];
+            if(!analyze_expr(expr)) break;
+            SIC_TODO();
+            obj->link_name = NULL;
+            continue;
+        }
         case ATTR_NODISCARD:
-            if(attr->args.size != 0) goto TOO_MANY_ARGS;
-            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind != OBJ_FUNC)
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                break;
+            }
             continue;
         case ATTR_NOINLINE:
-            if(attr->args.size != 0) goto TOO_MANY_ARGS;
-            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind != OBJ_FUNC)
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                break;
+            }
+            continue;
+        case ATTR_NORETURN:
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind != OBJ_FUNC)
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                break;
+            }
             continue;
         case ATTR_PACKED:
-            if(attr->args.size != 0) goto TOO_MANY_ARGS;
+            if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_STRUCT)
             {
-                sic_error_at(attr->loc, "Attribute @packed can only be applied to struct definitions.");
-                attr->kind = ATTR_INVALID;
-                valid = false;
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                break;
             }
             continue;
         case ATTR_PURE:
-            if(attr->args.size != 0) goto TOO_MANY_ARGS;
-            if(kind != OBJ_FUNC) goto ONLY_FUNCTION;
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind != OBJ_FUNC)
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                break;
+            }
             continue;
         case ATTR_CUSTOM:
             SIC_TODO();
@@ -434,13 +489,6 @@ static bool analyze_attributes(Object* obj)
             SIC_UNREACHABLE();
         }
 
-    TOO_MANY_ARGS:
-        sic_error_at(attr->loc, "Attribute %s should not have any parameters.", attr->symbol);
-        attr->kind = ATTR_INVALID;
-        valid = false;
-        continue;
-    ONLY_FUNCTION:
-        sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
         attr->kind = ATTR_INVALID;
         valid = false;
         continue;
@@ -472,6 +520,10 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_CONTINUE:
         analyze_continue(stmt);
         return;
+    case STMT_DECLARATION:
+        analyze_declaration(stmt->stmt.declaration);
+        push_obj(&stmt->stmt.declaration->header);
+        return;
     case STMT_EXPR_STMT:
         analyze_expr(stmt->stmt.expr);
         return;
@@ -481,21 +533,8 @@ static void analyze_stmt(ASTStmt* stmt, bool add_scope)
     case STMT_IF:
         analyze_if(stmt);
         return;
-    case STMT_MULTI_DECL: {
-        const ObjVarDA decl_list = stmt->stmt.multi_decl;
-        for(uint32_t i = 0; i < decl_list.size; ++i)
-        {
-            analyze_declaration(decl_list.data[i]);
-            push_obj(&decl_list.data[i]->header);
-        }
-        return;
-    }
     case STMT_RETURN:
         analyze_return(stmt);
-        return;
-    case STMT_SINGLE_DECL:
-        analyze_declaration(stmt->stmt.single_decl);
-        push_obj(&stmt->stmt.single_decl->header);
         return;
     case STMT_SWAP:
         analyze_swap(stmt);
@@ -531,14 +570,38 @@ static bool analyze_stmt_block(ASTStmt* stmt)
 
 static void analyze_break(ASTStmt* stmt)
 {
-    if(~g_sema->block_context & BLOCK_BREAKABLE)
-        sic_error_at(stmt->loc, "Cannot break in the current context.");
+    ASTStmt* target;
+    if(stmt->stmt.break_cont.label.sym == NULL)
+    {
+        if(g_sema->break_target == NULL)
+            sic_error_at(stmt->loc, "'break' statement outside of loop or switch.");
+        target = g_sema->break_target;
+    }
+    else
+        target = find_labeled_stmt(stmt->stmt.break_cont.label);
+    stmt->stmt.break_cont.target = target;
 }
 
 static void analyze_continue(ASTStmt* stmt)
 {
-    if(~g_sema->block_context & BLOCK_CONTINUABLE)
-        sic_error_at(stmt->loc, "Cannot continue in the current context.");
+    ASTStmt* target;
+    if(stmt->stmt.break_cont.label.sym == NULL)
+    {
+        if(g_sema->continue_target == NULL)
+            sic_error_at(stmt->loc, "'continue' statement outside of loop.");
+        target = g_sema->continue_target;
+    }
+    else
+    {
+        target = find_labeled_stmt(stmt->stmt.break_cont.label);
+        if(target->kind == STMT_SWITCH) // Cannot continue in switch at the moment.
+        {
+            sic_error_at(stmt->stmt.break_cont.label.loc,
+                         "Label \'%s\' refers to switch statement. 'continue' only works with loops.", 
+                         stmt->stmt.break_cont.label.sym);
+        }
+    }
+    stmt->stmt.break_cont.target = target;
 }
 
 static void analyze_for(ASTStmt* stmt)
@@ -549,11 +612,17 @@ static void analyze_for(ASTStmt* stmt)
     push_obj(&for_stmt->loop_var->header);
     analyze_expr(for_stmt->collection);
 
-    BlockContext context = g_sema->block_context;
-    g_sema->block_context |= BLOCK_LOOP;
-    analyze_stmt(for_stmt->body, false);
-    g_sema->block_context = context;
+    ASTStmt* prev_break = g_sema->break_target;
+    ASTStmt* prev_continue = g_sema->continue_target;
+    g_sema->break_target = stmt;
+    g_sema->continue_target = stmt;
+    push_labeled_stmt(stmt, for_stmt->label);
 
+    analyze_stmt(for_stmt->body, false);
+    
+    pop_labeled_stmt(stmt, for_stmt->label);
+    g_sema->break_target = prev_break;
+    g_sema->continue_target = prev_continue;
     pop_scope(scope);
 }
 
@@ -624,8 +693,8 @@ static void analyze_switch(ASTStmt* stmt)
     if(type_size(swi->expr->type) < 4)
         implicit_cast(&swi->expr, g_type_int);
 
-    BlockContext context = g_sema->block_context;
-    g_sema->block_context |= BLOCK_SWITCH;
+    ASTStmt* prev_break = g_sema->break_target;
+    g_sema->break_target = stmt;
     bool always_returns = true;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
@@ -663,18 +732,23 @@ static void analyze_switch(ASTStmt* stmt)
         always_returns &= analyze_stmt_block(cas->body);
         pop_scope(scope);
     }
+    g_sema->break_target = prev_break;
     stmt->always_returns = always_returns & has_default;
-    g_sema->block_context = context;
 }
 
 static void analyze_while(ASTStmt* stmt)
 {
     ASTWhile* while_stmt = &stmt->stmt.while_;
     implicit_cast(&while_stmt->cond, g_type_bool);
-    BlockContext context = g_sema->block_context;
-    g_sema->block_context |= BLOCK_LOOP; 
+
+    ASTStmt* prev_break = g_sema->break_target;
+    ASTStmt* prev_continue = g_sema->continue_target;
+    g_sema->break_target = stmt;
+    g_sema->continue_target = stmt;
+    push_labeled_stmt(stmt, while_stmt->label);
     analyze_stmt(while_stmt->body, true);
-    g_sema->block_context = context;
+    pop_labeled_stmt(stmt, while_stmt->label);
+
     if(while_stmt->cond->kind == EXPR_CONSTANT &&
        !while_stmt->cond->expr.constant.b)
     {
@@ -683,6 +757,8 @@ static void analyze_while(ASTStmt* stmt)
                           "removing this.");
         stmt->kind = STMT_NOP;
     }
+    g_sema->break_target = prev_break;
+    g_sema->continue_target = prev_continue;
 }
 
 static void analyze_ct_assert(ASTStmt* stmt)
@@ -697,7 +773,7 @@ static void analyze_ct_assert(ASTStmt* stmt)
                                          "compile-time evaluable boolean value.");
         return;
     }
-    SIC_ASSERT(assert_->cond->expr.constant.kind == CONSTANT_BOOL);
+    DBG_ASSERT(assert_->cond->expr.constant.kind == CONSTANT_BOOL);
     if(assert_->err_msg->kind != EXPR_CONSTANT ||
        assert_->err_msg->expr.constant.kind != CONSTANT_STRING)
     {
@@ -713,20 +789,41 @@ static void analyze_ct_assert(ASTStmt* stmt)
 
 static bool analyze_declaration(ObjVar* decl)
 {
-    if(!resolve_type(&decl->type_loc.type, RES_ALLOW_AUTO_ARRAY | RES_ALLOW_AUTO, 
-                     decl->type_loc.loc, "Variable cannot be of type"))
+    if(decl->type_loc.type == NULL)
+    {
+        if(decl->initial_val == NULL)
+        {
+            sic_error_at(decl->header.loc, "Declaring a variable with auto requires "
+                                           "it to be initialized with an expression.");
+            goto ERR;
+        } 
+        if(!analyze_expr(decl->initial_val))
+            goto ERR;
+
+        Type* rhs_type = decl->initial_val->type;
+        if(rhs_type->kind == TYPE_INIT_LIST)
+        {
+            sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
+                    "For array literals, please declare a type.");
+            goto ERR;
+        }
+        if(rhs_type->kind == TYPE_STRING_LIT)
+        {
+            DBG_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
+            // TODO: Replace this with actual string type. Most likely a char slice.
+            rhs_type = type_pointer_to(g_type_char);
+        }
+        decl->type_loc.type = rhs_type;
+        return true;
+    }
+
+    else if(!resolve_type(&decl->type_loc.type, RES_ALLOW_AUTO_ARRAY, 
+                          decl->type_loc.loc, "Variable cannot be of type"))
         goto ERR;
 
     TypeKind kind = decl->type_loc.type->kind;
     if(decl->initial_val == NULL)
     {
-        if(kind == TYPE_AUTO)
-        {
-            sic_error_at(decl->header.loc, "Declaring a variable with auto requires "
-                                           "it to be initialized with an expression.");
-            goto ERR;
-        }
-
         if(kind == TYPE_PS_ARRAY)
         {
             sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
@@ -741,23 +838,7 @@ static bool analyze_declaration(ObjVar* decl)
     {
         Type* rhs_type = decl->initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
-        if(kind == TYPE_AUTO)
-        {
-            if(rhs_type->kind == TYPE_INIT_LIST)
-            {
-                sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
-                             "For array literals, please declare a type.");
-                goto ERR;
-            }
-            if(rhs_type->kind == TYPE_STRING_LIT)
-            {
-                SIC_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
-                // TODO: Replace this with actual string type. Most likely a char slice.
-                rhs_type = type_pointer_to(g_type_char);
-            }
-            decl->type_loc.type = rhs_type;
-        }
-        else if(kind == TYPE_PS_ARRAY)
+        if(kind == TYPE_PS_ARRAY)
         {
             if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
@@ -857,6 +938,8 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
     type->status = STATUS_RESOLVED;
     enum_->header.status = STATUS_RESOLVED;
 
+    analyze_attributes(&enum_->header);
+
     if(enum_->underlying.type == NULL)
         enum_->underlying.type = g_type_int;
     else if(!resolve_type(&enum_->underlying.type, RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
@@ -951,7 +1034,7 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
         else
         {
             uint32_t align = type_alignment(member->type_loc.type);
-            SIC_ASSERT(is_pow_of_2(align));
+            DBG_ASSERT(is_pow_of_2(align));
             struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type_loc.type);
             struct_->align = MAX(struct_->align, align);
         }
@@ -967,7 +1050,7 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
 bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
                             SourceLoc err_loc, const char* err_str)
 {
-    SIC_ASSERT(typedef_->header.kind == OBJ_TYPEDEF);
+    DBG_ASSERT(typedef_->header.kind == OBJ_TYPEDEF);
     switch(typedef_->header.status)
     {
     case STATUS_RESOLVED:
@@ -990,6 +1073,7 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
         FALLTHROUGH;
     case STATUS_UNRESOLVED: {
         typedef_->header.status = STATUS_RESOLVING;
+        analyze_attributes(&typedef_->header);
         bool prev = g_sema->in_typedef;
         g_sema->in_typedef = true;
         bool success = resolve_type(&typedef_->alias.type, RES_ALLOW_VOID, typedef_->alias.loc, "Typedef cannot be assigned to type");
@@ -1034,6 +1118,7 @@ bool analyze_union(ObjStruct* union_, Type** o_type)
         return false;
     }
     union_->header.status = STATUS_RESOLVING;
+    analyze_attributes(&union_->header);
     uint32_t largest_size = 0;
 
     if(o_type != NULL)

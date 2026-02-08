@@ -56,7 +56,6 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_SHL_ASSIGN]      = "<<=",
 
     [TOKEN_AS]              = "as",
-    [TOKEN_AUTO]            = "auto",
     [TOKEN_BITFIELD]        = "bitfield",
     [TOKEN_BREAK]           = "break",
     [TOKEN_CASE]            = "case",
@@ -84,6 +83,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_TRUE]            = "true",
     [TOKEN_TYPEDEF]         = "typedef",
     [TOKEN_UNION]           = "union",
+    [TOKEN_VAR]             = "var",
     [TOKEN_WHILE]           = "while",
 
     [TOKEN_VOID]            = "void",
@@ -110,6 +110,7 @@ static const char* s_tok_strs[__TOKEN_COUNT] = {
 
 	[TOKEN_CT_ALIGNOF]      = "#alignof",
 	[TOKEN_CT_ASSERT]       = "#assert",
+	[TOKEN_CT_CONST]        = "#const",
 	[TOKEN_CT_ENDIF]        = "#endif",
 	[TOKEN_CT_IF]           = "#if",
 	[TOKEN_CT_OFFSETOF]     = "#offsetof",
@@ -165,20 +166,20 @@ static UnaryOpKind s_tok_to_unary_op[] = {
 
 const char* tok_kind_to_str(TokenKind kind)
 {
-    SIC_ASSERT(s_tok_strs[kind] != NULL);
+    DBG_ASSERT(s_tok_strs[kind] != NULL);
     return s_tok_strs[kind];
 }
 
 BinaryOpKind tok_to_binary_op(TokenKind kind)
 {
-    SIC_ASSERT(kind < sizeof(s_tok_to_bin_op));
-    SIC_ASSERT(s_tok_to_bin_op[kind] != BINARY_INVALID);
+    DBG_ASSERT(kind < sizeof(s_tok_to_bin_op));
+    DBG_ASSERT(s_tok_to_bin_op[kind] != BINARY_INVALID);
     return s_tok_to_bin_op[kind];
 }
 
 UnaryOpKind tok_to_unary_op(TokenKind kind)
 {
-    SIC_ASSERT(kind < sizeof(s_tok_to_unary_op));
-    SIC_ASSERT(s_tok_to_unary_op[kind] != UNARY_INVALID);
+    DBG_ASSERT(kind < sizeof(s_tok_to_unary_op));
+    DBG_ASSERT(s_tok_to_unary_op[kind] != UNARY_INVALID);
     return s_tok_to_unary_op[kind];
 }

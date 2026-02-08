@@ -82,6 +82,13 @@ static inline bool token_is_keyword(TokenKind kind)
     return kind >= TOKEN_KEYWORD_START && kind <= TOKEN_KEYWORD_END;
 }
 
+static inline SourceLoc extend_loc(SourceLoc original, SourceLoc end)
+{
+    DBG_ASSERT(original.file == end.file);
+    original.len = end.start - original.start + end.len;
+    return original;
+}
+
 // Parser functions
 void parse_source_file(FileId fileid);
 
@@ -110,10 +117,10 @@ Type*       type_pointer_to(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
 Type*       type_reduce(Type* t);
-bool        type_equal(Type* t1, Type* t2);
-ByteSize    type_size(Type* ty);
-ByteSize    type_alignment(Type* ty);
-const char* type_to_string(Type* type);
+bool        type_equal(const Type* t1, const Type* t2);
+ByteSize    type_size(const Type* ty);
+ByteSize    type_alignment(const Type* ty);
+const char* type_to_string(const Type* type);
 static inline bool type_kind_is_integer(TypeKind kind)
 {
     return kind >= TYPE_INTEGER_START && kind <= TYPE_INTEGER_END;
@@ -122,7 +129,7 @@ static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->k
 
 static inline Type* type_to_unsigned(Type* ty)
 {
-    SIC_ASSERT(type_is_integer(ty));
+    DBG_ASSERT(type_is_integer(ty));
     switch(ty->kind)
     {
     case TYPE_BYTE:
@@ -144,7 +151,7 @@ static inline Type* type_to_unsigned(Type* ty)
 
 static inline Type* type_to_signed(Type* ty)
 {
-    SIC_ASSERT(type_is_integer(ty));
+    DBG_ASSERT(type_is_integer(ty));
     switch(ty->kind)
     {
     case TYPE_BYTE:
@@ -167,7 +174,7 @@ static inline Type* type_to_signed(Type* ty)
 static inline bool type_kind_is_signed(TypeKind kind)
 {
     static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
-    SIC_ASSERT(type_kind_is_integer(kind));
+    DBG_ASSERT(type_kind_is_integer(kind));
     return (kind & 1) == 0;
 }
 static inline bool type_is_signed(Type* ty) { return type_kind_is_signed(ty->kind); }
@@ -175,7 +182,7 @@ static inline bool type_is_signed(Type* ty) { return type_kind_is_signed(ty->kin
 static inline bool type_kind_is_unsigned(TypeKind kind)
 {
     static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
-    SIC_ASSERT(type_kind_is_integer(kind));
+    DBG_ASSERT(type_kind_is_integer(kind));
     return (kind & 1) == 1;
 }
 static inline bool type_is_unsigned(Type* ty) { return type_kind_is_unsigned(ty->kind); }
@@ -196,12 +203,12 @@ static inline bool type_is_numeric(Type* ty)
            ty->kind == TYPE_ENUM;
 }
 
-static inline bool type_is_array(Type* ty)
+static inline bool type_is_array(const Type* ty)
 {
     return ty->kind == TYPE_STATIC_ARRAY || ty->kind == TYPE_RUNTIME_ARRAY;
 }
 
-static inline bool type_is_trivially_copyable(Type* ty)
+static inline bool type_is_trivially_copyable(const Type* ty)
 {
     return !type_is_array(ty) && type_size(ty) <= 16;
 }
@@ -224,51 +231,73 @@ static inline bool type_is_bad(Type* type)
 
 static inline ObjEnum* obj_as_enum(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_ENUM);
+    DBG_ASSERT(o->kind == OBJ_ENUM);
     return (ObjEnum*)o;
 }
 
 static inline ObjEnumValue* obj_as_enum_value(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_ENUM_VALUE);
+    DBG_ASSERT(o->kind == OBJ_ENUM_VALUE);
     return (ObjEnumValue*)o;
 }
 
 static inline ObjFunc* obj_as_func(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_FUNC);
+    DBG_ASSERT(o->kind == OBJ_FUNC);
     return (ObjFunc*)o;
 }
 
 static inline ObjImport* obj_as_import(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_IMPORT);
+    DBG_ASSERT(o->kind == OBJ_IMPORT);
     return (ObjImport*)o;
 }
 
 static inline ObjModule* obj_as_module(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_MODULE);
+    DBG_ASSERT(o->kind == OBJ_MODULE);
     return (ObjModule*)o;
 }
 
 static inline ObjStruct* obj_as_struct(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_STRUCT || o->kind == OBJ_UNION);
+    DBG_ASSERT(o->kind == OBJ_STRUCT || o->kind == OBJ_UNION);
     return (ObjStruct*)o;
 }
 
 static inline ObjTypedef* obj_as_typedef(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_TYPEDEF);
+    DBG_ASSERT(o->kind == OBJ_TYPEDEF);
     return (ObjTypedef*)o;
 }
 
 static inline ObjVar* obj_as_var(Object* o)
 {
-    SIC_ASSERT(o->kind == OBJ_VAR);
+    DBG_ASSERT(o->kind == OBJ_VAR);
     return (ObjVar*)o;
 }
+
+static inline bool obj_is_type(const Object* obj)
+{
+    switch(obj->kind)
+    {
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
+    case OBJ_VAR:
+        return false;
+    case OBJ_INVALID:
+    case OBJ_BITFIELD:
+    case OBJ_ENUM:
+    case OBJ_STRUCT:
+    case OBJ_TYPEDEF:
+    case OBJ_UNION:
+        return true;
+    }
+    SIC_UNREACHABLE();
+}
+
 
 // Debug printing functions
 

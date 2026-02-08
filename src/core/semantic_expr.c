@@ -54,13 +54,14 @@ static void convert_to_const_char(ASTExpr* expr, uint32_t value);
 static void convert_to_const_float(ASTExpr* expr, double value);
 static void convert_to_const_int(ASTExpr* expr, Int128 value);
 static void convert_to_const_pointer(ASTExpr* expr, uint64_t value);
+static void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
 bool analyze_expr(ASTExpr* expr)
 {
     if(expr->evaluated) return !expr_is_bad(expr);
     bool success = analyze_expr_dispatch(expr);
-    SIC_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
+    DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
     expr->evaluated = true;
     if(!success) expr->kind = EXPR_INVALID;
     return success;
@@ -70,7 +71,7 @@ bool analyze_lvalue(ASTExpr* expr)
 {
     if(expr->evaluated) return !expr_is_bad(expr);
     bool success = analyze_lvalue_dispatch(expr);
-    SIC_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
+    DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
     expr->evaluated = true;
     if(!success) expr->kind = EXPR_INVALID;
     return success;
@@ -403,18 +404,16 @@ static bool analyze_ident(ASTExpr* expr, bool lvalue)
 
     switch(ident->kind)
     {
-    case OBJ_ENUM_VALUE: {
-        ObjEnumValue* enum_val = obj_as_enum_value(ident);
-        expr->type = enum_val->enum_type;
-        convert_to_const_int(expr, enum_val->const_value);
+    case OBJ_ENUM_VALUE:
+        convert_to_const_enum(expr, obj_as_enum_value(ident));
         return true;
-    }
     case OBJ_FUNC: {
         ObjFunc* func = obj_as_func(ident);
         if(!analyze_function(func)) return false;
         expr->type = func->func_type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
+        expr->const_eval = true;
         return true;
     }
     case OBJ_BITFIELD:
@@ -429,7 +428,7 @@ static bool analyze_ident(ASTExpr* expr, bool lvalue)
         SIC_TODO_MSG("Type expressions.");
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
-        if(var->kind == VAR_CONST)
+        if(var->kind == VAR_CT_CONST)
             SIC_TODO();
 
         if(var->kind == VAR_GLOBAL)
@@ -536,7 +535,7 @@ static bool resolve_member(ASTExpr* expr, bool lvalue)
 {
     SymbolLoc member = expr->expr.unresolved_access.member;
     ASTExpr* parent = expr->expr.unresolved_access.parent_expr;
-    SIC_ASSERT(parent->type->status == STATUS_RESOLVED);
+    DBG_ASSERT(parent->type->status == STATUS_RESOLVED);
     Type* t = parent->type->canonical;
     switch(t->kind)
     {
@@ -579,7 +578,6 @@ static bool resolve_member(ASTExpr* expr, bool lvalue)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_AUTO:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_TYPEOF:
@@ -867,7 +865,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return false;
     }
 
-    SIC_ASSERT(arith_type_conv(expr, lhs, rhs));
+    DBG_ASSERT(arith_type_conv(expr, lhs, rhs));
 
     left = *lhs;
     right = *rhs;
@@ -905,14 +903,14 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     ASTExpr* right = *rhs;
     if(left->kind == EXPR_CONSTANT)
     {
-        SIC_ASSERT(left->expr.constant.kind == CONSTANT_BOOL);
+        DBG_ASSERT(left->expr.constant.kind == CONSTANT_BOOL);
         expr_overwrite(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ left->expr.constant.b ? right : left);
         return true;
     }
 
     if(right->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ right->expr.constant.b))
     {
-        SIC_ASSERT(right->expr.constant.kind == CONSTANT_BOOL);
+        DBG_ASSERT(right->expr.constant.kind == CONSTANT_BOOL);
         expr_overwrite(expr, left); 
         return true;
     }
@@ -1247,7 +1245,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
     expr->type = in->type;
     if(in->kind == EXPR_CONSTANT)
     {
-        SIC_ASSERT(in->expr.constant.kind == CONSTANT_INTEGER);
+        DBG_ASSERT(in->expr.constant.kind == CONSTANT_INTEGER);
         convert_to_const_int(expr, i128_not(in->expr.constant.i));
         return true;
     }
@@ -1299,7 +1297,7 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref)
     expr->type = g_type_bool;
     if(inner->kind == EXPR_CONSTANT)
     {
-        SIC_ASSERT(inner->expr.constant.kind == CONSTANT_BOOL);
+        DBG_ASSERT(inner->expr.constant.kind == CONSTANT_BOOL);
         convert_to_const_bool(expr, !inner->expr.constant.b);
         return true;
     }
@@ -1372,14 +1370,14 @@ static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
     if(w1 < 100) // int
         promote_int_type(expr1);
     implicit_cast(expr2, (*expr1)->type);
-    SIC_ASSERT(type_equal((*expr1)->type, (*expr2)->type));
+    DBG_ASSERT(type_equal((*expr1)->type, (*expr2)->type));
     return true;
 }
 
 static inline void promote_int_type(ASTExpr** expr)
 {
     Type* ctype = (*expr)->type->canonical;
-    SIC_ASSERT(type_is_integer(ctype));
+    DBG_ASSERT(type_is_integer(ctype));
     if(ctype->builtin.byte_size < 4)
         implicit_cast_ensured(expr, g_type_int);
 }
@@ -1391,61 +1389,60 @@ static void expr_overwrite(ASTExpr* original, const ASTExpr* new)
     original->loc = loc;
 }
 
-static inline void convert_to_const_bool(ASTExpr* expr, bool value)
+static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
 {
-    SIC_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
     expr->kind = EXPR_CONSTANT;
     expr->const_eval = true;
     expr->pure = true;
-    expr->expr.constant.kind = CONSTANT_BOOL;
+    expr->expr.constant.kind = kind;
+}
+
+static inline void convert_to_const_bool(ASTExpr* expr, bool value)
+{
+    DBG_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
+    convert_to_constant(expr, CONSTANT_BOOL);
     expr->expr.constant.b = value;
 }
 
 static inline void convert_to_const_char(ASTExpr* expr, uint32_t value)
 {
-    SIC_ASSERT(type_is_char(expr->type->canonical));
-    expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
-    expr->expr.constant.kind = CONSTANT_CHAR;
+    DBG_ASSERT(type_is_char(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_CHAR);
     expr->expr.constant.c = value;
 }
 
 static inline void convert_to_const_float(ASTExpr* expr, double value)
 {
-    SIC_ASSERT(type_is_float(expr->type->canonical));
-    expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
-    expr->expr.constant.kind = CONSTANT_FLOAT;
+    DBG_ASSERT(type_is_float(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_FLOAT);
     expr->expr.constant.f = value;
 }
 
 static inline void convert_to_const_int(ASTExpr* expr, Int128 value)
 {
-    SIC_ASSERT(type_is_integer(expr->type->canonical));
-    expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
-    expr->expr.constant.kind = CONSTANT_INTEGER;
+    DBG_ASSERT(type_is_integer(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_INTEGER);
     expr->expr.constant.i = value;
     const_int_correct(expr);
 }
 
 static inline void convert_to_const_pointer(ASTExpr* expr, uint64_t value)
 {
-    expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
-    expr->expr.constant.kind = CONSTANT_POINTER;
+    convert_to_constant(expr, CONSTANT_POINTER);
     expr->expr.constant.i = i128_from_u64(value);
+}
+
+static inline void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value)
+{
+    convert_to_constant(expr, CONSTANT_ENUM);
+    expr->type = enum_value->enum_type;
+    expr->expr.constant.enum_ = enum_value;
 }
 
 static void convert_to_const_zero(ASTExpr* expr, Type* type)
 {
     expr->type = type;
     type = type_reduce(type);
-    expr->const_eval = true;
     switch(type->kind)
     {
     case TYPE_BOOL:
@@ -1480,7 +1477,6 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_AUTO:
     case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:

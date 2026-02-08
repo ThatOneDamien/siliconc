@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define DA_MIN_CAPACITY 8
-#define DA_ASSERT(cond) SIC_ASSERT(cond)
+#define DA_ASSERT(cond) DBG_ASSERT(cond)
 
 #define da_init(da, initial_cap)                                        \
     do                                                                  \

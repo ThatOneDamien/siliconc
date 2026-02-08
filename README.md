@@ -17,13 +17,10 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Future Feature Plans (sorted from highest to lowest priority)
-- Actually work on the import and module system
-- Constant folding
-- Bitfields
-- Attributes (@packed, @inline, etc.)
 - Defer statements
 - More test cases
-- Add support for int128 and float80 (a lot of refactoring)
+- Self hosting
+- Add support for float80/float128 (refactoring)
 - Methods for structs
 - Update README with current information about the language
 - Better loops like foreach (still don't know about this)
@@ -32,4 +29,3 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
 - Generics
 - Build system
 - Optimization of compiler memory usage
-- Start on custom backend? (Lowest priority)

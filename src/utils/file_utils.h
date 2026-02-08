@@ -14,6 +14,6 @@ FileType    get_filetype(const char* path);
 
 static inline SourceFile* file_from_id(FileId id)
 {
-    SIC_ASSERT(id > 0 && id <= g_compiler.sources.size);
+    DBG_ASSERT(id > 0 && id <= g_compiler.sources.size);
     return g_compiler.sources.data + (id - 1);
 }

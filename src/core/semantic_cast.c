@@ -72,7 +72,7 @@ bool analyze_cast(ASTExpr* cast)
 
 bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
 {
-    SIC_ASSERT(desired->status == STATUS_RESOLVED);
+    DBG_ASSERT(desired->status == STATUS_RESOLVED);
     ASTExpr* prev = *expr_to_cast;
     if(!analyze_expr(prev) || type_is_bad(desired))
         return false;
@@ -133,7 +133,7 @@ static bool can_cast_params(CastParams* params)
 
 bool can_cast(ASTExpr* expr, Type* to)
 {
-    SIC_ASSERT(to->status == STATUS_RESOLVED && expr->evaluated);
+    DBG_ASSERT(to->status == STATUS_RESOLVED && expr->evaluated);
 
     CastParams params;
     params.inner     = expr;
@@ -284,7 +284,7 @@ static bool rule_init_list_to_arr(const CastParams* const params)
     Type* elem_type = params->toc->array.elem_type->canonical;
     if(params->fromc->kind == TYPE_STRING_LIT)
     {
-        SIC_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
+        DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
         if(elem_type->kind != TYPE_CHAR && elem_type->kind != TYPE_UBYTE && elem_type->kind != TYPE_BYTE)
         {
             CAST_ERROR("String literal can only be casted to char[], ubyte[], or byte[].");
@@ -298,7 +298,7 @@ static bool rule_init_list_to_arr(const CastParams* const params)
         return true;
     }
 
-    SIC_ASSERT(params->inner->kind == EXPR_ARRAY_INIT_LIST);
+    DBG_ASSERT(params->inner->kind == EXPR_ARRAY_INIT_LIST);
     ArrInitList* list = &params->inner->expr.array_init;
     for(uint32_t i = 0; i < list->size; ++i)
     {
@@ -558,12 +558,6 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner,
     cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
-static void cast_reinterpret(ASTExpr* cast, UNUSED ASTExpr* inner,
-                             UNUSED Type* from, UNUSED Type* to)
-{
-    cast->expr.cast.kind = CAST_REINTERPRET;
-}
-
 static void cast_init_list(ASTExpr* cast, ASTExpr* inner,
                            UNUSED Type* from, UNUSED Type* to)
 {
@@ -595,7 +589,7 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 #define PTRBOO { rule_explicit_only      , cast_ptr_to_bool }
 #define PTRINT { rule_explicit_only      , cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr         , cast_ptr_to_ptr }
-#define STRPTR { rule_str_to_ptr         , cast_reinterpret }
+#define STRPTR { rule_str_to_ptr         , cast_init_list }
 #define ILSARR { rule_init_list_to_arr   , cast_init_list }
 #define ILSSTU { rule_init_list_to_struct, cast_init_list }
 #define DISTIN { rule_distinct           , cast_distinct }
@@ -649,6 +643,6 @@ static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)
 {
     CastGroup from = s_type_to_group[from_kind] - 1;
     CastGroup to = s_type_to_group[to_kind] - 1;
-    SIC_ASSERT(from != CAST_GROUP_INVALID && to != CAST_GROUP_INVALID);
+    DBG_ASSERT(from != CAST_GROUP_INVALID && to != CAST_GROUP_INVALID);
     return s_rule_table[from][to];
 }

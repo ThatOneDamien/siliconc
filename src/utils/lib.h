@@ -26,7 +26,7 @@
 
 #ifdef SI_DEBUG
     #include <signal.h>
-    #define SIC_ERROR_DBG(...)                      \
+    #define DBG_ERROR(...)                          \
         do                                          \
         {                                           \
             fprintf(stderr, "\033[31m[DEBUG]: ");   \
@@ -34,17 +34,17 @@
             fprintf(stderr, "\033[0m\n");           \
             __asm__ volatile("int3");               \
         } while(0)
-    #define SIC_ASSERT(cond)                                    \
-        do                                                      \
-        {                                                       \
-            if(!(cond))                                         \
-                SIC_ERROR_DBG("Assertion failed %s:%d(%s): %s", \
-                              __FILE__, __LINE__, __FUNCTION__, \
-                              #cond);                           \
+    #define DBG_ASSERT(cond)                                \
+        do                                                  \
+        {                                                   \
+            if(!(cond))                                     \
+                DBG_ERROR("Assertion failed %s:%d(%s): %s", \
+                          __FILE__, __LINE__, __FUNCTION__, \
+                          #cond);                           \
         } while(0)
 #else
-    #define SIC_ERROR_DBG(...)
-    #define SIC_ASSERT(cond) ((void)(cond))
+    #define DBG_ERROR(...)
+    #define DBG_ASSERT(cond) ((void)(cond))
 #endif
 
 struct ScratchBuffer
@@ -122,10 +122,10 @@ void   global_arenas_init(void);
 extern int g_error_cnt;
 extern int g_warning_cnt;
 
+LineCol loc_get_col_line(const SourceLoc loc);
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va);
 void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message, va_list va);
 void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, va_list va);
-void sic_error_redef(Object* redef, Object* orig);
 
 PRINTF_FMT(2, 3)
 static inline void sic_diagnostic(DiagnosticType diag, const char* message, ...)
@@ -170,8 +170,14 @@ static inline void sic_fatal_error(const char* message, ...)
     va_start(va, message);
     sic_diagnosticv(DIAG_FATAL, message, va);
     va_end(va);
-    SIC_ERROR_DBG("Breaking because of fatal error!");
+    DBG_ERROR("Breaking because of fatal error!");
     exit(EXIT_FAILURE);
+}
+
+static inline void sic_error_redef(Object* redef, Object* orig)
+{
+    sic_diagnostic_at(DIAG_ERROR, redef->loc, "Redefinition of symbol \'%s\'.", redef->symbol);
+    sic_diagnostic_at(DIAG_NOTE, orig->loc, "Previous definition here.");
 }
 
 #ifdef SI_DEBUG
@@ -191,6 +197,7 @@ extern ScratchBuffer g_scratch;
 PRINTF_FMT(1, 2)
 void scratch_appendf(const char* fmt, ...);
 void scratch_append_module_path(const ObjModule* module);
+void scratch_append_obj_link_name(Object* obj);
 PRINTF_FMT(1, 2)
 char* str_format(const char* fmt, ...);
 char* str_dupn(const char* str, size_t len);
@@ -218,13 +225,19 @@ static inline void scratch_clear()
 
 static inline void scratch_append(const char* str)
 {
-    scratch_appendn(str, strlen(str));
+    for(const char* c = str; *c != '\0'; ++c)
+        scratch_appendc(*c);
 }
 
-static inline const char* scratch_string(void)
+static inline const char* scratch_string()
 {
     g_scratch.data[g_scratch.len] = '\0';
     return g_scratch.data;
+}
+
+static inline char* scratch_copy()
+{
+    return str_dupn(scratch_string(), g_scratch.len);
 }
 
 static inline void* cmalloc(size_t size)
@@ -245,7 +258,7 @@ static inline void* ccalloc(size_t nmemb, size_t size)
 
 static inline void* crealloc(void* ptr, size_t size)
 {
-    SIC_ASSERT(ptr != NULL);
+    DBG_ASSERT(ptr != NULL);
     void* res = realloc(ptr, size);
     if(res == NULL)
         sic_fatal_error("Failed to ccalloc %zu bytes.", size);
@@ -262,10 +275,10 @@ static inline void* crealloc(void* ptr, size_t size)
 #define MALLOC_STRUCTS(type, count) cmalloc(sizeof(type) * (count))
 #define CALLOC_STRUCTS(type, count) ccalloc(count, sizeof(type))
 #else
-#define MALLOC(size, align)         arena_malloc(&g_global_arena, size, align)
-#define CALLOC(nmemb, size, align)  arena_calloc(&g_global_arena, (nmemb) * (size), align)
-#define FREE(ptr, prev_size)        arena_free(&g_global_arena, ptr, prev_size)
-#define REALLOC(ptr, sz, al, psz)   arena_realloc(&g_global_arena, ptr, sz, al, psz)
+#define MALLOC(size, align)         arena_malloc(&g_global_arena, (size), (align))
+#define CALLOC(nmemb, size, align)  arena_calloc(&g_global_arena, (nmemb) * (size), (align))
+#define FREE(ptr, prev_size)        arena_free(&g_global_arena, (ptr), (prev_size))
+#define REALLOC(ptr, sz, al, psz)   arena_realloc(&g_global_arena, (ptr), (sz), (al), (psz))
 #define MALLOC_STRUCT(type)         ((type*)arena_malloc(&g_global_arena, sizeof(type), _Alignof(type)))
 #define CALLOC_STRUCT(type)         ((type*)arena_calloc(&g_global_arena, sizeof(type), _Alignof(type)))
 #define MALLOC_STRUCTS(type, count) ((type*)arena_malloc(&g_global_arena, sizeof(type) * (count), _Alignof(type)))

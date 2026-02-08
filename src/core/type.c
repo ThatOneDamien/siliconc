@@ -66,7 +66,6 @@ TYPE_DEF(s_void     , TYPE_VOID, .ptr_cache = &s_voidptr);
 TYPE_DEF(s_voidptr  , TYPE_POINTER, .pointer_base = &s_void);
 TYPE_DEF(s_init_list, TYPE_INIT_LIST);
 TYPE_DEF(s_str_lit  , TYPE_STRING_LIT);
-TYPE_DEF(s_auto     , TYPE_AUTO);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);
 ALIAS_TYPE_DEF(s_uptr , s_uptr_obj);
@@ -95,13 +94,12 @@ Type* const g_type_float     = &s_float;
 Type* const g_type_double    = &s_double;
 Type* const g_type_init_list = &s_init_list;
 Type* const g_type_str_lit   = &s_str_lit;
-Type* const g_type_auto      = &s_auto;
 Type* const g_type_iptr      = &s_iptr;
 Type* const g_type_uptr      = &s_uptr;
 Type* const g_type_isize     = &s_isize;
 Type* const g_type_usize     = &s_usize;
 
-static Type* builtin_type_lookup[TOKEN_TYPENAME_END - TOKEN_TYPENAME_START + 1] = {
+static Type* const builtin_type_lookup[TOKEN_TYPENAME_END - TOKEN_TYPENAME_START + 1] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
     [TOKEN_BOOL    - TOKEN_TYPENAME_START] = &s_bool,
     [TOKEN_CHAR    - TOKEN_TYPENAME_START] = &s_char,
@@ -149,13 +147,13 @@ void builtin_type_init()
 
 Type* type_from_token(TokenKind type_token)
 {
-    SIC_ASSERT(token_is_typename(type_token));
+    DBG_ASSERT(token_is_typename(type_token));
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 
 Type* type_pointer_to(Type* base)
 {
-    SIC_ASSERT(base != NULL);
+    DBG_ASSERT(base != NULL);
     if(base->ptr_cache == NULL)
     {
         base->ptr_cache = CALLOC_STRUCT(Type);
@@ -173,7 +171,7 @@ Type* type_pointer_to(Type* base)
 
 Type* type_func_ptr(FuncSignature* signature)
 {
-    SIC_ASSERT(signature != NULL);
+    DBG_ASSERT(signature != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
     new_type->kind = TYPE_FUNC_PTR;
     new_type->func_ptr = signature;
@@ -183,7 +181,7 @@ Type* type_func_ptr(FuncSignature* signature)
 
 Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
-    SIC_ASSERT(elem_ty != NULL);
+    DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
     new_type->kind = TYPE_PS_ARRAY;
     new_type->array.elem_type = elem_ty;
@@ -208,10 +206,10 @@ Type* type_reduce(Type* t)
     }
 }
 
-bool type_equal(Type* t1, Type* t2)
+bool type_equal(const Type* t1, const Type* t2)
 {
-    SIC_ASSERT(t1 != NULL);
-    SIC_ASSERT(t2 != NULL);
+    DBG_ASSERT(t1 != NULL);
+    DBG_ASSERT(t2 != NULL);
     t1 = t1->canonical;
     t2 = t2->canonical;
     if(t1->kind != t2->kind)
@@ -256,7 +254,6 @@ bool type_equal(Type* t1, Type* t2)
     case TYPE_UNION:
         return t1->struct_ == t2->struct_;
     case TYPE_INVALID:
-    case TYPE_AUTO:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
     case TYPE_TYPEOF:
@@ -266,9 +263,9 @@ bool type_equal(Type* t1, Type* t2)
     SIC_UNREACHABLE();
 }
 
-ByteSize type_size(Type* ty)
+ByteSize type_size(const Type* ty)
 {
-    SIC_ASSERT(ty != NULL);
+    DBG_ASSERT(ty != NULL);
     ty = ty->canonical;
     switch(ty->kind)
     {
@@ -297,7 +294,6 @@ ByteSize type_size(Type* ty)
     case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_AUTO:
     case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
@@ -309,13 +305,15 @@ ByteSize type_size(Type* ty)
     SIC_UNREACHABLE();
 }
 
-ByteSize type_alignment(Type* ty)
+ByteSize type_alignment(const Type* ty)
 {
-    SIC_ASSERT(ty != NULL);
-    SIC_ASSERT(ty->status == STATUS_RESOLVED);
+    DBG_ASSERT(ty != NULL);
+    DBG_ASSERT(ty->status == STATUS_RESOLVED);
     ty = ty->canonical;
     switch(ty->kind)
     {
+    case TYPE_VOID:
+        return 0;
     case NUMERIC_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER:
@@ -335,10 +333,8 @@ ByteSize type_alignment(Type* ty)
     case TYPE_UNION:
         return type_alignment(ty->struct_->largest_type);
     case TYPE_INVALID:
-    case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_AUTO:
     case TYPE_INIT_LIST:
     case TYPE_PS_ARRAY:
     case TYPE_PS_USER:
@@ -351,10 +347,10 @@ ByteSize type_alignment(Type* ty)
     SIC_UNREACHABLE();
 }
 
-const char* type_to_string(Type* type)
+const char* type_to_string(const Type* type)
 {
-    SIC_ASSERT(type != NULL);
-    SIC_ASSERT(type->status == STATUS_RESOLVED);
+    DBG_ASSERT(type != NULL);
+    DBG_ASSERT(type->status == STATUS_RESOLVED);
     switch(type->kind)
     {
     case TYPE_VOID:
@@ -407,7 +403,6 @@ const char* type_to_string(Type* type)
         return "string";
     case TYPE_INVALID:
     case TYPE_PS_USER:
-    case TYPE_AUTO:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         break;

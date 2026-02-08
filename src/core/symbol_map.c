@@ -55,9 +55,13 @@ void sym_map_init(void)
     g_sym_main = SYM_ADD("main");
     
     kind = TOKEN_ATTRIBUTE_IDENT;
+    static_assert(__ATTR_COUNT == 8, "Add Attributes here");
+    g_attr_list[ATTR_ABI]       = SYM_ADD("@abi");
     g_attr_list[ATTR_INLINE]    = SYM_ADD("@inline");
+    g_attr_list[ATTR_LINK_NAME] = SYM_ADD("@link_name");
     g_attr_list[ATTR_NODISCARD] = SYM_ADD("@nodiscard");
     g_attr_list[ATTR_NOINLINE]  = SYM_ADD("@noinline");
+    g_attr_list[ATTR_NORETURN]  = SYM_ADD("@noreturn");
     g_attr_list[ATTR_PACKED]    = SYM_ADD("@packed");
     g_attr_list[ATTR_PURE]      = SYM_ADD("@pure");
 }

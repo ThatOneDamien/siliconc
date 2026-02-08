@@ -1,20 +1,6 @@
 #pragma once
 #include "internal.h"
 
-// I do minus 1 here to keep the stack_top and stack_bottom members
-// on the same page as the end of the data array so that there will
-// be less cache misses hopefully.
-#define OBJ_STACK_SIZE ((1 << 16) - 1)
-
-typedef enum : uint8_t
-{
-    BLOCK_REGULAR     = 0,
-    BLOCK_BREAKABLE   = 1 << 0,
-    BLOCK_CONTINUABLE = 1 << 1,
-    BLOCK_LOOP        = BLOCK_BREAKABLE | BLOCK_CONTINUABLE,
-    BLOCK_SWITCH      = BLOCK_BREAKABLE,
-} BlockContext;
-
 typedef enum : uint8_t
 {
     ANALYZE_VALUE,
@@ -28,23 +14,15 @@ struct SemaContext
     ObjFunc*     cur_func;
     Object*      cyclic_def;
     
-    BlockContext block_context;
+    ASTStmt*     break_target;
+    ASTStmt*     continue_target;
     bool         in_ptr : 1;
     bool         in_typedef : 1;
     bool         in_global_init : 1;
 
 };
 
-typedef struct ObjStack ObjStack;
-struct ObjStack
-{
-    Object*  data[OBJ_STACK_SIZE];
-    uint32_t stack_top;
-    uint32_t stack_bottom;
-};
-
 extern SemaContext* g_sema;
-extern ObjStack     g_obj_stack;
 
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
@@ -65,15 +43,19 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
 Object*    find_obj(ModulePath* path);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
+void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
+void       pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
+ASTStmt*   find_labeled_stmt(SymbolLoc label);
+void       set_object_link_name(Object* obj);
 
 static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
 {
-    SIC_ASSERT(implicit_cast(expr_to_cast, desired));
+    DBG_ASSERT(implicit_cast(expr_to_cast, desired));
 }
 
 static inline void const_int_correct(ASTExpr* expr)
 {
-    SIC_ASSERT(expr->kind == EXPR_CONSTANT &&
+    DBG_ASSERT(expr->kind == EXPR_CONSTANT &&
                expr->expr.constant.kind == CONSTANT_INTEGER);
     Type* ctype = expr->type->canonical;
     BitSize shift = 128 - ctype->builtin.bit_size;
@@ -82,27 +64,6 @@ static inline void const_int_correct(ASTExpr* expr)
         expr->expr.constant.i = i128_ashr64(val, shift);
     else
         expr->expr.constant.i = i128_lshr64(val, shift);
-}
-
-static inline bool obj_is_type(Object* obj)
-{
-    switch(obj->kind)
-    {
-    case OBJ_ENUM_VALUE:
-    case OBJ_FUNC:
-    case OBJ_IMPORT:
-    case OBJ_MODULE:
-    case OBJ_VAR:
-        return false;
-    case OBJ_INVALID:
-    case OBJ_BITFIELD:
-    case OBJ_ENUM:
-    case OBJ_STRUCT:
-    case OBJ_TYPEDEF:
-    case OBJ_UNION:
-        return true;
-    }
-    SIC_UNREACHABLE();
 }
 
 static inline void set_cyclic_def(Object* obj)

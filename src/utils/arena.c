@@ -16,8 +16,8 @@ void global_arenas_init(void)
 
 void arena_init(MemArena* arena, size_t capacity)
 {
-    SIC_ASSERT(arena != NULL);
-    SIC_ASSERT(capacity > 0);
+    DBG_ASSERT(arena != NULL);
+    DBG_ASSERT(capacity > 0);
     void* base = NULL;
     size_t min_cap = capacity >> 4;
     if(min_cap == 0)
@@ -44,10 +44,10 @@ void arena_init(MemArena* arena, size_t capacity)
 void* arena_malloc(MemArena* arena, size_t size, uint32_t align)
 {
     // Some useful debug checks (These are not done in release).
-    SIC_ASSERT(arena != NULL);
-    SIC_ASSERT(size > 0);
-    SIC_ASSERT(is_pow_of_2(align));
-    SIC_ASSERT(arena->capacity > 0);
+    DBG_ASSERT(arena != NULL);
+    DBG_ASSERT(size > 0);
+    DBG_ASSERT(is_pow_of_2(align));
+    DBG_ASSERT(arena->capacity > 0);
 
     arena->allocated = (arena->allocated + (align - 1)) & ~(align - 1);
     void* res = arena->base + arena->allocated;
@@ -67,24 +67,22 @@ void* arena_calloc(MemArena* arena, size_t size, uint32_t align)
 
 void arena_free(MemArena* arena, const void* ptr, size_t prev_size)
 {
-    SIC_ASSERT(arena != NULL);
+    DBG_ASSERT(arena != NULL);
     uintptr_t p = (uintptr_t)ptr;
     uintptr_t end = (uintptr_t)arena->base + arena->allocated;
-    SIC_ASSERT(p >= (uintptr_t)arena->base && p < end);
+    DBG_ASSERT(p >= (uintptr_t)arena->base && p < end);
     if(ptr == NULL || p + prev_size != end) return;
     arena->allocated -= prev_size;
 }
 
 void* arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, size_t prev_size)
 {
-    SIC_ASSERT(arena != NULL);
-    SIC_ASSERT(size > 0);
-    SIC_ASSERT(prev_size > 0);
-    SIC_ASSERT(is_pow_of_2(align));
+    DBG_ASSERT(arena != NULL);
+    DBG_ASSERT(size > 0);
+    DBG_ASSERT(is_pow_of_2(align));
     uintptr_t p = (uintptr_t)ptr;
     uintptr_t end = (uintptr_t)arena->base + arena->allocated;
-    SIC_ASSERT(ptr != NULL && p >= (uintptr_t)arena->base && p < end);
-    if(p + prev_size == end)
+    if(ptr != NULL && (p >= (uintptr_t)arena->base && p < end) && (p + prev_size == end))
     {
         // Reclaim memory if at the end of the arena.
         if(prev_size >= size)

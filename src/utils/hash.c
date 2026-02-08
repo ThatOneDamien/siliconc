@@ -16,7 +16,7 @@ static inline uint64_t hash_ptr(Symbol symbol);
 
 void hashmap_reserve(HashMap* map, uint32_t entry_cnt)
 {
-    SIC_ASSERT(map != NULL);
+    DBG_ASSERT(map != NULL);
     uint32_t new_cap = MAX(INITIAL_HASH_CAP, next_pow_of_2(entry_cnt * LOAD_FACTOR_C / LOAD_FACTOR_LO));
     if(map->bucket_cnt < new_cap)
         rehash(map, new_cap);
@@ -24,8 +24,8 @@ void hashmap_reserve(HashMap* map, uint32_t entry_cnt)
 
 void hashmap_put(HashMap* map, Symbol key, Object* val)
 {
-    SIC_ASSERT(map != NULL);
-    SIC_ASSERT(key != NULL);
+    DBG_ASSERT(map != NULL);
+    DBG_ASSERT(key != NULL);
     if(map->buckets == NULL)
         rehash(map, INITIAL_HASH_CAP);
     else
@@ -46,8 +46,8 @@ void hashmap_put(HashMap* map, Symbol key, Object* val)
 
 Object* hashmap_get(HashMap* map, Symbol key)
 {
-    SIC_ASSERT(map != NULL);
-    SIC_ASSERT(key != NULL);
+    DBG_ASSERT(map != NULL);
+    DBG_ASSERT(key != NULL);
     if(map->buckets == NULL)
         return NULL;
     HashEntry* entry = get_entry(map, key, hash_ptr(key));
@@ -56,7 +56,7 @@ Object* hashmap_get(HashMap* map, Symbol key)
 
 void hashmap_clear(HashMap* map)
 {
-    SIC_ASSERT(map != NULL);
+    DBG_ASSERT(map != NULL);
     if(map->buckets == NULL || map->entry_cnt == 0)
         return;
 
@@ -66,7 +66,7 @@ void hashmap_clear(HashMap* map)
 
 static HashEntry* get_entry(HashMap* map, Symbol key, uint64_t hash)
 {
-    SIC_ASSERT(is_pow_of_2(map->bucket_cnt));
+    DBG_ASSERT(is_pow_of_2(map->bucket_cnt));
     size_t bucket_mask = map->bucket_cnt - 1;
     size_t index = hash & bucket_mask;
     HashEntry* entry;

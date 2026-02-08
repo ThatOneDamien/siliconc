@@ -3,9 +3,12 @@
 
 typedef enum : uint8_t
 {
+    ATTR_ABI,
     ATTR_INLINE,
+    ATTR_LINK_NAME,
     ATTR_NODISCARD,
     ATTR_NOINLINE,
+    ATTR_NORETURN,
     ATTR_PACKED,
     ATTR_PURE,
     ATTR_CUSTOM,
@@ -108,6 +111,7 @@ typedef enum : uint8_t
     CONSTANT_INTEGER,
     CONSTANT_POINTER,
     CONSTANT_STRING,
+    CONSTANT_ENUM,
 } ConstantKind;
 
 typedef enum : uint8_t
@@ -227,12 +231,11 @@ typedef enum : uint8_t
     PREC_PRIMARY_POSTFIX
 } OpPrecedence;
 
-typedef enum
+typedef enum : uint8_t
 {
     RES_NORMAL           = 0,
     RES_ALLOW_VOID       = 1 << 0,
-    RES_ALLOW_AUTO       = 1 << 1,
-    RES_ALLOW_AUTO_ARRAY = 1 << 2,
+    RES_ALLOW_AUTO_ARRAY = 1 << 1,
     RES_ALLOW_ALL        = 0xF,
 } ResolutionFlags;
 
@@ -250,13 +253,12 @@ typedef enum : uint8_t
     STMT_BLOCK,
     STMT_BREAK,
     STMT_CONTINUE,
+    STMT_DECLARATION,
     STMT_EXPR_STMT,
     STMT_FOR,
     STMT_IF,
-    STMT_MULTI_DECL,
     STMT_NOP,
     STMT_RETURN,
-    STMT_SINGLE_DECL,
     STMT_SWAP,
     STMT_SWITCH,
     STMT_WHILE,
@@ -343,7 +345,6 @@ typedef enum : uint8_t
     // Keywords
     TOKEN_AS,
     TOKEN_KEYWORD_START = TOKEN_AS,
-    TOKEN_AUTO,
     TOKEN_BITFIELD,
     TOKEN_BREAK,
     TOKEN_CASE,
@@ -371,6 +372,7 @@ typedef enum : uint8_t
     TOKEN_TRUE,
     TOKEN_TYPEDEF,
     TOKEN_UNION,
+    TOKEN_VAR,
     TOKEN_WHILE,
 
     // Built-in/Primitive type names (Still part of keywords)
@@ -404,6 +406,7 @@ typedef enum : uint8_t
     // Compile time tokens (start with #)
 	TOKEN_CT_ALIGNOF,
 	TOKEN_CT_ASSERT,
+	TOKEN_CT_CONST,
 	TOKEN_CT_ENDIF,
     TOKEN_CT_IF,
 	TOKEN_CT_OFFSETOF,
@@ -462,7 +465,6 @@ typedef enum : uint8_t
     TYPE_UNION,
 
     // Pre-semantic types. After analyzing the type these should never appear
-    TYPE_AUTO,
     TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
     TYPE_PS_ARRAY,
     TYPE_PS_USER,
@@ -487,11 +489,12 @@ typedef enum : uint8_t
 typedef enum : uint8_t
 {
     VAR_INVALID = 0,
+    VAR_CT_CONST,
+    VAR_EXTERN,
     VAR_GLOBAL,
     VAR_LOCAL,
-    VAR_CONST,
-    VAR_PARAM,
     VAR_MEMBER,
+    VAR_PARAM,
 } VarKind;
 
 #define CHAR_TYPES            \
