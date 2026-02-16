@@ -833,7 +833,7 @@ static bool analyze_declaration(ObjVar* decl)
             // TODO: Replace this with actual string type. Most likely a char slice.
             rhs_type = type_pointer_to(g_type_char);
         }
-        decl->type_loc.type = rhs_type;
+        decl->type_loc.type = decl->is_const_binding ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;
     }
 
@@ -858,7 +858,7 @@ static bool analyze_declaration(ObjVar* decl)
     {
         Type* rhs_type = decl->initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
-        if(kind == TYPE_PS_ARRAY)
+        if(kind == TYPE_PS_ARRAY) // Inferred Array
         {
             if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
@@ -889,6 +889,8 @@ static bool analyze_declaration(ObjVar* decl)
         else
             implicit_cast(&decl->initial_val, decl->type_loc.type);
     }
+    if(decl->is_const_binding)
+        decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);
     return true;
 ERR:
     decl->header.kind = OBJ_INVALID;
@@ -951,7 +953,7 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
 {
     Type* const type = enum_->type_ref;
     if(o_type != NULL)
-        *o_type = type;
+        *o_type = type_apply_qualifiers(type, (*o_type)->qualifiers);
 
     if(enum_->header.status == STATUS_RESOLVED) return enum_->header.kind != OBJ_INVALID;
 
@@ -1016,7 +1018,7 @@ ERR:
 bool analyze_struct(ObjStruct* struct_, Type** o_type)
 {
     if(o_type != NULL)
-        *o_type = struct_->type_ref;
+        *o_type = type_apply_qualifiers(struct_->type_ref, (*o_type)->qualifiers);
 
     if(struct_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
         return struct_->header.kind != OBJ_INVALID;
@@ -1076,12 +1078,12 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
     case STATUS_RESOLVED:
         if(o_type != NULL)
         {
-            *o_type = typedef_->alias.type;
+            *o_type = type_apply_qualifiers(typedef_->alias.type, (*o_type)->qualifiers);
             if(!resolve_type(o_type, flags, err_loc, err_str)) {
                 check_cyclic_def(&typedef_->header, typedef_->header.loc);
                 return false;
             }
-            *o_type = typedef_->type_ref;
+            *o_type = type_apply_qualifiers(typedef_->type_ref, (*o_type)->qualifiers);
         }
         return true;
     case STATUS_RESOLVING:
@@ -1112,9 +1114,10 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
 
         if(o_type != NULL)
         {
-            *o_type = typedef_->alias.type;
-            if(resolve_type(o_type, flags, err_loc, err_str)) {
-                *o_type = typedef_->type_ref;
+            *o_type = type_apply_qualifiers(typedef_->alias.type, (*o_type)->qualifiers);
+            if(resolve_type(o_type, flags, err_loc, err_str)) 
+            {
+                *o_type = type_apply_qualifiers(typedef_->type_ref, (*o_type)->qualifiers);
                 return true;
             }
             return false;
@@ -1129,7 +1132,7 @@ bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
 bool analyze_union(ObjStruct* union_, Type** o_type)
 {
     if(o_type != NULL)
-        *o_type = union_->type_ref;
+        *o_type = type_apply_qualifiers(union_->type_ref, (*o_type)->qualifiers);
     if(union_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
         return union_->header.kind != OBJ_INVALID;
     if(union_->header.status == STATUS_RESOLVING)

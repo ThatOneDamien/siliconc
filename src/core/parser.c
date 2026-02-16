@@ -613,6 +613,7 @@ static Type* parse_type_internal(Lexer* l)
 {
     Type* ty = NULL;
     TypeQualifiers quals = TYPE_QUAL_NONE;
+    bool should_copy = false;
 
 RETRY:
     switch(peek(l)->kind)
@@ -672,6 +673,7 @@ RETRY:
     case TOKEN_USIZE:
         ty = type_from_token(peek(l)->kind);
         advance(l);
+        should_copy = true;
         break;
     case TOKEN_FN:
         advance(l);
@@ -700,8 +702,11 @@ RETRY:
         ERROR_AND_RET(false, "Expected typename.");
     }
 
-    (void)quals;
-    // TODO: type_apply_qualifiers();
+    if(should_copy)
+        ty = type_apply_qualifiers(ty, quals);
+    else
+        ty->qualifiers |= quals;
+
     return ty;
 }
 
@@ -1356,12 +1361,14 @@ static ASTExpr* parse_negation(Lexer* l)
 static ASTExpr* parse_unary_prefix(Lexer* l)
 {
     ASTExpr* expr = new_expr(EXPR_UNARY);
+    expr->loc = peek(l)->loc;
     TokenKind kind = peek(l)->kind;
     advance(l);
     expr->expr.unary.inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
     if(expr_is_bad(expr->expr.unary.inner))
         return BAD_EXPR;
     expr->expr.unary.kind = tok_to_unary_op(kind);
+    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
     return expr;
 
 }

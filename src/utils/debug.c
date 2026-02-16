@@ -184,6 +184,9 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.array_access.array_expr, depth + 1, NULL, allow_unresolved);
         print_expr_at_depth(expr->expr.array_access.index_expr, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_ARRAY_INIT_LIST:
+        printf("Array init list ]\n");
+        return;
     case EXPR_BINARY:
         printf("Binary \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], 
                debug_type_to_str(expr->type, allow_unresolved));
@@ -230,25 +233,18 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                s_unary_op_strs[expr->expr.unary.kind], 
                debug_type_to_str(expr->type, allow_unresolved));
         return;
-    case EXPR_UNRESOLVED_IDENT: {
-        scratch_clear();
-        scratch_append(expr->expr.pre_sema_ident.data[0].sym);
-        for(uint32_t i = 1; i < expr->expr.pre_sema_ident.size; ++i)
-        {
-            scratch_appendc(':');
-            scratch_appendc(':');
-            scratch_append(expr->expr.pre_sema_ident.data[i].sym);
-        }
-        printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
-               scratch_string(), debug_type_to_str(expr->type, allow_unresolved));
-        return;
-    }
+    case EXPR_RANGE:
+    case EXPR_STRUCT_INIT_LIST:
+        SIC_TODO();
     case EXPR_TERNARY:
         printf("Ternary ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.ternary.cond_expr, depth + 1, "cond", allow_unresolved);
         print_expr_at_depth(expr->expr.ternary.then_expr, depth + 1, "then", allow_unresolved);
         print_expr_at_depth(expr->expr.ternary.else_expr, depth + 1, "else", allow_unresolved);
         return;
+    case EXPR_TUPLE:
+    case EXPR_TYPE_IDENT:
+        SIC_TODO();
     case EXPR_UNARY:
         printf("Unary \'%s\' ] (Type: %s)\n", s_unary_op_strs[expr->expr.unary.kind],
                debug_type_to_str(expr->type, allow_unresolved));
@@ -264,7 +260,23 @@ UNRESOLVED_ARROW:
         PRINT_DEPTH(depth + 1);
         printf("member: %s\n", expr->expr.unresolved_access.member.sym);
         return;
-    default:
+    case EXPR_UNRESOLVED_IDENT: {
+        scratch_clear();
+        scratch_append(expr->expr.pre_sema_ident.data[0].sym);
+        for(uint32_t i = 1; i < expr->expr.pre_sema_ident.size; ++i)
+        {
+            scratch_appendc(':');
+            scratch_appendc(':');
+            scratch_append(expr->expr.pre_sema_ident.data[i].sym);
+        }
+        printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
+               scratch_string(), debug_type_to_str(expr->type, allow_unresolved));
+        return;
+    }
+    case EXPR_ZEROED_OUT:
+    case EXPR_CT_ALIGNOF:
+    case EXPR_CT_OFFSETOF:
+    case EXPR_CT_SIZEOF:
         SIC_TODO();
     }
 }

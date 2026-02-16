@@ -113,6 +113,8 @@ static inline Symbol sym_map_get(const char* str, TokenKind* kind)
 // Type functions
 void        builtin_type_init();
 Type*       type_from_token(TokenKind type_token);
+Type*       type_copy(const Type* other);
+Type*       type_apply_qualifiers(Type* base, TypeQualifiers qualifiers);
 Type*       type_pointer_to(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);

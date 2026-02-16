@@ -151,6 +151,23 @@ Type* type_from_token(TokenKind type_token)
     return builtin_type_lookup[type_token - TOKEN_TYPENAME_START];
 }
 
+Type* type_copy(const Type* other)
+{
+    Type* res = MALLOC_STRUCT(Type);
+    memcpy(res, other, sizeof(Type));
+    return res;
+}
+
+Type* type_apply_qualifiers(Type* base, TypeQualifiers qualifiers)
+{
+    DBG_ASSERT(base != NULL);
+    if((base->qualifiers & qualifiers) == qualifiers) return base;
+    Type* res = type_copy(base);
+    res->qualifiers = qualifiers;
+    res->cache = NULL;
+    return res;
+}
+
 Type* type_pointer_to(Type* base)
 {
     DBG_ASSERT(base != NULL);
@@ -184,6 +201,7 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
     DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
     new_type->kind = TYPE_PS_ARRAY;
+    new_type->qualifiers = elem_ty->qualifiers;
     new_type->array.elem_type = elem_ty;
     new_type->array.size_expr = size_expr;
     new_type->canonical = new_type;
@@ -224,7 +242,8 @@ bool type_equal(const Type* t1, const Type* t2)
         return true;
     case TYPE_POINTER:
     case TYPE_SLICE:
-        return type_equal(t1->pointer_base, t2->pointer_base);
+        return type_equal(t1->pointer_base, t2->pointer_base) && 
+               t1->pointer_base->qualifiers == t2->pointer_base->qualifiers;
     case TYPE_FUNC_PTR: {
         FuncSignature* s1 = t1->func_ptr;
         FuncSignature* s2 = t2->func_ptr;
@@ -351,14 +370,18 @@ const char* type_to_string(const Type* type)
 {
     DBG_ASSERT(type != NULL);
     DBG_ASSERT(type->status == STATUS_RESOLVED);
+    // TODO: Improve this
+    const char* res;
     switch(type->kind)
     {
     case TYPE_VOID:
     case NUMERIC_TYPES:
         static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
-        return tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
+        res = tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
+        break;
     case TYPE_POINTER:
-        return str_format("*%s", type_to_string(type->pointer_base));
+        res = str_format("*%s", type_to_string(type->pointer_base));
+        break;
     case TYPE_FUNC_PTR: {
         FuncSignature* sig = type->func_ptr;
         scratch_clear();
@@ -373,42 +396,54 @@ const char* type_to_string(const Type* type)
         }
         scratch_append(") -> ");
         scratch_append(type_to_string(sig->ret_type.type));
-        return str_dupn(scratch_string(), g_scratch.len);
+        res = str_dupn(scratch_string(), g_scratch.len);
+        break;
     }
     case TYPE_RUNTIME_ARRAY:
-        return str_format("[*]%s", type_to_string(type->array.elem_type));
+        res = str_format("[*]%s", type_to_string(type->array.elem_type));
+        break;
     case TYPE_SLICE:
-        return str_format("[]%s", type_to_string(type->pointer_base));
+        res = str_format("[]%s", type_to_string(type->pointer_base));
+        break;
     case TYPE_STATIC_ARRAY:
-        return str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
+        res = str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
+        break;
     case TYPE_ALIAS:
         // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
         // somehow express that it is an alias and not a distinct type.
-        return str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
+        res = str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
+        break;
     case TYPE_ALIAS_DISTINCT:
-        return type->typedef_->header.symbol;
+        res = type->typedef_->header.symbol;
+        break;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-        return type->enum_->header.symbol;
+        res = type->enum_->header.symbol;
+        break;
     case TYPE_STRUCT: {
         Symbol s = type->struct_->header.symbol;
-        return s ? s : "anonymous struct";
+        res = s ? s : "anonymous struct";
+        break;
     }
     case TYPE_UNION: {
         Symbol s = type->struct_->header.symbol;
-        return s ? s : "anonymous union";
+        res = s ? s : "anonymous union";
+        break;
     }
     case TYPE_PS_ARRAY:
     case TYPE_INIT_LIST:
-        return "initializer list";
+        res = "initializer list";
+        break;
     case TYPE_STRING_LIT:
-        return "string";
+        res = "string";
+        break;
     case TYPE_INVALID:
     case TYPE_PS_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
-        break;
+        SIC_UNREACHABLE();
     }
-
-    SIC_UNREACHABLE();
+    if(type->qualifiers & TYPE_QUAL_CONST)
+        res = str_format("const %s", res);
+    return res;
 }

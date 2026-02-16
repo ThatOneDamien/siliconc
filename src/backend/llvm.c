@@ -884,13 +884,19 @@ static void emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result)
     load_rvalue(c, &func_val);
     Type* func_type = call->func_expr->type;
 
-    LLVMValueRef* args = MALLOC_STRUCTS(LLVMValueRef, call->args.size);
-    for(uint32_t i = 0; i < call->args.size; ++i)
+    LLVMValueRef* args;
+    if(call->args.size > 0)
     {
-        GenValue temp = emit_expr(c, call->args.data[i]);
-        load_rvalue(c, &temp);
-        args[i] = temp.value;
+        args = MALLOC_STRUCTS(LLVMValueRef, call->args.size);
+        for(uint32_t i = 0; i < call->args.size; ++i)
+        {
+            GenValue temp = emit_expr(c, call->args.data[i]);
+            load_rvalue(c, &temp);
+            args[i] = temp.value;
+        }
     }
+    else
+        args = NULL;
     result->value = LLVMBuildCall2(c->builder, 
                                    get_llvm_func_type(c, func_type),
                                    func_val.value,

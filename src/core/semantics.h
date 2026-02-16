@@ -100,3 +100,53 @@ static inline Type* flatten_type(Type* type)
         }
     }
 }
+
+static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
+{
+    expr->kind = EXPR_CONSTANT;
+    expr->const_eval = true;
+    expr->pure = true;
+    expr->expr.constant.kind = kind;
+}
+
+static inline void convert_to_const_bool(ASTExpr* expr, bool value)
+{
+    DBG_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
+    convert_to_constant(expr, CONSTANT_BOOL);
+    expr->expr.constant.b = value;
+}
+
+static inline void convert_to_const_char(ASTExpr* expr, uint32_t value)
+{
+    DBG_ASSERT(type_is_char(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_CHAR);
+    expr->expr.constant.c = value;
+}
+
+static inline void convert_to_const_float(ASTExpr* expr, double value)
+{
+    DBG_ASSERT(type_is_float(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_FLOAT);
+    expr->expr.constant.f = value;
+}
+
+static inline void convert_to_const_int(ASTExpr* expr, Int128 value)
+{
+    DBG_ASSERT(type_is_integer(expr->type->canonical));
+    convert_to_constant(expr, CONSTANT_INTEGER);
+    expr->expr.constant.i = value;
+    const_int_correct(expr);
+}
+
+static inline void convert_to_const_pointer(ASTExpr* expr, uint64_t value)
+{
+    convert_to_constant(expr, CONSTANT_POINTER);
+    expr->expr.constant.i = i128_from_u64(value);
+}
+
+static inline void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value)
+{
+    convert_to_constant(expr, CONSTANT_ENUM);
+    expr->type = enum_value->enum_type;
+    expr->expr.constant.enum_ = enum_value;
+}

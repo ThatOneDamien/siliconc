@@ -1,7 +1,7 @@
 #include "semantics.h"
 
-static inline bool analyze_expr_dispatch(ASTExpr* expr);
-static inline bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
+static bool analyze_expr_dispatch(ASTExpr* expr);
+static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
 
 // Expr kind functions
 static bool analyze_array_access(ASTExpr* expr);
@@ -48,12 +48,6 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
 static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
 static void promote_int_type(ASTExpr** expr);
 static void expr_overwrite(ASTExpr* original, const ASTExpr* new);
-static void convert_to_const_bool(ASTExpr* expr, bool value);
-static void convert_to_const_char(ASTExpr* expr, uint32_t value);
-static void convert_to_const_float(ASTExpr* expr, double value);
-static void convert_to_const_int(ASTExpr* expr, Int128 value);
-static void convert_to_const_pointer(ASTExpr* expr, uint64_t value);
-static void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
 bool analyze_expr(ASTExpr* expr)
@@ -76,7 +70,7 @@ bool analyze_lvalue(ASTExpr* expr, bool will_write)
     return success;
 }
 
-static inline bool analyze_expr_dispatch(ASTExpr* expr)
+static bool analyze_expr_dispatch(ASTExpr* expr)
 {
     switch(expr->kind)
     {
@@ -126,9 +120,15 @@ static inline bool analyze_expr_dispatch(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static inline bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
+static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
 {
     if(!analyze_expr_dispatch(expr)) return false;
+    if(expr->type->kind != TYPE_INVALID && will_write && 
+       (expr->type->qualifiers & TYPE_QUAL_CONST))
+    {
+        sic_error_at(expr->loc, "Expression of type \'%s\' cannot be modified.", type_to_string(expr->type));
+        return false;
+    }
 RETRY:
     switch(expr->kind)
     {
@@ -197,11 +197,11 @@ static bool analyze_array_access(ASTExpr* expr)
     }
     if(arr_t->kind == TYPE_POINTER)
     {
-        expr->type = arr_t->pointer_base;
+        expr->type = type_apply_qualifiers(arr_t->pointer_base, arr_expr->type->qualifiers);
         if(!resolve_type(&expr->type, RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
     }
     else if(type_is_array(arr_t))
-        expr->type = arr_t->array.elem_type;
+        expr->type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
     else
     {
         sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
@@ -562,7 +562,7 @@ static bool resolve_member(ASTExpr* expr)
                 expr->expr.member_access.parent_expr = parent;
                 expr->expr.member_access.member = members.data[i];
                 expr->expr.member_access.member_idx = i;
-                expr->type = members.data[i]->type_loc.type;
+                expr->type = type_apply_qualifiers(members.data[i]->type_loc.type, parent->type->qualifiers);
                 return true;
             }
         break;
@@ -1381,56 +1381,6 @@ static void expr_overwrite(ASTExpr* original, const ASTExpr* new)
     SourceLoc loc = original->loc;
     *original = *new;
     original->loc = loc;
-}
-
-static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
-{
-    expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
-    expr->expr.constant.kind = kind;
-}
-
-static inline void convert_to_const_bool(ASTExpr* expr, bool value)
-{
-    DBG_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
-    convert_to_constant(expr, CONSTANT_BOOL);
-    expr->expr.constant.b = value;
-}
-
-static inline void convert_to_const_char(ASTExpr* expr, uint32_t value)
-{
-    DBG_ASSERT(type_is_char(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_CHAR);
-    expr->expr.constant.c = value;
-}
-
-static inline void convert_to_const_float(ASTExpr* expr, double value)
-{
-    DBG_ASSERT(type_is_float(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_FLOAT);
-    expr->expr.constant.f = value;
-}
-
-static inline void convert_to_const_int(ASTExpr* expr, Int128 value)
-{
-    DBG_ASSERT(type_is_integer(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_INTEGER);
-    expr->expr.constant.i = value;
-    const_int_correct(expr);
-}
-
-static inline void convert_to_const_pointer(ASTExpr* expr, uint64_t value)
-{
-    convert_to_constant(expr, CONSTANT_POINTER);
-    expr->expr.constant.i = i128_from_u64(value);
-}
-
-static inline void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value)
-{
-    convert_to_constant(expr, CONSTANT_ENUM);
-    expr->type = enum_value->enum_type;
-    expr->expr.constant.enum_ = enum_value;
 }
 
 static void convert_to_const_zero(ASTExpr* expr, Type* type)

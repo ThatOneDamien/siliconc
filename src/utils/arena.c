@@ -67,11 +67,14 @@ void* arena_calloc(MemArena* arena, size_t size, uint32_t align)
 
 void arena_free(MemArena* arena, const void* ptr, size_t prev_size)
 {
+    if(ptr == NULL) return;
+
     DBG_ASSERT(arena != NULL);
     uintptr_t p = (uintptr_t)ptr;
     uintptr_t end = (uintptr_t)arena->base + arena->allocated;
+
     DBG_ASSERT(p >= (uintptr_t)arena->base && p < end);
-    if(ptr == NULL || p + prev_size != end) return;
+    if(p + prev_size != end) return;
     arena->allocated -= prev_size;
 }
 
