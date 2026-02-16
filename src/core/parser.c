@@ -19,11 +19,11 @@ struct ExprParseRule
 static bool parse_top_level(Lexer* l);
 static bool parse_attributes(Lexer* l, AttrDA* attrs);
 static bool parse_module_path(Lexer* l, ModulePath* out);
-static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 static bool parse_import(Lexer* l, Visibility vis);
 static bool parse_module_decl(Lexer* l, Visibility vis);
 static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unnamed);
-static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 
 // Types
 static Visibility  parse_visibility(Lexer* l);
@@ -32,6 +32,7 @@ static Object*     parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs);
 static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested);
 static Object*     parse_typedef(Lexer* l, Visibility vis, AttrDA attrs);
 static bool        parse_type(Lexer* l, TypeLoc* type_loc);
+static ObjVar*     parse_var_declaration(Lexer* l, VarKind kind, Visibility vis);
 
 // Statements
 static ASTStmt* parse_stmt(Lexer* l);
@@ -133,44 +134,46 @@ static bool parse_top_level(Lexer* l)
     if(try_consume(l, TOKEN_SEMI)) return true; // Ignore semicolons
     AttrDA attrs = {0};
     if(!parse_attributes(l, &attrs)) return false;
+    bool is_extern = try_consume(l, TOKEN_EXTERN);
     Visibility vis = parse_visibility(l);
     ObjKind kind = OBJ_UNION;
     Object* type;
     switch(peek(l)->kind)
     {
     case TOKEN_BITFIELD:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         type = parse_bitfield_decl(l, vis, attrs);
         break;
     case TOKEN_CONST:
     case TOKEN_CT_CONST:
     case TOKEN_VAR:
-        return parse_global_var_decl(l, vis, attrs);
+        return parse_global_var_decl(l, vis, attrs, is_extern);
     case TOKEN_ENUM:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         type = parse_enum_decl(l, vis, attrs);
         break;
     case TOKEN_FN:
-        advance(l);
-        return parse_function_decl(l, vis, attrs);
+        return parse_function_decl(l, vis, attrs, is_extern);
     case TOKEN_IMPORT:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         return parse_import(l, vis);
     case TOKEN_MODULE:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         return parse_module_decl(l, vis);
     case TOKEN_STRUCT:
+        if(is_extern) goto BAD_EXTERN;
         kind = OBJ_STRUCT;
         FALLTHROUGH;
     case TOKEN_UNION:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         type = parse_struct_decl(l, kind, vis, attrs, false);
         break;
     case TOKEN_TYPEDEF:
-        advance(l);
+        if(is_extern) goto BAD_EXTERN;
         type = parse_typedef(l, vis, attrs);
         break;
     case TOKEN_CT_ASSERT: {
+        if(is_extern) goto BAD_EXTERN;
         ASTStmt* res = parse_ct_assert(l);
         if(stmt_is_bad(res)) return false;
         res->next = l->module->ct_asserts;
@@ -186,6 +189,9 @@ static bool parse_top_level(Lexer* l)
     da_append(&l->module->types, type);
     declare_obj(l, type);
     return true;
+
+BAD_EXTERN:
+    ERROR_AND_RET(false, "'extern' is not applicable here. Please use extern for global variables and functions only.");
 }
 
 static bool parse_attributes(Lexer* l, AttrDA* attrs)
@@ -229,8 +235,9 @@ static bool parse_module_path(Lexer* l, ModulePath* out)
     return true;
 }
 
-static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs)
+static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
 {
+    advance(l);
     EXPECT_IDENT_OR_RET(false);
     ObjFunc* func = CALLOC_STRUCT(ObjFunc);
     func->header.symbol = peek(l)->sym;
@@ -239,6 +246,7 @@ static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs)
     func->header.visibility = vis;
     func->header.attrs = attrs;
     func->header.module = l->module;
+    func->is_extern = is_extern;
     advance(l);
 
     CONSUME_OR_RET(TOKEN_LPAREN, false);
@@ -255,11 +263,12 @@ static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs)
 
     EXPECT_OR_RET(TOKEN_LBRACE, false);
     func->body = parse_stmt_block(l);
-    return true;
+    return !stmt_is_bad(func->body);
 }
 
 static bool parse_import(Lexer* l, Visibility vis)
 {
+    advance(l);
     ModulePath path = {0};
 
     while(true)
@@ -316,6 +325,7 @@ static bool parse_import(Lexer* l, Visibility vis)
 
 static bool parse_module_decl(Lexer* l, Visibility vis)
 {
+    advance(l);
     EXPECT_IDENT_OR_RET(false);
     ObjModule* parent = l->module;
     Symbol mod_name = peek(l)->sym;
@@ -396,6 +406,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
         p->header.kind = OBJ_VAR;
         p->header.visibility = VIS_PUBLIC;
         p->kind = VAR_PARAM;
+        p->is_const_binding = true;
 
         if(peek(l)->kind == TOKEN_UNDERSCORE && peek_next(l)->kind == TOKEN_COLON)
         {
@@ -432,27 +443,12 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
     return true;
 }
 
-static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs)
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
 {
-    ObjVar* var = CALLOC_STRUCT(ObjVar);
-    var->header.kind = OBJ_VAR;
-    var->header.visibility = vis;
+    ObjVar* var = parse_var_declaration(l, VAR_GLOBAL, vis);
+    if(var == NULL) return false;
     var->header.attrs = attrs;
-    var->header.module = l->module;
-    var->kind = VAR_GLOBAL;
-
-    if(!parse_type(l, &var->type_loc))
-        return false;
-
-    EXPECT_IDENT_OR_RET(false);
-    var->header.symbol = peek(l)->sym;
-    var->header.loc = peek(l)->loc;
-    advance(l);
-
-    if(try_consume(l, TOKEN_ASSIGN))
-        ASSIGN_EXPR_OR_RET(var->initial_val, false);
-
-    CONSUME_OR_RET(TOKEN_SEMI, false);
+    var->is_extern = is_extern;
     da_append(&l->module->vars, var);
     declare_obj(l, &var->header);
     return true;
@@ -480,6 +476,7 @@ static Object* parse_bitfield_decl(UNUSED Lexer* l, UNUSED Visibility vis, UNUSE
 
 static Object* parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
 {
+    advance(l);
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(NULL);
     ObjEnum* enum_ = CALLOC_STRUCT(ObjEnum);
@@ -557,6 +554,7 @@ static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
 
 static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested)
 {
+    advance(l);
     if(!nested)
     {
         EXPECT_IDENT_OR_RET(NULL);
@@ -585,6 +583,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA 
 
 static Object* parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
 {
+    advance(l);
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(NULL);
     ObjTypedef* typedef_ = CALLOC_STRUCT(ObjTypedef);
@@ -610,18 +609,46 @@ static Object* parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
     return &typedef_->header;
 }
 
-
-static bool parse_type(Lexer* l, TypeLoc* type_loc)
+static Type* parse_type_internal(Lexer* l)
 {
-    type_loc->type = NULL;
-    type_loc->loc = peek(l)->loc; // TODO: Extend this like the expressions so it shows the full type.
     Type* ty = NULL;
+    TypeQualifiers quals = TYPE_QUAL_NONE;
 
-    TokenKind kind = peek(l)->kind;
-    switch(kind)
+RETRY:
+    switch(peek(l)->kind)
     {
+    case TOKEN_ASTERISK:
+        advance(l);
+        ty = parse_type_internal(l);
+        ty = type_pointer_to(ty);
+        break;
+    case TOKEN_LBRACKET: {
+        advance(l);
+        ASTExpr* size_expr;
+        if(peek(l)->kind == TOKEN_ASTERISK &&
+           peek_next(l)->kind == TOKEN_RBRACKET)
+        {
+            // We have an array whose size is to be determined.
+            size_expr = NULL;
+            advance(l);
+            advance(l);
+        }
+        else
+        {
+            ASSIGN_EXPR_OR_RET(size_expr, false);
+            CONSUME_OR_RET(TOKEN_RBRACKET, false);
+        }
+
+        ty = parse_type_internal(l);
+        ty = type_array_of(ty, size_expr);
+        break;
+    }
     case TOKEN_CONST:
-        SIC_TODO();
+        if(quals & TYPE_QUAL_CONST)
+            sic_diagnostic_at(DIAG_WARNING, peek(l)->loc, "Duplicate const qualifier.");
+        quals |= TYPE_QUAL_CONST;
+        advance(l);
+        goto RETRY;
     case TOKEN_VOID:
     case TOKEN_BOOL:
     case TOKEN_CHAR:
@@ -643,7 +670,7 @@ static bool parse_type(Lexer* l, TypeLoc* type_loc)
     case TOKEN_UPTR:
     case TOKEN_ISIZE:
     case TOKEN_USIZE:
-        ty = type_from_token(kind);
+        ty = type_from_token(peek(l)->kind);
         advance(l);
         break;
     case TOKEN_FN:
@@ -653,7 +680,7 @@ static bool parse_type(Lexer* l, TypeLoc* type_loc)
         if(!parse_func_signature(l, sig, true))
             return false;
         ty = type_func_ptr(sig);
-        goto END;
+        break;
     case TOKEN_CT_TYPEOF:
         advance(l);
         CONSUME_OR_RET(TOKEN_LPAREN, false);
@@ -673,40 +700,46 @@ static bool parse_type(Lexer* l, TypeLoc* type_loc)
         ERROR_AND_RET(false, "Expected typename.");
     }
 
-    while(true)
+    (void)quals;
+    // TODO: type_apply_qualifiers();
+    return ty;
+}
+
+static bool parse_type(Lexer* l, TypeLoc* type_loc)
+{
+    type_loc->loc = peek(l)->loc;
+    type_loc->type = parse_type_internal(l);
+    type_loc->loc = extend_loc(type_loc->loc, peek_prev(l)->loc);
+    return type_loc->type != NULL;
+}
+
+static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
+{
+    advance(l);
+    EXPECT_IDENT_OR_RET(NULL);
+    ObjVar* var = CALLOC_STRUCT(ObjVar);
+    var->header.symbol = peek(l)->sym;
+    var->header.loc = peek(l)->loc;
+    var->header.kind = OBJ_VAR;
+    var->header.visibility = vis;
+    var->kind = peek_prev(l)->kind == TOKEN_CT_CONST ? VAR_CT_CONST : kind;
+    var->is_const_binding = peek_prev(l)->kind != TOKEN_VAR;
+    advance(l);
+    if(try_consume(l, TOKEN_COLON) && !parse_type(l, &var->type_loc))
+        return NULL;
+    if(try_consume(l, TOKEN_ASSIGN))
     {
-        if(try_consume(l, TOKEN_LBRACKET))
+        if(peek(l)->kind == TOKEN_VOID && peek_next(l)->kind == TOKEN_SEMI)
         {
-            ASTExpr* size_expr;
-            if(peek(l)->kind == TOKEN_ASTERISK &&
-               peek_next(l)->kind == TOKEN_RBRACKET)
-            {
-                // We have an array whose size is to be determined.
-                size_expr = NULL;
-                advance(l);
-                advance(l);
-            }
-            else
-            {
-                ASSIGN_EXPR_OR_RET(size_expr, false);
-                CONSUME_OR_RET(TOKEN_RBRACKET, false);
-            }
-
-            ty = type_array_of(ty, size_expr);
-            continue;
+            advance(l);
+            var->uninitialized = true;
         }
-
-
-        if(try_consume(l, TOKEN_ASTERISK))
-            ty = type_pointer_to(ty);
         else
-            break;
+            ASSIGN_EXPR_OR_RET(var->initial_val, NULL);
     }
 
-END:
-    type_loc->type = ty;
-    type_loc->loc = extend_loc(type_loc->loc, peek_prev(l)->loc);
-    return true;
+    CONSUME_OR_RET(TOKEN_SEMI, NULL);
+    return var;
 }
 
 
@@ -1002,35 +1035,12 @@ static ASTStmt* parse_expr_stmt(Lexer* l)
     return stmt;
 }
 
+
 static ASTStmt* parse_declaration(Lexer* l)
 {
     ASTStmt* stmt = new_stmt(l, STMT_DECLARATION);
-    advance(l);
-    EXPECT_IDENT_OR_RET(BAD_STMT);
-    ObjVar* var = stmt->stmt.declaration = CALLOC_STRUCT(ObjVar);
-    var->header.symbol = peek(l)->sym;
-    var->header.loc = peek(l)->loc;
-    var->header.visibility = VIS_PUBLIC;
-    var->header.kind = OBJ_VAR;
-    var->kind = peek_prev(l)->kind == TOKEN_CT_CONST ? VAR_CT_CONST : VAR_LOCAL;
-    var->is_const_binding = peek_prev(l)->kind != TOKEN_VAR;
-    advance(l);
-    if(try_consume(l, TOKEN_COLON) && !parse_type(l, &var->type_loc))
-        return BAD_STMT;
-    if(try_consume(l, TOKEN_ASSIGN))
-    {
-        if(peek(l)->kind == TOKEN_VOID && 
-           (peek_next(l)->kind == TOKEN_COMMA || 
-            peek_next(l)->kind == TOKEN_SEMI))
-        {
-            advance(l);
-            var->uninitialized = true;
-        }
-        else
-            ASSIGN_EXPR_OR_RET(var->initial_val, BAD_STMT);
-    }
-
-    CONSUME_OR_RET(TOKEN_SEMI, BAD_STMT);
+    stmt->stmt.declaration = parse_var_declaration(l, VAR_LOCAL, VIS_PUBLIC);
+    if(stmt->stmt.declaration == NULL) return BAD_STMT;
     return stmt;
 }
 
@@ -1662,6 +1672,7 @@ static inline void recover_top_level(Lexer* l, uint32_t prev_col)
         switch(t->kind)
         {
         case TOKEN_EOF:
+            return;
         case TOKEN_BITFIELD:
         case TOKEN_CONST:
         case TOKEN_CT_CONST:

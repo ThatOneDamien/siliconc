@@ -19,13 +19,12 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
 ## Future Feature Plans (sorted from highest to lowest priority)
 - Defer statements
 - More test cases
-- Self hosting
-- Add support for float80/float128 (refactoring)
-- Methods for structs
-- Update README with current information about the language
-- Better loops like foreach (still don't know about this)
 - Add proper dead-code checking and only add function declarations as needed to the codegen
-- Macros and constant-eval functions
+- Methods for structs
 - Generics
+- Macros/constant-eval functions
+- Self hosting
 - Build system
+- Update README with current information about the language
+- Add support for float80/float128 (refactoring)
 - Optimization of compiler memory usage

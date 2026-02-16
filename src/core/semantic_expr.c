@@ -1,20 +1,19 @@
 #include "semantics.h"
 
-static inline bool analyze_expr_or_lvalue(ASTExpr* expr, bool lvalue);
 static inline bool analyze_expr_dispatch(ASTExpr* expr);
-static inline bool analyze_lvalue_dispatch(ASTExpr* expr);
+static inline bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
 
 // Expr kind functions
-static bool analyze_array_access(ASTExpr* expr, bool lvalue);
+static bool analyze_array_access(ASTExpr* expr);
 static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
-static bool analyze_ident(ASTExpr* expr, bool lvalue);
+static bool analyze_ident(ASTExpr* expr);
 static bool analyze_struct_init_list(ASTExpr* expr);
 static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
-static bool analyze_unresolved_arrow(ASTExpr* expr, bool lvalue);
-static bool analyze_unresolved_dot(ASTExpr* expr, bool lvalue);
+static bool analyze_unresolved_arrow(ASTExpr* expr);
+static bool analyze_unresolved_dot(ASTExpr* expr);
 static bool analyze_ct_alignof(ASTExpr* expr);
 static bool analyze_ct_offsetof(ASTExpr* expr);
 static bool analyze_ct_sizeof(ASTExpr* expr);
@@ -67,19 +66,14 @@ bool analyze_expr(ASTExpr* expr)
     return success;
 }
 
-bool analyze_lvalue(ASTExpr* expr)
+bool analyze_lvalue(ASTExpr* expr, bool will_write)
 {
     if(expr->evaluated) return !expr_is_bad(expr);
-    bool success = analyze_lvalue_dispatch(expr);
+    bool success = analyze_lvalue_dispatch(expr, will_write);
     DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
     expr->evaluated = true;
     if(!success) expr->kind = EXPR_INVALID;
     return success;
-}
-
-static inline bool analyze_expr_or_lvalue(ASTExpr* expr, bool lvalue)
-{
-    return lvalue ? analyze_lvalue(expr) : analyze_expr(expr);
 }
 
 static inline bool analyze_expr_dispatch(ASTExpr* expr)
@@ -89,7 +83,7 @@ static inline bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS:
-        return analyze_array_access(expr, false);
+        return analyze_array_access(expr);
     case EXPR_ARRAY_INIT_LIST:
         return analyze_array_init_list(expr);
     case EXPR_BINARY:
@@ -112,11 +106,11 @@ static inline bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_UNARY:
         return analyze_unary(expr);
     case EXPR_UNRESOLVED_ARROW:
-        return analyze_unresolved_arrow(expr, false);
+        return analyze_unresolved_arrow(expr);
     case EXPR_UNRESOLVED_DOT:
-        return analyze_unresolved_dot(expr, false);
+        return analyze_unresolved_dot(expr);
     case EXPR_UNRESOLVED_IDENT:
-        return analyze_ident(expr, false);
+        return analyze_ident(expr);
     case EXPR_CT_ALIGNOF:
         return analyze_ct_alignof(expr);
     case EXPR_CT_OFFSETOF:
@@ -132,38 +126,64 @@ static inline bool analyze_expr_dispatch(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static inline bool analyze_lvalue_dispatch(ASTExpr* expr)
+static inline bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
 {
+    if(!analyze_expr_dispatch(expr)) return false;
+RETRY:
     switch(expr->kind)
     {
-    case EXPR_INVALID:
-        return false;
     case EXPR_ARRAY_ACCESS:
-        return analyze_array_access(expr, true);
+        expr = expr->expr.array_access.array_expr;
+        goto RETRY;
+    case EXPR_IDENT: {
+        Object* ident = expr->expr.ident;
+        switch(ident->kind)
+        {
+        case OBJ_VAR: {
+            ObjVar* var = obj_as_var(ident);
+            if(var->kind == VAR_CT_CONST)
+                break;
+            return true;
+        }
+        case OBJ_FUNC:
+            if(will_write)
+            {
+                sic_error_at(expr->loc, "Function identifiers are not modifiable.");
+                return false;
+            }
+            return true;
+        default:
+            break;
+        }
+        break;
+    }
+    case EXPR_MEMBER_ACCESS:
+        expr = expr->expr.member_access.parent_expr;
+        goto RETRY;
     case EXPR_UNARY:
-        if(!analyze_expr_dispatch(expr)) return false;
         if(expr->expr.unary.kind != UNARY_DEREF) break;
         return true;
     case EXPR_UNRESOLVED_ARROW:
-        return analyze_unresolved_arrow(expr, true);
     case EXPR_UNRESOLVED_DOT:
-        return analyze_unresolved_dot(expr, true);
     case EXPR_UNRESOLVED_IDENT:
-        return analyze_ident(expr, true);
+    case EXPR_CT_ALIGNOF:
+    case EXPR_CT_OFFSETOF:
+    case EXPR_CT_SIZEOF:
+    case EXPR_INVALID:
+        SIC_UNREACHABLE();
     default:
-        if(!analyze_expr(expr)) return false;
         break;
     }
 
-    sic_error_at(expr->loc, "Expression is not assignable.");
+    sic_error_at(expr->loc, "Expression is not an lvalue.");
     return false;
 }
 
-static bool analyze_array_access(ASTExpr* expr, bool lvalue)
+static bool analyze_array_access(ASTExpr* expr)
 {
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     bool valid = true;
-    valid &= analyze_expr_or_lvalue(arr_expr, lvalue);
+    valid &= analyze_expr(arr_expr);
     valid &= analyze_expr(expr->expr.array_access.index_expr);
     if(!valid) return false;
     Type* arr_t = arr_expr->type->canonical;
@@ -397,7 +417,7 @@ static bool analyze_call(ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(ASTExpr* expr, bool lvalue)
+static bool analyze_ident(ASTExpr* expr)
 {
     Object* ident = find_obj(&expr->expr.pre_sema_ident);
     if(ident == NULL) return false;
@@ -428,24 +448,6 @@ static bool analyze_ident(ASTExpr* expr, bool lvalue)
         SIC_TODO_MSG("Type expressions.");
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
-        if(var->kind == VAR_CT_CONST)
-            SIC_TODO();
-
-        if(var->kind == VAR_GLOBAL)
-        {
-            if(!analyze_global_var(var)) return false;
-            if(lvalue)
-                expr->const_eval = true;
-            else if(g_sema->in_global_init)
-            {
-                if(var->initial_val == NULL)
-                    convert_to_const_zero(expr, var->type_loc.type);
-                else
-                    expr_overwrite(expr, var->initial_val);
-            }
-        }
-
-
         expr->type = var->type_loc.type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = &var->header;
@@ -531,7 +533,7 @@ static bool analyze_unary(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool resolve_member(ASTExpr* expr, bool lvalue)
+static bool resolve_member(ASTExpr* expr)
 {
     SymbolLoc member = expr->expr.unresolved_access.member;
     ASTExpr* parent = expr->expr.unresolved_access.parent_expr;
@@ -542,7 +544,6 @@ static bool resolve_member(ASTExpr* expr, bool lvalue)
     case TYPE_STATIC_ARRAY:
         if(member.sym == g_sym_len)
         {
-            if(lvalue) goto NO_STORAGE;
             expr->type = g_type_usize;
             convert_to_const_int(expr, i128_from_u64(t->array.static_len));
             return true;
@@ -588,14 +589,9 @@ static bool resolve_member(ASTExpr* expr, bool lvalue)
     sic_error_at(member.loc, "Type \'%s\' has no member \'%s\'.",
                  type_to_string(parent->type), member.sym);
     return NULL;
-
-NO_STORAGE:
-    sic_error_at(member.loc, "Member \'%s\' has no storage, so it cannot be an lvalue.",
-                 member.sym);
-    return NULL;
 }
 
-static bool analyze_unresolved_arrow(ASTExpr* expr, bool lvalue)
+static bool analyze_unresolved_arrow(ASTExpr* expr)
 {
     ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
     deref->loc = expr->loc;
@@ -605,15 +601,14 @@ static bool analyze_unresolved_arrow(ASTExpr* expr, bool lvalue)
     expr->expr.unresolved_access.parent_expr = deref;
 
     if(!analyze_expr(deref)) return false;
-    return resolve_member(expr, lvalue);
+    return resolve_member(expr);
 }
 
-static bool analyze_unresolved_dot(ASTExpr* expr, bool lvalue)
+static bool analyze_unresolved_dot(ASTExpr* expr)
 {
     ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
     ASTExpr* parent = uaccess->parent_expr;
-    // FIXME: This is wrong, but right now there is no way to check after if it is an lvalue
-    if(!analyze_expr_or_lvalue(parent, lvalue)) return false;
+    if(!analyze_expr(parent)) return false;
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
@@ -642,8 +637,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr, bool lvalue)
         if(!analyze_expr(parent)) return false;
     }
 
-    if(!resolve_member(expr, lvalue)) return false;
-    if(lvalue) expr->const_eval = parent->const_eval;
+    if(!resolve_member(expr)) return false;
     return true;
 }
 
@@ -1181,7 +1175,7 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 static bool analyze_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     ASTExpr* left = *lhs;
-    if(!analyze_lvalue(left)) return false;
+    if(!analyze_lvalue(left, true)) return false;
     expr->type = left->type;
     return implicit_cast(rhs, left->type);
 }
@@ -1215,7 +1209,7 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 
 static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!analyze_lvalue(inner)) return false;
+    if(!analyze_lvalue(inner, false)) return false;
     expr->const_eval = inner->const_eval;
 
     if(inner->kind == EXPR_IDENT && inner->expr.ident->kind == OBJ_FUNC)
@@ -1272,7 +1266,7 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!analyze_lvalue(inner))
+    if(!analyze_lvalue(inner, true))
         return false;
 
     Type* ty = inner->type;

@@ -4,12 +4,12 @@
 typedef distinct SpecialInt = int;
 typedef distinct OtherSpecial = SpecialInt;
 
-SpecialInt a = cast<SpecialInt>(1);
-OtherSpecial b = cast<OtherSpecial>(1);
+const a = cast<SpecialInt>(1);
+const b = cast<OtherSpecial>(1);
 
 /// test:   invalid
 /// action: compile
 /// result: fail
 typedef distinct SpecialInt = int;
 
-SpecialInt a = 1;
+const a: SpecialInt = 1;

@@ -62,7 +62,7 @@ BUILTIN_TYPE_DEF(s_float  , TYPE_FLOAT  , 4);
 BUILTIN_TYPE_DEF(s_double , TYPE_DOUBLE , 8);
 
 TYPE_DEF(s_invalid  , TYPE_INVALID);
-TYPE_DEF(s_void     , TYPE_VOID, .ptr_cache = &s_voidptr);
+TYPE_DEF(s_void     , TYPE_VOID, .cache = &s_voidptr);
 TYPE_DEF(s_voidptr  , TYPE_POINTER, .pointer_base = &s_void);
 TYPE_DEF(s_init_list, TYPE_INIT_LIST);
 TYPE_DEF(s_str_lit  , TYPE_STRING_LIT);
@@ -154,19 +154,19 @@ Type* type_from_token(TokenKind type_token)
 Type* type_pointer_to(Type* base)
 {
     DBG_ASSERT(base != NULL);
-    if(base->ptr_cache == NULL)
+    if(base->cache == NULL)
     {
-        base->ptr_cache = CALLOC_STRUCT(Type);
-        base->ptr_cache->kind = TYPE_POINTER;
-        base->ptr_cache->pointer_base = base;
-        base->ptr_cache->canonical = base->ptr_cache;
+        base->cache = CALLOC_STRUCT(Type);
+        base->cache->kind = TYPE_POINTER;
+        base->cache->pointer_base = base;
+        base->cache->canonical = base->cache;
         if(base->status == STATUS_RESOLVED)
         {
-            base->ptr_cache->status = STATUS_RESOLVED;
-            base->ptr_cache->visibility = base->visibility;
+            base->cache->status = STATUS_RESOLVED;
+            base->cache->visibility = base->visibility;
         }
     }
-    return base->ptr_cache;
+    return base->cache;
 }
 
 Type* type_func_ptr(FuncSignature* signature)
@@ -358,7 +358,7 @@ const char* type_to_string(const Type* type)
         static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
         return tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
     case TYPE_POINTER:
-        return str_format("%s*", type_to_string(type->pointer_base));
+        return str_format("*%s", type_to_string(type->pointer_base));
     case TYPE_FUNC_PTR: {
         FuncSignature* sig = type->func_ptr;
         scratch_clear();
@@ -376,12 +376,14 @@ const char* type_to_string(const Type* type)
         return str_dupn(scratch_string(), g_scratch.len);
     }
     case TYPE_RUNTIME_ARRAY:
-        return str_format("%s[*]", type_to_string(type->array.elem_type));
+        return str_format("[*]%s", type_to_string(type->array.elem_type));
     case TYPE_SLICE:
-        return str_format("%s[]", type_to_string(type->pointer_base));
+        return str_format("[]%s", type_to_string(type->pointer_base));
     case TYPE_STATIC_ARRAY:
-        return str_format("%s[%lu]", type_to_string(type->array.elem_type), type->array.static_len);
+        return str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
     case TYPE_ALIAS:
+        // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
+        // somehow express that it is an alias and not a distinct type.
         return str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
     case TYPE_ALIAS_DISTINCT:
         return type->typedef_->header.symbol;

@@ -27,7 +27,7 @@ extern SemaContext* g_sema;
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
 bool       analyze_expr(ASTExpr* expr);
-bool       analyze_lvalue(ASTExpr* expr);
+bool       analyze_lvalue(ASTExpr* expr, bool will_write);
 bool       analyze_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_enum(ObjEnum* enum_, Type** o_type);

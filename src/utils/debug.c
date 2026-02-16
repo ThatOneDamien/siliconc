@@ -276,7 +276,7 @@ static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolv
     else
     {
         PRINT_DEPTH(depth + 1);
-        printf("%s: ( Uninitialized )\n", decl->header.symbol);
+        printf("%s: ( %s )\n", decl->header.symbol, decl->uninitialized ? "Uninitialized" : "Default initialized");
     }
 }
 

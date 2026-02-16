@@ -3,8 +3,8 @@
 /// result: pass
 fn main()
 {
-    int a = 0;
-    int* b = &a;
+    const a: int = 0;
+    const b: *int = &a;
 }
 
 /// test:   rvalue
@@ -12,5 +12,5 @@ fn main()
 /// result: fail
 fn main()
 {
-    int* a = &(0);
+    const a: int* = &(0);
 }

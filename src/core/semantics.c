@@ -76,7 +76,20 @@ bool analyze_function(ObjFunc* func)
     g_sema->in_global_init = true;
 
     if(!analyze_attributes(&func->header)) success = false;
-    set_object_link_name(&func->header);
+
+    if(func->is_extern)
+    {
+        func->header.link_name = func->header.symbol;
+        if(func->body != NULL)
+            sic_error_at(func->header.loc, "Function marked 'extern' cannot have a body.");
+    }
+    else 
+    {
+        set_object_link_name(&func->header);
+        if(func->body == NULL)
+            sic_error_at(func->header.loc, "Function must either have a body, or be marked 'extern'.");
+    }
+    
 
     if(!resolve_type(&func->signature.ret_type.type, RES_ALLOW_VOID, 
                      func->signature.ret_type.loc, "Function cannot have return type"))
@@ -290,9 +303,19 @@ bool analyze_global_var(ObjVar* var)
     bool prev = g_sema->in_global_init;
     g_sema->in_global_init = true;
     var->header.status = STATUS_RESOLVING;
+    DBG_ASSERT(!var->uninitialized);
 
     analyze_attributes(&var->header);
-    set_object_link_name(&var->header);
+    if(var->is_extern)
+    {
+        var->header.link_name = var->header.symbol;
+        if(var->initial_val != NULL)
+            sic_error_at(var->header.loc, "Global variable marked 'extern' cannot have an initial value.");
+    }
+    else 
+    {
+        set_object_link_name(&var->header);
+    }
 
     if(!analyze_declaration(var))
     {
@@ -470,14 +493,6 @@ static bool analyze_attributes(Object* obj)
         case ATTR_PACKED:
             if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_STRUCT)
-            {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
-                break;
-            }
-            continue;
-        case ATTR_PURE:
-            if(!check_attribute_args(attr, 0)) break;
-            if(kind != OBJ_FUNC)
             {
                 sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
                 break;
@@ -791,10 +806,15 @@ static bool analyze_declaration(ObjVar* decl)
 {
     if(decl->type_loc.type == NULL)
     {
+        if(decl->is_extern)
+        {
+            sic_error_at(decl->header.loc, "Extern variables require a type to be specified.");
+            goto ERR;
+        }
         if(decl->initial_val == NULL)
         {
-            sic_error_at(decl->header.loc, "Declaring a variable with auto requires "
-                                           "it to be initialized with an expression.");
+            sic_error_at(decl->header.loc, "Variables require a type or an initial value to "
+                                           "be specified. Please provide at least 1.");
             goto ERR;
         } 
         if(!analyze_expr(decl->initial_val))
@@ -880,8 +900,8 @@ static void analyze_swap(ASTStmt* stmt)
 {
     ASTExpr* left = stmt->stmt.swap.left;
     ASTExpr* right = stmt->stmt.swap.right;
-    analyze_lvalue(left);
-    analyze_lvalue(right);
+    analyze_lvalue(left, true);
+    analyze_lvalue(right, true);
     if(expr_is_bad(left) || expr_is_bad(right))
         return;
 

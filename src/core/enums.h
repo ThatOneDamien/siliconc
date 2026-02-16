@@ -10,7 +10,6 @@ typedef enum : uint8_t
     ATTR_NOINLINE,
     ATTR_NORETURN,
     ATTR_PACKED,
-    ATTR_PURE,
     ATTR_CUSTOM,
     __ATTR_COUNT = ATTR_CUSTOM,
     ATTR_INVALID,
@@ -475,6 +474,12 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
+    TYPE_QUAL_NONE  = 0,
+    TYPE_QUAL_CONST = (1 << 0),
+} TypeQualifiers;
+
+typedef enum : uint8_t
+{
     UNARY_INVALID = 0,
 
     UNARY_ADDR_OF,
@@ -490,7 +495,6 @@ typedef enum : uint8_t
 {
     VAR_INVALID = 0,
     VAR_CT_CONST,
-    VAR_EXTERN,
     VAR_GLOBAL,
     VAR_LOCAL,
     VAR_MEMBER,

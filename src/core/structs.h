@@ -220,12 +220,13 @@ struct TypeBuiltin
 
 struct Type
 {
-    TypeKind      kind;
-    ResolveStatus status;
-    Visibility    visibility;
-    void*         llvm_ref;
-    Type*         ptr_cache;
-    Type*         canonical;
+    TypeKind       kind;
+    ResolveStatus  status;
+    Visibility     visibility;
+    TypeQualifiers qualifiers;
+    void*          llvm_ref;
+    Type*          cache;
+    Type*          canonical;
 
     union
     {
@@ -717,6 +718,7 @@ struct ObjVar
     bool      is_const_binding;
     bool      written;
     bool      read;
+    bool      is_extern;
     VarKind   kind;
 };
 
