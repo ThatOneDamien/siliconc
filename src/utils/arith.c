@@ -6,51 +6,59 @@
 #define LO32(_x) ((_x) & 0xffffffff)
 #define ISNEG(_x) ((uint64_t)(_x) >> 63)
 
-// char *i128_to_string(Int128 op, uint64_t base, bool is_signed, bool use_prefix)
-// {
-// 	ASSERT(base >= 2 && base <= 16);
-// 	static char digits[16] = "0123456789ABCDEF";
-// 	char buffer[130];
-// 	char *loc = buffer;
-// 	bool add_minus = is_signed && ISNEG(op.hi);
-// 	if (add_minus) op = i128_neg(op);
-// 	Int128 base_div = { 0, base };
-// 	do
-// 	{
-// 		Int128 rem = i128_urem(op, base_div);
-// 		*(loc++) = digits[rem.lo];
-// 		op = i128_udiv(op, base_div);
-// 	} while (!i128_is_zero(op));
-// 	char *res = malloc_string((size_t)(loc - buffer + 4));
-// 	char *c = res;
-// 	if (add_minus) *(c++) = '-';
-// 	if (use_prefix)
-// 	{
-// 		switch (base)
-// 		{
-// 			case 2:
-// 				*(c++) = '0';
-// 				*(c++) = 'b';
-// 				break;
-// 			case 8:
-// 				*(c++) = '0';
-// 				*(c++) = 'o';
-// 				break;
-// 			case 16:
-// 				*(c++) = '0';
-// 				*(c++) = 'x';
-// 				break;
-// 			default:
-// 				break;
-// 		}
-// 	}
-// 	while (loc > buffer)
-// 	{
-// 		*(c++) = *(--loc);
-// 	}
-// 	*c = 0;
-// 	return res;
-// }
+void scratch_append_i128(Int128 val, bool is_signed)
+{
+	char buffer[130];
+	char *loc = buffer;
+	bool add_minus = is_signed && ISNEG(val.hi);
+	if (add_minus) val = i128_neg(val);
+    Int128 base = i128_from_u64(10);
+	do
+	{
+		Int128 rem;
+        i128_udivrem(val, base, &val, &rem);
+		*(loc++) = '0' + rem.lo;
+		val = i128_udiv(val, base);
+	} while (!i128_is_zero(val));
+
+	if (add_minus) scratch_appendc('-');
+	while (loc > buffer)
+	{
+		scratch_appendc(*(--loc));
+	}
+}
+
+char* i128_to_string(Int128 val, bool is_signed)
+{
+	char buffer[130];
+    size_t len = 0;
+	bool add_minus = is_signed && ISNEG(val.hi);
+	if (add_minus) val = i128_neg(val);
+    Int128 base = i128_from_u64(10);
+	do
+	{
+		Int128 rem;
+        i128_udivrem(val, base, &val, &rem);
+		buffer[len++] = '0' + rem.lo;
+		val = i128_udiv(val, base);
+	} while (!i128_is_zero(val));
+
+	if (add_minus)
+    {
+        scratch_appendc('-');
+        len++;
+    }
+
+    char* res = MALLOC(len + 1, sizeof(char));
+    char* c = res;
+    while(len > 0)
+	{
+		*c = buffer[--len];
+        c++;
+	}
+    *c = '\0';
+    return res;
+}
 
 Int128 i128_add(Int128 lhs, Int128 rhs)
 {

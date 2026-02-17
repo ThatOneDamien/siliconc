@@ -3,7 +3,7 @@
 /// result: pass
 fn main()
 {
-    const a: int = 0;
+    var a: int = 0;
     const b: *int = &a;
 }
 

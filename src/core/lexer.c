@@ -22,18 +22,19 @@ static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);
 static inline void     extract_ct_identifier(Lexer* l, Token* t);
 static inline void     extract_attr_identifier(Lexer* l, Token* t);
-static inline void     extract_char_literal(Lexer* l, Token* t, CharEncoding encoding);
-static inline void     extract_string_literal(Lexer* l, Token* t, CharEncoding encoding);
+static inline void     extract_char_literal(Lexer* l, Token* t, TypeKind kind, ByteSize char_size);
+static inline void     extract_string_literal(Lexer* l, Token* t, TypeKind kind, ByteSize char_size);
 static inline void     extract_raw_string_literal(Lexer* l, Token* t);
 static inline void     extract_base_2(Lexer* l, Token* t);
 static inline void     extract_base_8(Lexer* l, Token* t);
 static inline void     extract_base_10(Lexer* l, Token* t);
 static inline void     extract_base_16(Lexer* l, Token* t);
-static inline bool     extract_num_suffix(Lexer* l, bool* is_float);
-static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding encoding);
+static ByteSize        next_char_in_literal(Lexer* l, uint32_t* value, TypeKind kind);
 static inline ByteSize next_utf8(Lexer* l, uint32_t* codepoint);
 static inline void     next_with_nl(Lexer* l);
 static inline ByteSize unicode_to_utf8(uint32_t* value);
+static inline ByteSize unicode_to_utf16(uint32_t* value);
+static inline bool     is_invalid_codepoint(uint32_t codepoint);
 static inline bool     consume(Lexer* l, char c);
 static inline Token*   next_token_loc(Lexer* l);
 static inline FileId   lexer_file_id(Lexer* l);
@@ -230,19 +231,21 @@ void lexer_advance(Lexer* l)
             t->kind = TOKEN_SUB;
         break;
     case '\'':
-        extract_char_literal(l, t, CHAR_ENCODING_UTF8);
+        extract_char_literal(l, t, TYPE_CHAR, 1);
         break;
     case '\"':
-        extract_string_literal(l, t, CHAR_ENCODING_UTF8);
+        extract_string_literal(l, t, TYPE_CHAR, 1);
         break;
     case 'u':
         switch(peek(l))
         {
         case '\'': 
-            extract_char_literal(l, t, CHAR_ENCODING_UTF16);
+            next(l);
+            extract_char_literal(l, t, TYPE_CHAR16, 2);
             break;
         case '\"':
-            extract_string_literal(l, t, CHAR_ENCODING_UTF16);
+            next(l);
+            extract_string_literal(l, t, TYPE_CHAR16, 2);
             break;
         default:
             goto IDENT;
@@ -252,10 +255,12 @@ void lexer_advance(Lexer* l)
         switch(peek(l))
         {
         case '\'': 
-            extract_char_literal(l, t, CHAR_ENCODING_UTF32);
+            next(l);
+            extract_char_literal(l, t, TYPE_CHAR32, 4);
             break;
         case '\"':
-            extract_string_literal(l, t, CHAR_ENCODING_UTF32);
+            next(l);
+            extract_string_literal(l, t, TYPE_CHAR32, 4);
             break;
         default:
             goto IDENT;
@@ -457,9 +462,9 @@ static inline void extract_attr_identifier(Lexer* l, Token* t)
     t->sym = sym_map_addn(t->start, t->loc.len, &t->kind);
 }
 
-static inline void extract_char_literal(Lexer* l, Token* t, CharEncoding encoding)
+static inline void extract_char_literal(Lexer* l, Token* t, TypeKind kind, ByteSize char_size)
 {
-    ByteSize len = next_char_in_literal(l, &t->chr.val, CHAR_ENCODING_UTF8);
+    ByteSize len = next_char_in_literal(l, &t->chr.val, kind);
     if(len == 0)
         t->kind = TOKEN_INVALID;
 
@@ -482,7 +487,8 @@ static inline void extract_char_literal(Lexer* l, Token* t, CharEncoding encodin
         lexer_error(l, t, "Multi-character char literals are not allowed.");
         return;
     }
-    if(len > (ByteSize)encoding)
+
+    if(len > char_size)
     {
         lexer_error(l, t, "Value of char literal cannot fit in its containing "
                           "type. For char16 and char32 add prefix u/U respectively.");
@@ -491,7 +497,7 @@ static inline void extract_char_literal(Lexer* l, Token* t, CharEncoding encodin
     t->kind = TOKEN_CHAR_LITERAL;
 }
 
-static inline void extract_string_literal(Lexer* l, Token* t, CharEncoding encoding)
+static inline void extract_string_literal(Lexer* l, Token* t, TypeKind kind, ByteSize char_size)
 {
     StringBuilder sb;
     da_init(&sb, 256);
@@ -507,7 +513,7 @@ static inline void extract_string_literal(Lexer* l, Token* t, CharEncoding encod
         }
 
         uint32_t value;
-        ByteSize len = next_char_in_literal(l, &value, encoding);
+        ByteSize len = next_char_in_literal(l, &value, kind);
         if(!errored && len == 0)
         {
             errored = true;
@@ -524,11 +530,12 @@ static inline void extract_string_literal(Lexer* l, Token* t, CharEncoding encod
     if(errored)
         return;
 
-    t->str.len = sb.size;
+    t->str.len = sb.size / char_size;
     da_append(&sb, '\0');
 
     da_compact(&sb);
     t->str.val = sb.data; 
+    t->str.kind = kind;
     t->kind = TOKEN_STRING_LITERAL;
 }
 
@@ -555,6 +562,7 @@ static inline void extract_raw_string_literal(Lexer* l, Token* t)
 
     da_compact(&sb);
     t->str.val = sb.data; 
+    t->str.kind = TYPE_CHAR;
     t->kind = TOKEN_STRING_LITERAL;
 }
 
@@ -577,16 +585,13 @@ static inline void extract_base_2(Lexer* l, Token* t)
 
     if(peek_prev(l) == '_')
     {
-        backtrack(l);
-        lexer_error_at_current(l, t, "Numeric literal cannot finish with an underscore.");
+        lexer_error(l, t, "Numeric literal cannot finish with an underscore.");
         return;
     }
 
-    bool is_float = peek(l) == '.';
-    if(!extract_num_suffix(l, &is_float))
-        return;
-    if(is_float)
+    if(peek(l) == '.' || peek(l) == 'f' || peek(l) == 'F')
     {
+        next(l);
         lexer_error(l, t, "Binary literals cannot have a fractional component or float suffix.");
         return;
     }
@@ -612,16 +617,13 @@ static inline void extract_base_8(Lexer* l, Token* t)
 
     if(peek_prev(l) == '_')
     {
-        backtrack(l);
-        lexer_error_at_current(l, t, "Numeric literal cannot finish with an underscore.");
+        lexer_error(l, t, "Numeric literal cannot finish with an underscore.");
         return;
     }
 
-    bool is_float = peek(l) == '.';
-    if(!extract_num_suffix(l, &is_float))
-        return;
-    if(is_float)
+    if(peek(l) == '.' || peek(l) == 'f' || peek(l) == 'F')
     {
+        next(l);
         lexer_error(l, t, "Octal literals cannot have a fractional component or float suffix.");
         return;
     }
@@ -659,8 +661,11 @@ END_UND:
         return;
     }
 
-    if(!extract_num_suffix(l, &is_float))
-        return;
+    if(peek(l) == 'f' || peek(l) == 'F')
+    {
+        next(l);
+        is_float = true;
+    }
     
     t->kind = is_float ? TOKEN_FLOAT_LITERAL : TOKEN_DEC_INT_LITERAL;
     return;
@@ -679,43 +684,21 @@ static inline void extract_base_16(Lexer* l, Token* t)
 
     if(peek_prev(l) == '_')
     {
-        backtrack(l);
-        lexer_error_at_current(l, t, "Numeric literal cannot finish with an underscore.");
+        lexer_error(l, t, "Numeric literal cannot finish with an underscore.");
         return;
     }
 
-    bool is_float = peek(l) == '.';
-    if(!extract_num_suffix(l, &is_float))
-        return;
-    if(is_float)
+    if(peek(l) == '.' || peek(l) == 'f' || peek(l) == 'F')
     {
+        next(l);
         lexer_error(l, t, "Hex literals cannot have a fractional component or float suffix.");
         return;
     }
     t->kind = TOKEN_HEX_INT_LITERAL;
 }
 
-static inline bool extract_num_suffix(Lexer* l, bool* is_float)
-{
-    switch(peek(l))
-    {
-    case 'u':
-    case 'U':
-    case 'i':
-    case 'I':
-        SIC_TODO_MSG("Integer literal suffixes.");
-    case 'f':
-    case 'F':
-        *is_float = true;
-        // TODO: Add sizes like f32 and f64
-        next(l);
-        return true;
-    default:
-        return true;
-    }
-}
 
-static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding encoding)
+static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, TypeKind kind)
 {
     if(peek(l) == '\\')
     {
@@ -781,7 +764,11 @@ static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding enc
                 next(l);
                 val = (val << 4) | (v - 1);
             }
-
+            if(is_invalid_codepoint(val))
+            {
+                msg = "Invalid unicode codepoint.";
+                break;
+            }
             *value = val;
             goto UNICODE;
         }
@@ -798,9 +785,9 @@ static ByteSize next_char_in_literal(Lexer* l, uint32_t* value, CharEncoding enc
                 next(l);
                 val = (val << 4) | (v - 1);
             }
-            if(val > 0x10FFFF)
+            if(is_invalid_codepoint(val))
             {
-                msg = "Invalid universal character code.";
+                msg = "Invalid unicode codepoint.";
                 break;
             }
 
@@ -853,12 +840,14 @@ UNICODE:
     // If we are here, value is a unicode codepoint that
     // now needs to be converted to the encoding specified
     // by the literal width
-    switch(encoding)
+    switch(kind)
     {
-    case CHAR_ENCODING_UTF8:
+    case TYPE_CHAR:
         return unicode_to_utf8(value);
-    case CHAR_ENCODING_UTF16:
-    case CHAR_ENCODING_UTF32:
+    case TYPE_CHAR16:
+        return unicode_to_utf16(value);
+    case TYPE_CHAR32:
+        return 4;
     default:
         SIC_UNREACHABLE();
     }
@@ -943,6 +932,7 @@ static inline void next_with_nl(Lexer* l)
 static inline ByteSize unicode_to_utf8(uint32_t* value)
 {
     uint32_t codepoint = *value;
+    DBG_ASSERT(!is_invalid_codepoint(codepoint));
     char* utf8_buf = (char*)value;
     if(codepoint <= 0x7F)
         return 1; // Do nothing
@@ -960,13 +950,35 @@ static inline ByteSize unicode_to_utf8(uint32_t* value)
         return 3;
     }
 
-    DBG_ASSERT(codepoint <= 0x10FFFF);
     utf8_buf[0] = 0xF0 | (codepoint >> 18);
     utf8_buf[1] = 0x80 | ((codepoint >> 12) & 0x3F);
     utf8_buf[2] = 0x80 | ((codepoint >> 6) & 0x3F);
     utf8_buf[3] = 0x80 | (codepoint & 0x3F);
     return 4;
 }
+
+static inline ByteSize unicode_to_utf16(uint32_t* value)
+{
+    uint32_t codepoint = *value;
+    DBG_ASSERT(!is_invalid_codepoint(codepoint));
+    uint16_t* utf16_buf = (uint16_t*)value;
+    if(codepoint <= 0xFFFF)
+    {
+        utf16_buf[0] = (uint16_t)codepoint;
+        return 2;
+    }
+
+    codepoint -= 0x10000;
+    utf16_buf[0] = 0xD800 | (codepoint >> 10);
+    utf16_buf[1] = 0xDC00 | (codepoint & 0x3FF);
+    return 4;
+}
+
+static inline bool is_invalid_codepoint(uint32_t codepoint)
+{
+    return codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF);
+}
+
 
 static inline bool consume(Lexer* l, char c)
 {

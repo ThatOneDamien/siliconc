@@ -9,7 +9,7 @@ enum Something
     C,
     D
 }
-fn printf(char* str, ...);
+extern fn printf(str: *const char, ...);
 fn main() -> int
 {
     printf("%d %d\n", Something.A, Something.B);

@@ -13,6 +13,7 @@ struct SemaContext
     ObjModule*   module;
     ObjFunc*     cur_func;
     Object*      cyclic_def;
+    ObjVarDA     locals;
     
     ASTStmt*     break_target;
     ASTStmt*     continue_target;
@@ -26,6 +27,10 @@ extern SemaContext* g_sema;
 
 bool       analyze_global_var(ObjVar* var);
 bool       analyze_function(ObjFunc* function);
+void       analyze_stmt(ASTStmt* stmt);
+bool       analyze_stmt_block(ASTStmt* stmt);
+void       analyze_ct_assert(ASTStmt* stmt);
+bool       analyze_declaration(ObjVar* decl);
 bool       analyze_expr(ASTExpr* expr);
 bool       analyze_lvalue(ASTExpr* expr, bool will_write);
 bool       analyze_cast(ASTExpr* cast);

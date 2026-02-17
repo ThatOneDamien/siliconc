@@ -54,22 +54,43 @@ void push_obj(Object* obj)
 
 ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
 {
-    Object* next = hashmap_get(&start->module_ns, symloc.sym);
-    if(next == NULL)
+    Object* o = hashmap_get(&start->module_ns, symloc.sym);
+    if(o == NULL)
     {
-        // TODO: Make the message display the full path of the module.
-        sic_error_at(symloc.loc, "Module \'%s\' does not exist in module \'%s\'.",
-                     symloc.sym, start->header.symbol);
+        scratch_clear();
+        scratch_appendf("Module \'%s\' does not exist in ", symloc.sym);
+        if(start == &g_compiler.top_module)
+        {
+            scratch_append("the root module.");
+        }
+        else
+        {
+            scratch_append("module \'");
+            scratch_append_module_path(start);
+            scratch_append("\'.");
+        }
+        sic_error_at(symloc.loc, "%s", scratch_string());
         return NULL;
     }
-    if(!allow_private && next->visibility == VIS_PRIVATE)
+
+    if(!allow_private && o->visibility == VIS_PRIVATE)
     {
-        // TODO: Make the message display the full path of the module.
-        sic_error_at(symloc.loc, "Module \'%s\' is marked as private and is not accessible from module \'%s\'.",
-                     symloc.sym, start->header.symbol);
+        scratch_clear();
+        scratch_appendf("Module \'%s\' is marked as private, and is not accessible from ", symloc.sym);
+        if(start == &g_compiler.top_module)
+        {
+            scratch_append("the root module.");
+        }
+        else
+        {
+            scratch_append("module \'");
+            scratch_append_module_path(start);
+            scratch_append("\'.");
+        }
+        sic_error_at(symloc.loc, "%s", scratch_string());
         return NULL;
     }
-    return obj_as_module(next->kind == OBJ_IMPORT ? obj_as_import(next)->resolved : next);
+    return obj_as_module(o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o);
 }
 
 Object* find_obj(ModulePath* path)
@@ -98,7 +119,7 @@ Object* find_obj(ModulePath* path)
             return NULL;
         for(uint32_t i = 1; i < path->size - 1; ++i)
         {
-            if((mod = find_module(mod, path->data[0], false)) == NULL)
+            if((mod = find_module(mod, path->data[i], false)) == NULL)
                 return NULL;
         }
     }

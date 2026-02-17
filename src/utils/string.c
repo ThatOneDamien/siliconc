@@ -30,7 +30,7 @@ void scratch_append_module_path(const ObjModule* module)
 {
     if(module == &g_compiler.top_module)
     {
-        g_scratch.len = 0;
+        scratch_append("root");
         return;
     }
 

@@ -61,6 +61,7 @@ static void     emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result);
 static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
 static void     emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -991,7 +992,7 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
                                 LLVMConstPointerCast(get_llvm_const_int(c, constant->i, g_type_uptr), c->ptr_type);
         return;
     case CONSTANT_STRING: {
-        LLVMValueRef str = LLVMConstString(constant->str.val, constant->str.len, false);
+        LLVMValueRef str = emit_const_string(constant->str, constant->str.len + 1);
         LLVMValueRef global_string = LLVMAddGlobal(c->llvm_module, LLVMTypeOf(str), ".str");
         LLVMSetGlobalConstant(global_string, true);
         LLVMSetLinkage(global_string, LLVMPrivateLinkage);
@@ -1001,9 +1002,56 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         return;
     }
     case CONSTANT_ENUM:
-        SIC_TODO();
+        result->value = get_llvm_const_int(c, constant->enum_->const_value, false); 
+        return;
     }
     SIC_UNREACHABLE();
+}
+
+static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len)
+{
+    DBG_ASSERT(desired_len >= str.len);
+    switch(str.kind)
+    {
+    case TYPE_CHAR: {
+        if((desired_len - str.len) <= 1)
+            return LLVMConstString(str.val, str.len, desired_len == str.len);
+        char* s = MALLOC(desired_len, sizeof(char));
+        memcpy(s, str.val, str.len);
+        memset(s + str.len, 0, desired_len - str.len);
+        LLVMValueRef res = LLVMConstString(s, desired_len, true);
+        FREE(s, desired_len);
+        return res;
+    }
+    case TYPE_CHAR16: {
+        LLVMValueRef* values = MALLOC_STRUCTS(LLVMValueRef, desired_len);
+        uint16_t* s = (uint16_t*)str.val;
+
+        for(uint32_t i = 0; i < str.len; ++i)
+            values[i] = LLVMConstInt(LLVMInt16Type(), s[i], false);
+        for(uint32_t i = str.len; i < desired_len; ++i)
+            values[i] = LLVMConstNull(LLVMInt16Type());
+
+        LLVMValueRef res = LLVMConstArray2(LLVMInt16Type(), values, desired_len);
+        FREE(values, desired_len * sizeof(LLVMValueRef));
+        return res;
+    }
+    case TYPE_CHAR32: {
+        LLVMValueRef* values = MALLOC_STRUCTS(LLVMValueRef, desired_len);
+        uint32_t* s = (uint32_t*)str.val;
+
+        for(uint32_t i = 0; i < str.len; ++i)
+            values[i] = LLVMConstInt(LLVMInt32Type(), s[i], false);
+        for(uint32_t i = str.len; i < desired_len; ++i)
+            values[i] = LLVMConstNull(LLVMInt32Type());
+
+        LLVMValueRef res = LLVMConstArray2(LLVMInt32Type(), values, desired_len);
+        FREE(values, desired_len * sizeof(LLVMValueRef));
+        return res;
+    }
+    default:
+        SIC_UNREACHABLE();
+    }
 }
 
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
@@ -1015,23 +1063,9 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
         return emit_const_array_init_list(c, expr);
     case EXPR_CONSTANT: {
         ASTExprConstant* constant = &expr->expr.constant;
-        uint64_t size = expr->type->array.static_len;
-        if(constant->kind == CONSTANT_STRING && type_is_array(expr->type))
-        {
-            DBG_ASSERT(size > constant->str.len);
-            char* str;
-            if((size - constant->str.len) > 1)
-            {
-                str = MALLOC(size, sizeof(char));
-                memcpy(str, constant->str.val, constant->str.len);
-                memset(str + constant->str.len, 0, size - constant->str.len);
-            }
-            else
-                str = constant->str.val;
-            LLVMValueRef strref = LLVMConstString(str, size, true);
-            FREE(str, size); // Attempt to free if we can.
-            return strref;
-        }
+        Type* type = expr->type->canonical;
+        if(constant->kind == CONSTANT_STRING && type->kind == TYPE_STATIC_ARRAY)
+            return emit_const_string(constant->str, type->array.static_len);
 
         GenValue v;
         emit_constant(c, expr, &v);

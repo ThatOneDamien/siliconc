@@ -8,7 +8,7 @@ static bool analyze_array_access(ASTExpr* expr);
 static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
-static bool analyze_ident(ASTExpr* expr);
+static bool analyze_ident(ASTExpr* expr, bool mark_read);
 static bool analyze_struct_init_list(ASTExpr* expr);
 static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
@@ -104,7 +104,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(expr);
     case EXPR_UNRESOLVED_IDENT:
-        return analyze_ident(expr);
+        return analyze_ident(expr, true);
     case EXPR_CT_ALIGNOF:
         return analyze_ct_alignof(expr);
     case EXPR_CT_OFFSETOF:
@@ -122,16 +122,18 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
 
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
 {
-    if(!analyze_expr_dispatch(expr)) return false;
-    if(expr->type->kind != TYPE_INVALID && will_write && 
-       (expr->type->qualifiers & TYPE_QUAL_CONST))
-    {
-        sic_error_at(expr->loc, "Expression of type \'%s\' cannot be modified.", type_to_string(expr->type));
-        return false;
-    }
+//     if(!analyze_expr_dispatch(expr)) return false;
+//     if(expr->type->kind != TYPE_INVALID && will_write && 
+//        (expr->type->qualifiers & TYPE_QUAL_CONST))
+//     {
+//         sic_error_at(expr->loc, "Expression of type \'%s\' cannot be modified.", type_to_string(expr->type));
+//         return false;
+//     }
 RETRY:
     switch(expr->kind)
     {
+    case EXPR_INVALID:
+        return false;
     case EXPR_ARRAY_ACCESS:
         expr = expr->expr.array_access.array_expr;
         goto RETRY;
@@ -143,6 +145,10 @@ RETRY:
             ObjVar* var = obj_as_var(ident);
             if(var->kind == VAR_CT_CONST)
                 break;
+            if(var->kind == VAR_GLOBAL)
+                expr->const_eval = true;
+            if(will_write)
+                var->written = true;
             return true;
         }
         case OBJ_FUNC:
@@ -165,12 +171,10 @@ RETRY:
         return true;
     case EXPR_UNRESOLVED_ARROW:
     case EXPR_UNRESOLVED_DOT:
+        SIC_TODO();
     case EXPR_UNRESOLVED_IDENT:
-    case EXPR_CT_ALIGNOF:
-    case EXPR_CT_OFFSETOF:
-    case EXPR_CT_SIZEOF:
-    case EXPR_INVALID:
-        SIC_UNREACHABLE();
+        analyze_ident(expr, false);
+        goto RETRY;
     default:
         break;
     }
@@ -417,7 +421,7 @@ static bool analyze_call(ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(ASTExpr* expr)
+static bool analyze_ident(ASTExpr* expr, bool mark_read)
 {
     Object* ident = find_obj(&expr->expr.pre_sema_ident);
     if(ident == NULL) return false;
@@ -434,6 +438,7 @@ static bool analyze_ident(ASTExpr* expr)
         expr->kind = EXPR_IDENT;
         expr->expr.ident = ident;
         expr->const_eval = true;
+        func->used = true;
         return true;
     }
     case OBJ_BITFIELD:
@@ -451,6 +456,8 @@ static bool analyze_ident(ASTExpr* expr)
         expr->type = var->type_loc.type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = &var->header;
+        if(mark_read)
+            var->read = true;
         return true;
     }
     case OBJ_INVALID:

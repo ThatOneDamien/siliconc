@@ -46,15 +46,15 @@
 /// test:   eval_addr
 /// action: compile
 /// result: pass
-int a;
-int* b = &a;
+var a: int;
+const b: *int = &a;
 
 /// test:   int_divide_zero
 /// action: compile
 /// result: fail
-int a = 1 / 0;
+const a: int = 1 / 0;
 
 /// test:   float_divide_zero
 /// action: compile
 /// result: fail
-float a = 1.0f / 0.0f;
+const a: float = 1.0f / 0.0f;

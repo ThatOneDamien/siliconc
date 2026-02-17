@@ -281,11 +281,6 @@ static bool rule_str_to_ptr(const CastParams* const params)
 
 static bool rule_init_list_to_arr(const CastParams* const params)
 {
-    if(params->inner->kind != EXPR_ARRAY_INIT_LIST)
-    {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
-                   type_to_string(params->from), type_to_string(params->to));
-    }
     if(params->toc->kind == TYPE_RUNTIME_ARRAY)
     {
         // NOTE: This can be improved later on if I add some runtime checks. Don't plan on doing that
@@ -297,20 +292,26 @@ static bool rule_init_list_to_arr(const CastParams* const params)
     if(params->fromc->kind == TYPE_STRING_LIT)
     {
         DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
-        if(elem_type->kind != TYPE_CHAR && elem_type->kind != TYPE_UBYTE && elem_type->kind != TYPE_BYTE)
+        const ConstString str = params->inner->expr.constant.str;
+        if(elem_type->kind != str.kind)
         {
-            CAST_ERROR("String literal can only be casted to char[], ubyte[], or byte[].");
+            printf("%d %d\n", elem_type->kind, str.kind);
+            CAST_ERROR("String literal cannot be converted to type %s.", type_to_string(params->to));
         }
-        uint64_t str_len = params->inner->expr.constant.str.len;
-        if(arr_size >= str_len)
+        if(arr_size < str.len)
         {
-            CAST_ERROR("Length of array(%lu) is smaller than length of string literal(%lu).",
-                       arr_size, str_len);
+            CAST_ERROR("Length of array(%lu) is smaller than length of string literal(%u).",
+                       arr_size, str.len);
         }
         return true;
     }
 
-    DBG_ASSERT(params->inner->kind == EXPR_ARRAY_INIT_LIST);
+    if(params->inner->kind != EXPR_ARRAY_INIT_LIST)
+    {
+        CAST_ERROR("Casting from %s to %s is not allowed.",
+                   type_to_string(params->from), type_to_string(params->to));
+    }
+
     ArrInitList* list = &params->inner->expr.array_init;
     for(uint32_t i = 0; i < list->size; ++i)
     {

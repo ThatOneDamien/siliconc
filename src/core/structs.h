@@ -107,9 +107,9 @@ struct Int128
 
 struct ConstString
 {
-    char*        val;
-    uint32_t     len;
-    CharEncoding encoding;
+    char*    val;
+    uint32_t len;
+    TypeKind kind;
 };
 
 struct HashEntry
@@ -162,8 +162,8 @@ struct Token
 
         struct
         {
-            uint32_t     val;
-            CharEncoding encoding;
+            uint32_t val;
+            TypeKind kind;
         } chr;
 
         Symbol sym;
@@ -659,6 +659,7 @@ struct ObjFunc
     ByteSize       swap_stmt_align;
     ByteSize       swap_stmt_size;
     bool           is_extern;
+    bool           used;
 };
 
 struct ObjImport

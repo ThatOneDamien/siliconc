@@ -308,6 +308,7 @@ static inline bool obj_is_type(const Object* obj)
 void print_token(const Token* tok);
 void print_module(const ObjModule* module, bool allow_unresolved);
 void print_func(const ObjFunc* func, bool allow_unresolved);
+void print_global_var(const ObjVar* var, bool allow_unresolved);
 void print_stmt(const ASTStmt* stmt, bool allow_unresolved);
 void print_expr(const ASTExpr* expr, bool allow_unresolved);
 

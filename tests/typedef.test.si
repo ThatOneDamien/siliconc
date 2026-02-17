@@ -2,27 +2,27 @@
 /// action: compile
 /// result: pass
 typedef A1 = B;
-typedef A2 = B*;
+typedef A2 = *B;
 struct B
 {
-    A1* a1;
-    A2  a2;
+    a1: *A1,
+    a2: A2,
 }
 
 typedef C = int;
 struct D
 {
-    C  c1;
-    C* c2;
+    c1: C,
+    c2: *C,
 }
 
 fn main()
 {
-    A1 a1;
-    A2 a2;
-    B  b;
-    C  c;
-    D  d;
+    var a1: A1;
+    var a2: A2;
+    var b: B;
+    var c: C;
+    var d: D;
 }
 
 /// test:   cyclic

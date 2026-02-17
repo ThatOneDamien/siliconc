@@ -1398,8 +1398,6 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
     else
         expr->type = g_type_uint;
 
-    // TODO: Deal with the suffix.
-
     advance(l);
     return expr;
 
@@ -1436,8 +1434,6 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
     else
         expr->type = g_type_int;
 
-    // TODO: Deal with the suffix.
-
     advance(l);
     return expr;
 }
@@ -1447,15 +1443,15 @@ static ASTExpr* parse_char_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_CHAR);
     expr->expr.constant.c = peek(l)->chr.val;
-    switch(peek(l)->chr.encoding)
+    switch(peek(l)->chr.kind)
     {
-    case CHAR_ENCODING_UTF8:
+    case TYPE_CHAR:
         expr->type = g_type_char;
         break;
-    case CHAR_ENCODING_UTF16:
+    case TYPE_CHAR16:
         expr->type = g_type_char16;
         break;
-    case CHAR_ENCODING_UTF32:
+    case TYPE_CHAR32:
         expr->type = g_type_char32;
         break;
     default:
@@ -1515,7 +1511,7 @@ static ASTExpr* parse_string_literal(Lexer* l)
     ASTExpr* expr = new_constant(l, CONSTANT_STRING);
     expr->expr.constant.str.val = peek(l)->str.val;
     expr->expr.constant.str.len = peek(l)->str.len;
-    expr->expr.constant.str.encoding = peek(l)->str.encoding;
+    expr->expr.constant.str.kind = peek(l)->str.kind;
     expr->type = g_type_str_lit;
     advance(l);
     return expr;

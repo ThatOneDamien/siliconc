@@ -58,6 +58,7 @@ struct ScratchBuffer
 #define INT128_MAX  ((Int128){ INT64_MAX, UINT64_MAX })
 #define UINT128_MIN ((Int128){ 0, 0 })
 #define UINT128_MAX ((Int128){ UINT64_MAX, UINT64_MAX })
+char*    i128_to_string(Int128 val, bool is_signed);
 Int128   i128_add(Int128 lhs, Int128 rhs);
 Int128   i128_add64(Int128 lhs, uint64_t rhs);
 Int128   i128_sub(Int128 lhs, Int128 rhs);
@@ -69,8 +70,7 @@ Int128   i128_neg(Int128 lhs);
 Int128   i128_not(Int128 lhs);
 Int128   i128_mult(Int128 lhs, Int128 rhs);
 Int128   i128_mult64(Int128 lhs, uint64_t rhs);
-char     *i128_to_string(Int128 op, uint64_t base, bool is_signed, bool use_prefix);
-bool     i128_is_neg(Int128 op);
+bool     i128_is_neg(Int128 val);
 int      i128_ucmp(Int128 lhs, Int128 rhs);
 int      i128_scmp(Int128 lhs, Int128 rhs);
 int      i128_cmp(Int128 lhs, Int128 rhs, TypeKind kind);
@@ -87,12 +87,12 @@ Int128   i128_urem(Int128 lhs, Int128 rhs);
 Int128   i128_srem(Int128 lhs, Int128 rhs);
 Int128   i128_rem(Int128 lhs, Int128 rhs, TypeKind kind);
 void     i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem);
-double   i128_to_float(Int128 op, TypeKind kind);
-double   i128_to_float_signed(Int128 op);
-double   i128_to_float_unsigned(Int128 op);
-bool     i128_is_zero(Int128 op);
-uint32_t i128_clz(const Int128 *op);
-uint32_t i128_ctz(const Int128 *op);
+double   i128_to_float(Int128 val, TypeKind kind);
+double   i128_to_float_signed(Int128 val);
+double   i128_to_float_unsigned(Int128 val);
+bool     i128_is_zero(Int128 val);
+uint32_t i128_clz(const Int128 *val);
+uint32_t i128_ctz(const Int128 *val);
 Int128   i128_from_s64(int64_t i);
 Int128   i128_from_u64(uint64_t i);
 Int128   i128_from_double(double x, TypeKind kind);
@@ -198,6 +198,7 @@ PRINTF_FMT(1, 2)
 void scratch_appendf(const char* fmt, ...);
 void scratch_append_module_path(const ObjModule* module);
 void scratch_append_obj_link_name(Object* obj);
+void scratch_append_i128(Int128 val, bool is_signed);
 PRINTF_FMT(1, 2)
 char* str_format(const char* fmt, ...);
 char* str_dupn(const char* str, size_t len);

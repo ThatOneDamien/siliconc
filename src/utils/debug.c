@@ -58,11 +58,14 @@ void print_token(const Token* tok)
 void print_module(const ObjModule* module, bool allow_unresolved)
 {
     DBG_ASSERT(module != NULL);
+    scratch_clear();
     scratch_append_module_path(module);
     printf("Module: \'%s\' (%u Funcs, %u Global Vars)\n", 
            scratch_string(), module->funcs.size, module->vars.size);
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         print_func(module->funcs.data[i], allow_unresolved);
+    for(uint32_t i = 0; i < module->vars.size; ++i)
+        print_global_var(module->vars.data[i], allow_unresolved);
 }
 
 void print_type_obj(const Object* obj)
@@ -95,6 +98,14 @@ void print_func(const ObjFunc* func, bool allow_unresolved)
         cur_stmt = cur_stmt->next;
     }
     printf("\n");
+}
+
+void print_global_var(const ObjVar* var, bool allow_unresolved)
+{
+    printf("%s Global Var \'%s\' (Type: %s)\n",
+           s_vis_strs[var->header.visibility],
+           var->header.symbol,
+           debug_type_to_str(var->type_loc.type, allow_unresolved));
 }
 
 void print_stmt(const ASTStmt* stmt, bool allow_unresolved)
