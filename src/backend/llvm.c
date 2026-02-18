@@ -928,6 +928,7 @@ static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValu
         result->value = LLVMBuildUIToFP(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_INT_TO_BOOL:
+    case CAST_FLOAT_TO_BOOL:
         result->value = LLVMBuildIsNotNull(c->builder, inner->value, "");
         return;
     case CAST_PTR_TO_BOOL:
@@ -1386,12 +1387,7 @@ static void store_default(CodegenContext* c, GenValue* ptr)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         SIC_UNREACHABLE();
     }
 }
@@ -1567,12 +1563,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
     SIC_UNREACHABLE();
@@ -1680,12 +1671,7 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
     SIC_UNREACHABLE();

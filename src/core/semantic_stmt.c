@@ -2,6 +2,7 @@
 
 static void analyze_break(ASTStmt* stmt);
 static void analyze_continue(ASTStmt* stmt);
+static void analyze_expr_stmt(ASTStmt* stmt);
 static void analyze_for(ASTStmt* stmt);
 static void analyze_if(ASTStmt* stmt);
 static void analyze_return(ASTStmt* stmt);
@@ -36,7 +37,7 @@ void analyze_stmt(ASTStmt* stmt)
         da_append(&g_sema->locals, stmt->stmt.declaration);
         return;
     case STMT_EXPR_STMT:
-        analyze_expr(stmt->stmt.expr);
+        analyze_expr_stmt(stmt);
         return;
     case STMT_FOR:
         analyze_for(stmt);
@@ -113,6 +114,33 @@ static void analyze_continue(ASTStmt* stmt)
         }
     }
     stmt->stmt.break_cont.target = target;
+}
+
+static void analyze_expr_stmt(ASTStmt* stmt)
+{
+    ASTExpr* expr = stmt->stmt.expr;
+    analyze_expr(expr);
+    switch(expr->kind)
+    {
+    case EXPR_INVALID:
+        return;
+    case EXPR_BINARY:
+        if(expr->expr.binary.kind == BINARY_ASSIGN) return;
+        break;
+    case EXPR_FUNC_CALL: {
+        ASTExpr* func_expr = expr->expr.call.func_expr;
+        if(func_expr->kind != EXPR_IDENT) return;
+        Object* func = func_expr->expr.ident; 
+        if(func->kind != OBJ_FUNC) return;
+        if(get_builtin_attribute(func, ATTR_NODISCARD) == NULL) return;
+        sic_error_at(expr->loc, "Result of function marked @nodiscard should not be discarded.");
+        return;
+    }
+    default:
+        break;
+    }
+
+    sic_diagnostic_at(DIAG_WARNING, expr->loc, "Expression result unused.");
 }
 
 static void analyze_for(ASTStmt* stmt)
@@ -323,7 +351,7 @@ bool analyze_declaration(ObjVar* decl)
                     "For array literals, please declare a type.");
             goto ERR;
         }
-        if(rhs_type->kind == TYPE_STRING_LIT)
+        if(rhs_type->kind == TYPE_STRING_LITERAL)
         {
             DBG_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
             // TODO: Replace this with actual string type. Most likely a char slice.
@@ -340,7 +368,7 @@ bool analyze_declaration(ObjVar* decl)
     TypeKind kind = decl->type_loc.type->kind;
     if(decl->initial_val == NULL)
     {
-        if(kind == TYPE_PS_ARRAY)
+        if(kind == TYPE_UNRESOLVED_ARRAY)
         {
             sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
                                            "inferrible array size(i.e. an array literal) to be initialized.");
@@ -354,7 +382,7 @@ bool analyze_declaration(ObjVar* decl)
     {
         Type* rhs_type = decl->initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
-        if(kind == TYPE_PS_ARRAY) // Inferred Array
+        if(kind == TYPE_UNRESOLVED_ARRAY) // Inferred Array
         {
             if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
@@ -382,8 +410,8 @@ bool analyze_declaration(ObjVar* decl)
                 implicit_cast(&decl->initial_val, decl->type_loc.type);
             }
         }
-        else
-            implicit_cast(&decl->initial_val, decl->type_loc.type);
+        else if(!implicit_cast(&decl->initial_val, decl->type_loc.type))
+            return false;
     }
     if(decl->is_const_binding)
         decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);

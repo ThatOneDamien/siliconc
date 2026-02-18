@@ -16,10 +16,10 @@ static const char* const DIAG_COLOR[] = {
 };
 
 static const char* const DIAG_NAME[] = {
-    [DIAG_NOTE]    = "note",
-    [DIAG_WARNING] = "warning",
-    [DIAG_ERROR]   = "error",
-    [DIAG_FATAL]   = "fatal error",
+    [DIAG_NOTE]    = "Note",
+    [DIAG_WARNING] = "Warning",
+    [DIAG_ERROR]   = "Error",
+    [DIAG_FATAL]   = "Fatal Error",
 };
 
 LineCol loc_get_col_line(const SourceLoc loc)

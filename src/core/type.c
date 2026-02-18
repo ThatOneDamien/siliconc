@@ -61,11 +61,13 @@ BUILTIN_TYPE_DEF(s_uint128, TYPE_UINT128, 16);
 BUILTIN_TYPE_DEF(s_float  , TYPE_FLOAT  , 4);
 BUILTIN_TYPE_DEF(s_double , TYPE_DOUBLE , 8);
 
-TYPE_DEF(s_invalid  , TYPE_INVALID);
-TYPE_DEF(s_void     , TYPE_VOID, .cache = &s_voidptr);
-TYPE_DEF(s_voidptr  , TYPE_POINTER, .pointer_base = &s_void);
-TYPE_DEF(s_init_list, TYPE_INIT_LIST);
-TYPE_DEF(s_str_lit  , TYPE_STRING_LIT);
+TYPE_DEF(s_invalid    , TYPE_INVALID);
+TYPE_DEF(s_void       , TYPE_VOID, .cache = &s_voidptr);
+TYPE_DEF(s_voidptr    , TYPE_POINTER, .pointer_base = &s_void);
+TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
+TYPE_DEF(s_pos_int_lit, TYPE_POS_INT_LITERAL);
+TYPE_DEF(s_neg_int_lit, TYPE_NEG_INT_LITERAL);
+TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);
 ALIAS_TYPE_DEF(s_uptr , s_uptr_obj);
@@ -73,31 +75,34 @@ ALIAS_TYPE_DEF(s_isize, s_isize_obj);
 ALIAS_TYPE_DEF(s_usize, s_usize_obj);
 
 // Builtin-types
-Type* const g_type_invalid   = &s_invalid;
-Type* const g_type_voidptr   = &s_voidptr;
-Type* const g_type_void      = &s_void;
-Type* const g_type_bool      = &s_bool;
-Type* const g_type_char      = &s_char;
-Type* const g_type_char16    = &s_char16;
-Type* const g_type_char32    = &s_char32;
-Type* const g_type_byte      = &s_byte;
-Type* const g_type_ubyte     = &s_ubyte;
-Type* const g_type_short     = &s_short;
-Type* const g_type_ushort    = &s_ushort;
-Type* const g_type_int       = &s_int;
-Type* const g_type_uint      = &s_uint;
-Type* const g_type_long      = &s_long;
-Type* const g_type_ulong     = &s_ulong;
-Type* const g_type_int128    = &s_int128;
-Type* const g_type_uint128   = &s_uint128;
-Type* const g_type_float     = &s_float;
-Type* const g_type_double    = &s_double;
-Type* const g_type_init_list = &s_init_list;
-Type* const g_type_str_lit   = &s_str_lit;
-Type* const g_type_iptr      = &s_iptr;
-Type* const g_type_uptr      = &s_uptr;
-Type* const g_type_isize     = &s_isize;
-Type* const g_type_usize     = &s_usize;
+Type* const g_type_invalid     = &s_invalid;
+Type* const g_type_voidptr     = &s_voidptr;
+Type* const g_type_void        = &s_void;
+Type* const g_type_bool        = &s_bool;
+Type* const g_type_char        = &s_char;
+Type* const g_type_char16      = &s_char16;
+Type* const g_type_char32      = &s_char32;
+Type* const g_type_byte        = &s_byte;
+Type* const g_type_ubyte       = &s_ubyte;
+Type* const g_type_short       = &s_short;
+Type* const g_type_ushort      = &s_ushort;
+Type* const g_type_int         = &s_int;
+Type* const g_type_uint        = &s_uint;
+Type* const g_type_long        = &s_long;
+Type* const g_type_ulong       = &s_ulong;
+Type* const g_type_int128      = &s_int128;
+Type* const g_type_uint128     = &s_uint128;
+Type* const g_type_float       = &s_float;
+Type* const g_type_double      = &s_double;
+Type* const g_type_iptr        = &s_iptr;
+Type* const g_type_uptr        = &s_uptr;
+Type* const g_type_isize       = &s_isize;
+Type* const g_type_usize       = &s_usize;
+
+Type* const g_type_init_list   = &s_init_list;
+Type* const g_type_pos_int_lit = &s_pos_int_lit;
+Type* const g_type_neg_int_lit = &s_neg_int_lit;
+Type* const g_type_str_lit     = &s_str_lit;
 
 static Type* const builtin_type_lookup[TOKEN_TYPENAME_END - TOKEN_TYPENAME_START + 1] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
@@ -200,7 +205,7 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
     DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_PS_ARRAY;
+    new_type->kind = TYPE_UNRESOLVED_ARRAY;
     new_type->qualifiers = elem_ty->qualifiers;
     new_type->array.elem_type = elem_ty;
     new_type->array.size_expr = size_expr;
@@ -217,6 +222,9 @@ Type* type_reduce(Type* t)
         {
         case TYPE_ALIAS_DISTINCT:
             t = t->typedef_->alias.type;
+            continue;
+        case TYPE_ENUM_DISTINCT:
+            t = t->enum_->underlying.type;
             continue;
         default:
             return t;
@@ -260,9 +268,7 @@ bool type_equal(const Type* t1, const Type* t2)
         return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_RUNTIME_ARRAY:
-    case TYPE_INIT_LIST:
-    case TYPE_STRING_LIT:
-        return false;
+        SIC_TODO();
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
         return t1->typedef_ == t2->typedef_;
@@ -273,10 +279,7 @@ bool type_equal(const Type* t1, const Type* t2)
     case TYPE_UNION:
         return t1->struct_ == t2->struct_;
     case TYPE_INVALID:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
     SIC_UNREACHABLE();
@@ -313,12 +316,7 @@ ByteSize type_size(const Type* ty)
     case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
     SIC_UNREACHABLE();
@@ -354,12 +352,7 @@ ByteSize type_alignment(const Type* ty)
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
 
@@ -430,17 +423,8 @@ const char* type_to_string(const Type* type)
         res = s ? s : "anonymous union";
         break;
     }
-    case TYPE_PS_ARRAY:
-    case TYPE_INIT_LIST:
-        res = "initializer list";
-        break;
-    case TYPE_STRING_LIT:
-        res = "string";
-        break;
     case TYPE_INVALID:
-    case TYPE_PS_USER:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         SIC_UNREACHABLE();
     }
     if(type->qualifiers & TYPE_QUAL_CONST)

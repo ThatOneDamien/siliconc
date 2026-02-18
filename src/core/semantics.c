@@ -315,6 +315,7 @@ bool analyze_global_var(ObjVar* var)
 
     if(var->initial_val != NULL && !var->initial_val->const_eval)
     {
+        // printf("HERE %p %d %d %p\n", var, var->initial_val->loc.file, var->initial_val->kind, var->initial_val);
         sic_error_at(var->initial_val->loc, "Global variable must be initialized with a compile-time evaluable value.");
         var->header.kind = OBJ_INVALID;
         var->header.status = STATUS_RESOLVED;
@@ -403,34 +404,35 @@ static void analyze_function_body(ObjFunc* func)
     }
 
 
-    ASTStmt* body = func->body;
-    g_sema->cur_func = func;
-    if(body != NULL && !analyze_stmt_block(body->stmt.block.body) && 
-       func->signature.ret_type.type->kind != TYPE_VOID)
-    {
-        sic_error_at(func->header.loc, "Function does not return from all control paths.");
-    }
-
     if(!func->is_extern)
     {
+        g_sema->cur_func = func;
+        if(!analyze_stmt_block(func->body->stmt.block.body) && 
+           func->signature.ret_type.type->kind != TYPE_VOID)
+        {
+            sic_error_at(func->header.loc, "Function does not return from all control paths.");
+        }
+
         for(uint32_t i = 0; i < g_sema->locals.size; ++i)
         {
             ObjVar* var = g_sema->locals.data[i];
+            // Skip underscore and names that start with underscore.
+            if(var->header.symbol == NULL || var->header.symbol[0] == '_') continue;
             if(!var->read)
             {
-                // TODO: Allow variables to be prefixed with _ in order to mean they are unused.
                 if(var->written)
-                    sic_error_at(var->header.loc, "Variable is written to, but its value is never read.");
+                    sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is written to, but its value is never read.");
                 else
-                    sic_error_at(var->header.loc, "Variable is unused.");
+                    sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is unused.");
             }
             else if(!var->is_const_binding && !var->written)
             {
                 sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
             }
         }
+        g_sema->cur_func = NULL;
     }
-    g_sema->cur_func = NULL;
+
     g_sema->locals.size = 0; // Clear locals
     pop_scope(scope);
 }

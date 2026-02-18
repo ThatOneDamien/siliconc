@@ -177,7 +177,7 @@ bool implicit_cast_vararg(ASTExpr** arg)
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, "Cannot pass initializer list as a variadic argument.");
         return false;
-    case TYPE_STRING_LIT:
+    case TYPE_STRING_LITERAL:
         implicit_cast_ensured(arg, type_pointer_to(g_type_char));
         return true;
     default:
@@ -266,7 +266,7 @@ static bool rule_str_to_ptr(const CastParams* const params)
 {
     TypeKind kind = params->toc->pointer_base->canonical->kind;
 
-    if(params->fromc->kind != TYPE_STRING_LIT)
+    if(params->fromc->kind != TYPE_STRING_LITERAL)
     {
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
@@ -289,7 +289,7 @@ static bool rule_init_list_to_arr(const CastParams* const params)
     }
     uint64_t arr_size = params->toc->array.static_len; 
     Type* elem_type = params->toc->array.elem_type->canonical;
-    if(params->fromc->kind == TYPE_STRING_LIT)
+    if(params->fromc->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
         const ConstString str = params->inner->expr.constant.str;
@@ -428,6 +428,8 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
         cast->expr.cast.kind = CAST_REINTERPRET;
         return;
     }
+
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = type_is_signed(from) ? 
                             CAST_SINT_EXT_TRUNC : 
                             CAST_UINT_EXT_TRUNC;
@@ -441,6 +443,7 @@ static void cast_bool_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, U
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = CAST_UINT_EXT_TRUNC;
 }
 
@@ -453,6 +456,7 @@ static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = CAST_INT_TO_BOOL;
 }
 
@@ -464,6 +468,7 @@ static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner, Type* from, UNUSED 
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = type_is_signed(from) ? 
                             CAST_SINT_TO_FLOAT : 
                             CAST_UINT_TO_FLOAT;
@@ -478,6 +483,7 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = CAST_INT_TO_PTR;
 }
 
@@ -490,6 +496,7 @@ static void cast_float_to_float(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = CAST_FLOAT_EXT_TRUNC;
 }
 
@@ -502,7 +509,8 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    SIC_TODO();
+    cast->const_eval = inner->const_eval;
+    cast->expr.cast.kind = CAST_FLOAT_TO_BOOL;
 }
 
 static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, Type* to)
@@ -513,6 +521,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, 
         return;
     }
 
+    cast->const_eval = inner->const_eval;
     cast->expr.cast.kind = type_is_signed(to) ? 
                             CAST_FLOAT_TO_SINT : 
                             CAST_FLOAT_TO_UINT;
@@ -636,7 +645,7 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_STRUCT]         = CAST_GROUP_STRUCT + 1,
     [TYPE_UNION]          = CAST_GROUP_STRUCT + 1,
     [TYPE_INIT_LIST]      = CAST_GROUP_INIT_LIST + 1,
-    [TYPE_STRING_LIT]     = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_STRING_LITERAL] = CAST_GROUP_INIT_LIST + 1,
 };
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)

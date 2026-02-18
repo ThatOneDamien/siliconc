@@ -9,8 +9,8 @@ enum Something
     C,
     D
 }
-extern fn printf(str: *const char, ...);
-fn main() -> int
+extern fn printf(str: *const char, ...) void;
+fn main() int
 {
     printf("%d %d\n", Something.A, Something.B);
     return 0;

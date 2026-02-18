@@ -77,6 +77,7 @@ typedef enum : uint8_t
     CAST_SINT_TO_FLOAT,
     CAST_UINT_TO_FLOAT,
     CAST_INT_TO_BOOL,
+    CAST_FLOAT_TO_BOOL,
     CAST_PTR_TO_BOOL,
     CAST_PTR_TO_INT,
     CAST_INT_TO_PTR,
@@ -457,10 +458,12 @@ typedef enum : uint8_t
 
     // Pre-semantic types. After analyzing the type these should never appear
     TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
-    TYPE_PS_ARRAY,
-    TYPE_PS_USER,
-    TYPE_STRING_LIT,
+    TYPE_POS_INT_LITERAL,
+    TYPE_NEG_INT_LITERAL,
+    TYPE_STRING_LITERAL,
     TYPE_TYPEOF,
+    TYPE_UNRESOLVED_ARRAY,
+    TYPE_UNRESOLVED_USER,
     __TYPE_COUNT,
 } TypeKind;
 
@@ -520,6 +523,16 @@ typedef enum : uint8_t
             case INT_TYPES:   \
             case FLOAT_TYPES
                 
+#define SEMA_ONLY_TYPES                 \
+            TYPE_INIT_LIST:             \
+            case TYPE_POS_INT_LITERAL:  \
+            case TYPE_NEG_INT_LITERAL:  \
+            case TYPE_STRING_LITERAL:   \
+            case TYPE_TYPEOF:           \
+            case TYPE_UNRESOLVED_ARRAY: \
+            case TYPE_UNRESOLVED_USER:  \
+            case __TYPE_COUNT
+
 #define SEMA_ONLY_EXPRS                 \
             EXPR_INVALID:               \
             case EXPR_TYPE_IDENT:       \

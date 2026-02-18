@@ -16,7 +16,7 @@ struct D
     c2: *C,
 }
 
-fn main()
+fn main() void
 {
     var a1: A1;
     var a2: A2;

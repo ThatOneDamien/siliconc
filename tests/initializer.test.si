@@ -1,7 +1,7 @@
 /// test:   array_list 
 /// action: run
 /// result: pass
-fn main() -> int
+fn main() int
 {
     const a: [4]int = [0, 1, 2, 3];
     var i: usize = 0;
@@ -17,7 +17,7 @@ fn main() -> int
 /// test:   inferred_array
 /// action: run
 /// result: pass
-fn main() -> int
+fn main() int
 {
     const a: [*]int = [0, 1, 2, 3, 4, 5];
     var i: usize = 0;
@@ -44,7 +44,7 @@ struct Test
     d: bool
 }
 
-fn main() -> int
+fn main() int
 {
     const t: Test = {
         a: 1,

@@ -45,7 +45,7 @@ static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref);
 static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
 
-static bool arith_type_conv(ASTExpr* parent, ASTExpr** e1, ASTExpr** e2);
+static bool arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc);
 static void promote_int_type(ASTExpr** expr);
 static void expr_overwrite(ASTExpr* original, const ASTExpr* new);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
@@ -190,7 +190,7 @@ static bool analyze_array_access(ASTExpr* expr)
     valid &= analyze_expr(arr_expr);
     valid &= analyze_expr(expr->expr.array_access.index_expr);
     if(!valid) return false;
-    Type* arr_t = arr_expr->type->canonical;
+    Type* arr_t = type_reduce(arr_expr->type);
 
     if(arr_t->kind == TYPE_INIT_LIST)
     {
@@ -508,7 +508,7 @@ static bool analyze_ternary(ASTExpr* expr)
     if(!valid) return false;
 
     if(!type_equal(tern->then_expr->type, tern->else_expr->type) &&
-       !arith_type_conv(expr, &tern->then_expr, &tern->else_expr))
+       !arith_type_conv(&tern->then_expr, &tern->else_expr, expr->loc))
         return false;
 
     expr->type = tern->else_expr->type;
@@ -581,13 +581,15 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
-    case TYPE_STRING_LIT:
+    case TYPE_POS_INT_LITERAL:
+    case TYPE_NEG_INT_LITERAL:
+    case TYPE_STRING_LITERAL:
         break;
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
+    case TYPE_UNRESOLVED_ARRAY:
+    case TYPE_UNRESOLVED_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();
@@ -718,7 +720,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return true;
     }
 
-    if(!arith_type_conv(expr, lhs, rhs))
+    if(!arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     left = *lhs;
@@ -760,7 +762,7 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return true;
     }
 
-    if(!arith_type_conv(expr, lhs, rhs))
+    if(!arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     left = *lhs;
@@ -787,7 +789,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     valid &= analyze_expr(*lhs);
     valid &= analyze_expr(*rhs);
     if(!valid) return false;
-    if(!arith_type_conv(expr, lhs, rhs))
+    if(!arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     ASTExpr* left = *lhs;
@@ -814,7 +816,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     valid &= analyze_expr(*lhs);
     valid &= analyze_expr(*rhs);
     if(!valid) return false;
-    if(!arith_type_conv(expr, lhs, rhs))
+    if(!arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     ASTExpr* left = *lhs;
@@ -866,7 +868,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return false;
     }
 
-    DBG_ASSERT(arith_type_conv(expr, lhs, rhs));
+    DBG_ASSERT(arith_type_conv(lhs, rhs, expr->loc));
 
     left = *lhs;
     right = *rhs;
@@ -928,7 +930,7 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     Type* lhs_ctype = lhs_type->canonical;
     Type* rhs_ctype = rhs_type->canonical;
     expr->type = g_type_bool;
-    if(lhs_ctype->kind == TYPE_STRING_LIT || rhs_ctype->kind == TYPE_STRING_LIT)
+    if(lhs_ctype->kind == TYPE_STRING_LITERAL || rhs_ctype->kind == TYPE_STRING_LITERAL)
     {
         // TODO: Remove this. It is temporarily here because the string type is not
         // fleshed out. There are two options: allow comparisons between strings
@@ -944,7 +946,7 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     {
     }
 
-    return arith_type_conv(expr, lhs, rhs);
+    return arith_type_conv(lhs, rhs, expr->loc);
 }
 
 static bool analyze_eq_ne(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
@@ -1111,7 +1113,7 @@ static bool analyze_bit_op(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return false;
     }
 
-    if(!arith_type_conv(expr, lhs, rhs)) return false;
+    if(!arith_type_conv(lhs, rhs, expr->loc)) return false;
     expr->type = (*lhs)->type;
     return true;
 
@@ -1344,18 +1346,23 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
 }
 
 
-static bool arith_type_conv(ASTExpr* parent, ASTExpr** expr1, ASTExpr** expr2)
+static bool arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc)
 {
     Type* t1  = (*expr1)->type->canonical;
     Type* t2  = (*expr2)->type->canonical;
+    if(type_is_distinct(t1) && type_is_distinct(t2) && type_equal(t1, t2))
+    {
+        t1 = type_reduce(t1);
+        t2 = type_reduce(t2);
+    }
+
     if(!type_is_numeric(t1) || !type_is_numeric(t2))
     {
-        sic_error_at(parent->loc, "Invalid operand types %s and %s.",
+        sic_error_at(loc, "Invalid operand types %s and %s.",
                      type_to_string((*expr1)->type), type_to_string((*expr2)->type));
         return false;
     }
 
-    // TODO: CHANGE THIS, IT IS TERRIBLE
     int w1 = type_is_float(t1) * 100 + t1->builtin.byte_size + (type_is_integer(t1) && type_is_unsigned(t1));
     int w2 = type_is_float(t2) * 100 + t2->builtin.byte_size + (type_is_integer(t1) && type_is_unsigned(t2));
 
@@ -1428,12 +1435,7 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-    case TYPE_INIT_LIST:
-    case TYPE_PS_ARRAY:
-    case TYPE_PS_USER:
-    case TYPE_STRING_LIT:
-    case TYPE_TYPEOF:
-    case __TYPE_COUNT:
+    case SEMA_ONLY_TYPES:
         break;
     }
     SIC_UNREACHABLE();

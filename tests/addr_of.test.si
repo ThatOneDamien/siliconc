@@ -1,7 +1,7 @@
 /// test:   basic
 /// action: compile
 /// result: pass
-fn main()
+fn main() void
 {
     var a: int = 0;
     const b: *int = &a;
@@ -10,7 +10,7 @@ fn main()
 /// test:   rvalue
 /// action: compile
 /// result: fail
-fn main()
+fn main() void
 {
     const a: int* = &(0);
 }

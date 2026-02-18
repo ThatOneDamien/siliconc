@@ -66,10 +66,10 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
         if(type->status == STATUS_RESOLVED) return true;
         if(!analyze_union(type->struct_, type_ref)) break;
         return true;
-    case TYPE_PS_ARRAY:
+    case TYPE_UNRESOLVED_ARRAY:
         if(!resolve_array(type, flags, err_loc, err_str)) break;
         return true;
-    case TYPE_PS_USER:
+    case TYPE_UNRESOLVED_USER:
         DBG_ASSERT(type->status != STATUS_RESOLVED);
         if(!resolve_user(type_ref, flags, err_loc, err_str)) break;
         return true;
@@ -78,7 +78,9 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
         if(!resolve_typeof(type_ref, flags, err_loc, err_str)) break;
         return true;
     case TYPE_INIT_LIST:
-    case TYPE_STRING_LIT:
+    case TYPE_POS_INT_LITERAL:
+    case TYPE_NEG_INT_LITERAL:
+    case TYPE_STRING_LITERAL:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();
     }
@@ -163,7 +165,7 @@ static bool resolve_typeof(Type** type_ref, ResolutionFlags flags, SourceLoc err
         sic_error_at(inner->loc, "Cannot get type of array/struct initializer list.");
         return false;
     }
-    if(inner_ty->kind == TYPE_STRING_LIT)
+    if(inner_ty->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(inner->expr.constant.kind == CONSTANT_STRING);
         *type_ref = type_pointer_to(g_type_char);

@@ -434,13 +434,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
     }
     
     da_compact(&sig->params);
-
-    if(!try_consume(l, TOKEN_ARROW))
-        sig->ret_type.type = g_type_void;
-    else if(!parse_type(l, &sig->ret_type))
-        return false;
-
-    return true;
+    return parse_type(l, &sig->ret_type);
 }
 
 static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
@@ -694,7 +688,7 @@ RETRY:
         break;
     case TOKEN_IDENT:
         ty = CALLOC_STRUCT(Type);
-        ty->kind = TYPE_PS_USER;
+        ty->kind = TYPE_UNRESOLVED_USER;
         if(!parse_module_path(l, &ty->unresolved))
             return false;
         break;
@@ -1332,28 +1326,15 @@ static ASTExpr* parse_paren_expr(Lexer* l)
 
 static ASTExpr* parse_negation(Lexer* l)
 {
-    SourceLoc loc = peek(l)->loc;
-    TokenKind kind = peek(l)->kind;
+    if(peek_next(l)->kind == TOKEN_DEC_INT_LITERAL)
+        return parse_decimal_literal(l);
+
+    ASTExpr* expr = new_expr(EXPR_UNARY);
+    expr->loc = peek(l)->loc;
+    expr->expr.unary.kind = UNARY_NEG;
     advance(l);
     ASTExpr* inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
     if(expr_is_bad(inner)) return BAD_EXPR;
-    if(inner->kind == EXPR_CONSTANT)
-    {
-        if(inner->expr.constant.kind == CONSTANT_INTEGER)
-        {
-            inner->expr.constant.i = i128_neg(inner->expr.constant.i);
-            return inner;
-        }
-        if(inner->expr.constant.kind == CONSTANT_FLOAT)
-        {
-            inner->expr.constant.f = -inner->expr.constant.f;
-            return inner;
-        }
-    }
-    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
-    expr->loc = loc;
-    expr->kind = EXPR_UNARY;
-    expr->expr.unary.kind = tok_to_unary_op(kind);
     expr->expr.unary.inner = inner;
     return expr;
 }
@@ -1410,10 +1391,24 @@ static ASTExpr* parse_hexadecimal_literal(Lexer* l) { return parse_pow_2_int_lit
 static ASTExpr* parse_decimal_literal(Lexer* l)
 {
     ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
+    bool is_neg;
+    if(tok_equal(l, TOKEN_SUB))
+    {
+        is_neg = true;
+        advance(l);
+        expr->loc = extend_loc(expr->loc, peek(l)->loc);
+        expr->type = g_type_neg_int_lit;
+    }
+    else
+    {
+        is_neg = false;
+        expr->type = g_type_pos_int_lit;
+    }
+
 
     const char* src = peek(l)->start;
     Int128 val = (Int128){ 0, 0 };
-    for(uint32_t i = 0; i < expr->loc.len; ++i)
+    for(uint32_t i = 0; i < peek(l)->loc.len; ++i)
     {
         if(src[i] == '_')
             continue;
@@ -1421,18 +1416,23 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
         uint64_t prev = val.hi;
         val = i128_add64(i128_mult64(val, 10), digit);
         if(val.hi < prev)
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum supported integer literal value.");
+        {
+            printf("here\n");
+            if(is_neg)
+                sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
+            else
+                sic_error_at(expr->loc, "Integer value exceeds maximum supported integer value.");
+            return BAD_EXPR;
+        }
+    }
+
+    if(is_neg && i128_ucmp(val, INT128_MIN) > 0)
+    {
+        sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
+        return BAD_EXPR;
     }
 
     expr->expr.constant.i = val;
-    if(val.hi > INT64_MAX)
-        expr->type = g_type_uint128;
-    else if(val.hi != 0 || val.lo > INT64_MAX)
-        expr->type = g_type_int128;
-    else if(val.lo > INT32_MAX)
-        expr->type = g_type_long;
-    else
-        expr->type = g_type_int;
 
     advance(l);
     return expr;

@@ -24,13 +24,15 @@ extern Type* const g_type_long;
 extern Type* const g_type_ulong;
 extern Type* const g_type_int128;
 extern Type* const g_type_uint128;
+extern Type* const g_type_float;
+extern Type* const g_type_double;
 extern Type* const g_type_iptr;
 extern Type* const g_type_uptr;
 extern Type* const g_type_isize;
 extern Type* const g_type_usize;
-extern Type* const g_type_float;
-extern Type* const g_type_double;
 extern Type* const g_type_init_list;
+extern Type* const g_type_pos_int_lit;
+extern Type* const g_type_neg_int_lit;
 extern Type* const g_type_str_lit;
 extern Type* const g_type_auto;
 
@@ -123,11 +125,65 @@ bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
 const char* type_to_string(const Type* type);
+
 static inline bool type_kind_is_integer(TypeKind kind)
 {
     return kind >= TYPE_INTEGER_START && kind <= TYPE_INTEGER_END;
 }
+
+static inline bool type_kind_is_signed(TypeKind kind)
+{
+    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
+    DBG_ASSERT(type_kind_is_integer(kind));
+    return (kind & 1) == 0;
+}
+
+static inline bool type_kind_is_unsigned(TypeKind kind)
+{
+    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
+    DBG_ASSERT(type_kind_is_integer(kind));
+    return (kind & 1) == 1;
+}
+
+static inline bool type_kind_is_char(TypeKind kind)
+{
+    return kind >= TYPE_CHAR_START && kind <= TYPE_CHAR_END;
+}
+
+static inline bool type_kind_is_float(TypeKind kind)
+{
+    return kind >= TYPE_FLOAT_START && kind <= TYPE_FLOAT_END;
+}
+
+static inline bool type_kind_is_numeric(TypeKind kind)
+{
+    return (kind >= TYPE_NUMERIC_START && kind <= TYPE_NUMERIC_END);
+}
+
+static inline bool type_kind_is_array(TypeKind kind)
+{
+    return kind == TYPE_STATIC_ARRAY || kind == TYPE_RUNTIME_ARRAY;
+}
+
+static inline bool type_kind_is_distinct(TypeKind kind)
+{
+    return kind == TYPE_ENUM_DISTINCT || kind == TYPE_ALIAS_DISTINCT;
+}
+
 static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->kind); }
+static inline bool type_is_signed(const Type* ty) { return type_kind_is_signed(ty->kind); }
+static inline bool type_is_unsigned(const Type* ty) { return type_kind_is_unsigned(ty->kind); }
+static inline bool type_is_char(const Type* ty) { return type_kind_is_char(ty->kind); }
+static inline bool type_is_float(const Type* ty) { return type_kind_is_float(ty->kind); }
+static inline bool type_is_numeric(const Type* ty) { return type_kind_is_numeric(ty->kind); }
+static inline bool type_is_array(const Type* ty) { return type_kind_is_array(ty->kind); }
+static inline bool type_is_distinct(const Type* ty) { return type_kind_is_distinct(ty->kind); }
+static inline bool type_is_trivially_copyable(const Type* ty)
+{
+    return !type_is_array(ty) && type_size(ty) <= 16;
+}
+
+
 
 static inline Type* type_to_unsigned(Type* ty)
 {
@@ -173,60 +229,19 @@ static inline Type* type_to_signed(Type* ty)
     }
 }
 
-static inline bool type_kind_is_signed(TypeKind kind)
-{
-    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
-    DBG_ASSERT(type_kind_is_integer(kind));
-    return (kind & 1) == 0;
-}
-static inline bool type_is_signed(Type* ty) { return type_kind_is_signed(ty->kind); }
-
-static inline bool type_kind_is_unsigned(TypeKind kind)
-{
-    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
-    DBG_ASSERT(type_kind_is_integer(kind));
-    return (kind & 1) == 1;
-}
-static inline bool type_is_unsigned(Type* ty) { return type_kind_is_unsigned(ty->kind); }
-
-static inline bool type_is_char(Type* ty)
-{
-    return ty->kind >= TYPE_CHAR_START && ty->kind <= TYPE_CHAR_END;
-}
-
-static inline bool type_is_float(Type* ty)
-{
-    return ty->kind >= TYPE_FLOAT_START && ty->kind <= TYPE_FLOAT_END;
-}
-
-static inline bool type_is_numeric(Type* ty)
-{
-    return (ty->kind >= TYPE_NUMERIC_START && ty->kind <= TYPE_NUMERIC_END) ||
-           ty->kind == TYPE_ENUM;
-}
-
-static inline bool type_is_array(const Type* ty)
-{
-    return ty->kind == TYPE_STATIC_ARRAY || ty->kind == TYPE_RUNTIME_ARRAY;
-}
-
-static inline bool type_is_trivially_copyable(const Type* ty)
-{
-    return !type_is_array(ty) && type_size(ty) <= 16;
-}
 
 // Bad value checkers
-static inline bool expr_is_bad(ASTExpr* expr)
+static inline bool expr_is_bad(const ASTExpr* expr)
 {
     return expr->kind == EXPR_INVALID;
 }
 
-static inline bool stmt_is_bad(ASTStmt* stmt)
+static inline bool stmt_is_bad(const ASTStmt* stmt)
 {
     return stmt->kind == STMT_INVALID;
 }
 
-static inline bool type_is_bad(Type* type)
+static inline bool type_is_bad(const Type* type)
 {
     return type->kind == TYPE_INVALID;
 }

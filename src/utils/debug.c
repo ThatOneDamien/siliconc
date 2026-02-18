@@ -102,10 +102,19 @@ void print_func(const ObjFunc* func, bool allow_unresolved)
 
 void print_global_var(const ObjVar* var, bool allow_unresolved)
 {
-    printf("%s Global Var \'%s\' (Type: %s)\n",
+    printf("%s Global Var \'%s\' (Type: %s) %p\n",
            s_vis_strs[var->header.visibility],
            var->header.symbol,
-           debug_type_to_str(var->type_loc.type, allow_unresolved));
+           debug_type_to_str(var->type_loc.type, allow_unresolved),
+           var);
+
+    if(var->initial_val != NULL)
+        print_expr_at_depth(var->initial_val, 1, NULL, allow_unresolved);
+    else
+    {
+        PRINT_DEPTH(1);
+        printf("( Defualt initialized )\n");
+    }
 }
 
 void print_stmt(const ASTStmt* stmt, bool allow_unresolved)
@@ -355,12 +364,21 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
     case TYPE_TYPEOF:
         type_string = "<typeof(...)>";
         break;
-    case TYPE_PS_ARRAY:
+    case TYPE_UNRESOLVED_ARRAY:
         type_string = type->status == STATUS_RESOLVED ? 
                             type_to_string(type) : 
                             str_format("%s[?]", type_to_string(type->array.elem_type));
         break;
-    case TYPE_PS_USER:
+    case TYPE_UNRESOLVED_USER:
+        scratch_clear();
+        scratch_append(type->unresolved.data[0].sym);
+        for(uint32_t i = 1; i < type->unresolved.size; ++i)
+        {
+            scratch_append("::");
+            scratch_append(type->unresolved.data[i].sym);
+        }
+        type_string = scratch_string();
+        break;
     default:
         // Hack to get past assert. I dont want to remove the check from type_to_string
         type->status = STATUS_RESOLVED;
