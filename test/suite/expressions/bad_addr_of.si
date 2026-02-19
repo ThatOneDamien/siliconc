@@ -1,0 +1,5 @@
+
+fn test1() void
+{
+    const a: int* = &(0); // #error: some
+}

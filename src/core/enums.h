@@ -458,8 +458,6 @@ typedef enum : uint8_t
 
     // Pre-semantic types. After analyzing the type these should never appear
     TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
-    TYPE_POS_INT_LITERAL,
-    TYPE_NEG_INT_LITERAL,
     TYPE_STRING_LITERAL,
     TYPE_TYPEOF,
     TYPE_UNRESOLVED_ARRAY,
@@ -525,8 +523,6 @@ typedef enum : uint8_t
                 
 #define SEMA_ONLY_TYPES                 \
             TYPE_INIT_LIST:             \
-            case TYPE_POS_INT_LITERAL:  \
-            case TYPE_NEG_INT_LITERAL:  \
             case TYPE_STRING_LITERAL:   \
             case TYPE_TYPEOF:           \
             case TYPE_UNRESOLVED_ARRAY: \

@@ -581,8 +581,6 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
-    case TYPE_POS_INT_LITERAL:
-    case TYPE_NEG_INT_LITERAL:
     case TYPE_STRING_LITERAL:
         break;
     case TYPE_INVALID:

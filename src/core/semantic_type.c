@@ -78,8 +78,6 @@ bool resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, con
         if(!resolve_typeof(type_ref, flags, err_loc, err_str)) break;
         return true;
     case TYPE_INIT_LIST:
-    case TYPE_POS_INT_LITERAL:
-    case TYPE_NEG_INT_LITERAL:
     case TYPE_STRING_LITERAL:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();

@@ -60,13 +60,13 @@ BUILTIN_TYPE_DEF(s_int128 , TYPE_INT128 , 16);
 BUILTIN_TYPE_DEF(s_uint128, TYPE_UINT128, 16);
 BUILTIN_TYPE_DEF(s_float  , TYPE_FLOAT  , 4);
 BUILTIN_TYPE_DEF(s_double , TYPE_DOUBLE , 8);
+BUILTIN_TYPE_DEF(s_pos_int_lit, TYPE_UINT128, 16);
+BUILTIN_TYPE_DEF(s_neg_int_lit, TYPE_INT128, 16);
 
 TYPE_DEF(s_invalid    , TYPE_INVALID);
 TYPE_DEF(s_void       , TYPE_VOID, .cache = &s_voidptr);
 TYPE_DEF(s_voidptr    , TYPE_POINTER, .pointer_base = &s_void);
 TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
-TYPE_DEF(s_pos_int_lit, TYPE_POS_INT_LITERAL);
-TYPE_DEF(s_neg_int_lit, TYPE_NEG_INT_LITERAL);
 TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);

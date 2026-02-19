@@ -1372,12 +1372,7 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
     }
 
     expr->expr.constant.i = val;
-    if(val.hi != 0)
-        expr->type = g_type_uint128;
-    else if(val.lo > UINT32_MAX)
-        expr->type = g_type_ulong;
-    else
-        expr->type = g_type_uint;
+    expr->type = g_type_pos_int_lit;
 
     advance(l);
     return expr;
@@ -1417,7 +1412,6 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
         val = i128_add64(i128_mult64(val, 10), digit);
         if(val.hi < prev)
         {
-            printf("here\n");
             if(is_neg)
                 sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
             else

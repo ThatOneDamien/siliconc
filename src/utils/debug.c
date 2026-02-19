@@ -45,7 +45,7 @@ void print_token(const Token* tok)
         repr = tok_kind_to_str(tok->kind);
         break;
     }
-    // FIXME: Fix this 
+
     printf("(%3d) %-15s: Line: %-6u Col: %-4u Len: %-4u \n", 
            tok->kind,
            repr,

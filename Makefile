@@ -13,16 +13,13 @@ HEADERS := $(shell find $(SRC_DIR) -name "*.h")
 DEBUG_OBJS := $(patsubst $(SRC_DIR)/%.c, $(INT_DIR)/debug/%.o, $(SRCS))
 RELEASE_OBJS := $(patsubst $(SRC_DIR)/%.c, $(INT_DIR)/release/%.o, $(SRCS))
 
-.PHONY: debug release all test clean 
+.PHONY: debug release all clean 
 
 debug: $(BUILD_DIR)/sicdb
 
 release: $(BUILD_DIR)/sic
 
 all: debug release
-
-test: debug
-	python3 scripts/run_tests.py
 
 clean:
 	rm -rf $(BUILD_DIR)

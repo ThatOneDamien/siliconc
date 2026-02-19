@@ -198,6 +198,8 @@ static bool rule_explicit_only(const CastParams* const params)
 
 static bool rule_size_change(const CastParams* const params)
 {
+    // FIXME: Change this to be more specific for int to int, float to float,
+    //        and char to char.
     if(params->explicit)
         return true;
 
@@ -619,33 +621,33 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
-    [TYPE_VOID]           = CAST_GROUP_VOID + 1,
-    [TYPE_BOOL]           = CAST_GROUP_BOOL + 1,
-    [TYPE_CHAR]           = CAST_GROUP_CHAR + 1,
-    [TYPE_CHAR16]         = CAST_GROUP_CHAR + 1,
-    [TYPE_CHAR32]         = CAST_GROUP_CHAR + 1,
-    [TYPE_BYTE]           = CAST_GROUP_INT + 1,
-    [TYPE_UBYTE]          = CAST_GROUP_INT + 1,
-    [TYPE_SHORT]          = CAST_GROUP_INT + 1,
-    [TYPE_USHORT]         = CAST_GROUP_INT + 1,
-    [TYPE_INT]            = CAST_GROUP_INT + 1,
-    [TYPE_UINT]           = CAST_GROUP_INT + 1,
-    [TYPE_LONG]           = CAST_GROUP_INT + 1,
-    [TYPE_ULONG]          = CAST_GROUP_INT + 1,
-    [TYPE_INT128]         = CAST_GROUP_INT + 1,
-    [TYPE_UINT128]        = CAST_GROUP_INT + 1,
-    [TYPE_FLOAT]          = CAST_GROUP_FLOAT + 1,
-    [TYPE_DOUBLE]         = CAST_GROUP_FLOAT + 1,
-    [TYPE_POINTER]        = CAST_GROUP_PTR + 1,
-    [TYPE_FUNC_PTR]       = CAST_GROUP_PTR + 1,
-    [TYPE_STATIC_ARRAY]   = CAST_GROUP_ARRAY + 1,
-    [TYPE_RUNTIME_ARRAY]  = CAST_GROUP_ARRAY + 1,
-    [TYPE_ALIAS_DISTINCT] = CAST_GROUP_DISTINCT + 1,
-    [TYPE_ENUM_DISTINCT]  = CAST_GROUP_DISTINCT + 1,
-    [TYPE_STRUCT]         = CAST_GROUP_STRUCT + 1,
-    [TYPE_UNION]          = CAST_GROUP_STRUCT + 1,
-    [TYPE_INIT_LIST]      = CAST_GROUP_INIT_LIST + 1,
-    [TYPE_STRING_LITERAL] = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_VOID]            = CAST_GROUP_VOID + 1,
+    [TYPE_BOOL]            = CAST_GROUP_BOOL + 1,
+    [TYPE_CHAR]            = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR16]          = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR32]          = CAST_GROUP_CHAR + 1,
+    [TYPE_BYTE]            = CAST_GROUP_INT + 1,
+    [TYPE_UBYTE]           = CAST_GROUP_INT + 1,
+    [TYPE_SHORT]           = CAST_GROUP_INT + 1,
+    [TYPE_USHORT]          = CAST_GROUP_INT + 1,
+    [TYPE_INT]             = CAST_GROUP_INT + 1,
+    [TYPE_UINT]            = CAST_GROUP_INT + 1,
+    [TYPE_LONG]            = CAST_GROUP_INT + 1,
+    [TYPE_ULONG]           = CAST_GROUP_INT + 1,
+    [TYPE_INT128]          = CAST_GROUP_INT + 1,
+    [TYPE_UINT128]         = CAST_GROUP_INT + 1,
+    [TYPE_FLOAT]           = CAST_GROUP_FLOAT + 1,
+    [TYPE_DOUBLE]          = CAST_GROUP_FLOAT + 1,
+    [TYPE_POINTER]         = CAST_GROUP_PTR + 1,
+    [TYPE_FUNC_PTR]        = CAST_GROUP_PTR + 1,
+    [TYPE_STATIC_ARRAY]    = CAST_GROUP_ARRAY + 1,
+    [TYPE_RUNTIME_ARRAY]   = CAST_GROUP_ARRAY + 1,
+    [TYPE_ALIAS_DISTINCT]  = CAST_GROUP_DISTINCT + 1,
+    [TYPE_ENUM_DISTINCT]   = CAST_GROUP_DISTINCT + 1,
+    [TYPE_STRUCT]          = CAST_GROUP_STRUCT + 1,
+    [TYPE_UNION]           = CAST_GROUP_STRUCT + 1,
+    [TYPE_INIT_LIST]       = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_STRING_LITERAL]  = CAST_GROUP_INIT_LIST + 1,
 };
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)
