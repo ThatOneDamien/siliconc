@@ -1,0 +1,9 @@
+enum Test
+{
+    A,
+    B,
+    C,
+    D,
+    E = 1,
+    F = C,
+}

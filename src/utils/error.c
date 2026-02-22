@@ -9,10 +9,10 @@ int g_error_cnt = 0;
 int g_warning_cnt = 0;
 
 static const char* const DIAG_COLOR[] = {
-    [DIAG_NOTE]    = "34",
-    [DIAG_WARNING] = "95",
-    [DIAG_ERROR]   = "91",
-    [DIAG_FATAL]   = "31",
+    [DIAG_NOTE]    = "\033[34m",
+    [DIAG_WARNING] = "\033[95m",
+    [DIAG_ERROR]   = "\033[91m",
+    [DIAG_FATAL]   = "\033[31m",
 };
 
 static const char* const DIAG_NAME[] = {
@@ -43,12 +43,26 @@ LineCol loc_get_col_line(const SourceLoc loc)
     return result;
 }
 
+static inline const char* color_str(DiagnosticType diag)
+{
+    return g_compiler.stderr_is_tty ? DIAG_COLOR[diag] : "";
+}
+
+static inline const char* reset_color_str()
+{
+    return g_compiler.stderr_is_tty ? "\033[0m" : "";
+}
+
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va)
 {
     DBG_ASSERT(message != NULL);
     if(g_compiler.werror && diag == DIAG_WARNING)
         diag = DIAG_ERROR;
-    fprintf(stderr, "sic: \033[%sm%s:\033[0m ", DIAG_COLOR[diag], DIAG_NAME[diag]); 
+    fprintf(stderr, "%s: \033[%s%s:%s ", 
+            g_compiler.compiler_name, 
+            color_str(diag), 
+            DIAG_NAME[diag],
+            reset_color_str()); 
     vfprintf(stderr, message, va);
     putc('\n', stderr);
     if(diag == DIAG_ERROR)
@@ -65,28 +79,31 @@ void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message,
         diag = DIAG_ERROR;
     SourceFile* file = file_from_id(loc.file);
     LineCol source_lc = loc_get_col_line(loc);
+    const char* const color = color_str(diag);
+    const char* const reset = reset_color_str();
 
-    fprintf(stderr, "%s:%u:%u: \033[%sm%s:\033[0m ",
-            file->rel_path, source_lc.line, source_lc.col, DIAG_COLOR[diag], DIAG_NAME[diag]);
+    fprintf(stderr, "%s:%u:%u: %s%s:%s ",
+            file->rel_path, source_lc.line, source_lc.col, color, DIAG_NAME[diag], reset);
     
     vfprintf(stderr, message, va);
 
     const char* line_start = file->src + file->line_starts.data[source_lc.line - 1];
 
     // FIXME: Rewrite this to support multi-line.
-    fprintf(stderr, "\n%4u | %.*s\033[%sm%.*s\033[0m%.*s\n     | ", 
+    fprintf(stderr, "\n%4u | %.*s%s%.*s%s%.*s\n     | ", 
             source_lc.line, 
             source_lc.col - 1, line_start,
-            DIAG_COLOR[diag],
+            color,
             loc.len, file->src + loc.start,
+            reset,
             file->line_starts.data[source_lc.line] - (loc.start + loc.len) - 1, file->src + loc.start + loc.len);
     for(uint32_t i = 0; i < source_lc.col - 1; ++i)
         putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
 
-    fprintf(stderr, "\033[%sm^", DIAG_COLOR[diag]);
+    fprintf(stderr, "%s^", color);
     for(uint32_t i = 1; i < loc.len; ++i)
         putc('~', stderr);
-    fprintf(stderr, "\033[0m\n");
+    fprintf(stderr, "%s\n", reset);
     if(diag == DIAG_ERROR)
         g_error_cnt++;
     else if(diag == DIAG_WARNING)
@@ -102,9 +119,10 @@ void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under
     loc.start += loc.len - 1;
     loc.len = 1;
     LineCol source_lc = loc_get_col_line(loc);
+    const char* const reset = reset_color_str();
 
-    fprintf(stderr, "%s:%u:%u: \033[%sm%s:\033[0m ",
-            file->rel_path, source_lc.line, source_lc.col, DIAG_COLOR[diag], DIAG_NAME[diag]);
+    fprintf(stderr, "%s:%u:%u: %s%s:%s ",
+            file->rel_path, source_lc.line, source_lc.col, color_str(diag), DIAG_NAME[diag], reset);
     
     vfprintf(stderr, message, va);
 
@@ -116,14 +134,16 @@ void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under
 
     for(uint32_t i = 0; i < source_lc.col; ++i)
         putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
-    fprintf(stderr, "\033[34m^\033[0m\n");
+
+    const char* const color = g_compiler.stderr_is_tty ? "\033[34m" : "";
+    fprintf(stderr, "%s^%s\n", color, reset);
 
     if(under != NULL)
     {
         fprintf(stderr, "     | ");
         for(uint32_t i = 0; i < source_lc.col; ++i)
             putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
-        fprintf(stderr, "\033[34m%s\033[0m\n", under);
+        fprintf(stderr, "%s%s%s\n", color, under, reset);
     }
     if(diag == DIAG_ERROR)
         g_error_cnt++;

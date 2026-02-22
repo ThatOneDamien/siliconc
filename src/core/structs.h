@@ -481,11 +481,6 @@ struct ASTExpr
     } expr;
 };
 
-struct ASTBlock
-{
-    ASTStmt* body;
-};
-
 struct ASTBreakCont
 {
     union
@@ -593,7 +588,7 @@ struct ASTStmt
 
     union
     {
-        ASTBlock  block;
+        ASTStmt*  block;
         ASTBreakCont break_cont;
         ObjVar*   declaration;
         ASTExpr*  expr;
@@ -742,6 +737,7 @@ struct CompilerContext
     SourceFileDA  sources;
     StringDA      linker_inputs;
     ObjModule     top_module;
+    const char*   compiler_name;
 
     // Compiler CLI arguments/flags
     FileId        input_file;
@@ -755,6 +751,7 @@ struct CompilerContext
     } target;
     IRTarget      ir_kind;
 
+    bool          stderr_is_tty : 1;
     bool          emit_link : 1;
     bool          emit_obj : 1;
     bool          emit_ir : 1;

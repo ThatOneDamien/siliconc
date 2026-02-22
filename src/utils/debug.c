@@ -139,7 +139,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     switch(stmt->kind)
     {
     case STMT_BLOCK: {
-        ASTStmt* cur = stmt->stmt.block.body;
+        ASTStmt* cur = stmt->stmt.block;
         while(cur != NULL)
         {
             print_stmt_at_depth(cur, depth + 1, NULL, allow_unresolved);
@@ -180,6 +180,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_stmt_at_depth(stmt->stmt.while_.body, depth + 1, "body", allow_unresolved);
         return;
     case STMT_CT_ASSERT:
+    case STMT_CT_IF:
     case STMT_CT_UNREACHABLE:
         SIC_TODO();
     case STMT_INVALID:

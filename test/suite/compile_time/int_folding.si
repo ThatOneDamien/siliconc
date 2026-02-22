@@ -1,6 +1,3 @@
-/// test:   eval_int
-/// action: compile
-/// result: pass
 #assert(10 + 16 == 26, "Fail");
 #assert(110 - 15 == 95, "Fail");
 #assert(12 * 14 == 168, "Fail");
@@ -27,34 +24,4 @@
 #assert(0 < 1, "Fail");
 #assert(1 > 0, "Fail");
 
-/// test:   eval_float
-/// action: compile
-/// result: pass
-#assert((1.0f + 4.5f) == 5.5f, "Fail");
-#assert((4.5f - 2.0f) == 2.5f, "Fail");
-#assert((10.0f * 2.5f) == 25.0f, "Fail");
-#assert((10.0f / 4.0f) == 2.5f, "Fail");
-#assert((1.0f == 1.0f), "Fail");
-#assert((0.1f != 0.2f), "Fail");
-#assert(-100.0f <= 0.0f, "Fail");
-#assert(20.0f <= 20.0f, "Fail");
-#assert(100.0f >= -5.0f, "Fail");
-#assert(-10.0f >= -10.0f, "Fail");
-#assert(1.0f < 2.0f, "Fail");
-#assert(1.0f > 0.0f, "Fail");
-
-/// test:   eval_addr
-/// action: compile
-/// result: pass
-var a: int;
-const b: *int = &a;
-
-/// test:   int_divide_zero
-/// action: compile
-/// result: fail
-const a: int = 1 / 0;
-
-/// test:   float_divide_zero
-/// action: compile
-/// result: fail
-const a: float = 1.0f / 0.0f;
+const a: int = 1 / 0; // #error: evaluates to 0

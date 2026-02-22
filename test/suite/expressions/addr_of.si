@@ -1,0 +1,10 @@
+fn test1() void
+{
+    var _a: int = 0;
+    const _b: *int = &_a;
+}
+
+fn test2() void
+{
+    const _a: *int = &(0); // #error: Expression is not an lvalue 
+}

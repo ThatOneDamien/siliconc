@@ -256,7 +256,7 @@ typedef enum : uint8_t
     STMT_WHILE,
 
     STMT_CT_ASSERT,
-    // STMT_CT_IF,
+    STMT_CT_IF,
     STMT_CT_UNREACHABLE,
 } StmtKind;
 
@@ -399,7 +399,7 @@ typedef enum : uint8_t
 	TOKEN_CT_ALIGNOF,
 	TOKEN_CT_ASSERT,
 	TOKEN_CT_CONST,
-	TOKEN_CT_ENDIF,
+	TOKEN_CT_ELSE,
     TOKEN_CT_IF,
 	TOKEN_CT_OFFSETOF,
 	TOKEN_CT_SIZEOF,

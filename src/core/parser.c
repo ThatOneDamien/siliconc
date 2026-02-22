@@ -44,6 +44,7 @@ static ASTStmt* parse_return(Lexer* l);
 static ASTStmt* parse_switch(Lexer* l);
 static ASTStmt* parse_while(Lexer* l);
 static ASTStmt* parse_ct_assert(Lexer* l);
+static ASTStmt* parse_ct_if(Lexer* l);
 static ASTStmt* parse_labeled_stmt(Lexer* l);
 static ASTStmt* parse_expr_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l);
@@ -792,6 +793,9 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_CT_ASSERT:
         stmt = parse_ct_assert(l);
         break;
+    case TOKEN_CT_IF:
+        stmt = parse_ct_if(l);
+        break;
     case TOKEN_CT_UNREACHABLE:
         stmt = new_stmt(l, STMT_CT_UNREACHABLE);
         advance(l);
@@ -825,7 +829,7 @@ static ASTStmt* parse_stmt_block(Lexer* l)
             cur_stmt = cur_stmt->next;
     }
 
-    block->stmt.block.body = head.next;
+    block->stmt.block = head.next;
     return block;
 }
 
@@ -979,6 +983,31 @@ static ASTStmt* parse_ct_assert(Lexer* l)
     ASSIGN_EXPR_OR_RET(assert_->err_msg, BAD_STMT);
     CONSUME_OR_RET(TOKEN_RPAREN, BAD_STMT);
     return stmt;
+}
+
+static ASTStmt* parse_ct_if(Lexer* l)
+{
+    ASTStmt* stmt = new_stmt(l, STMT_CT_IF);
+    ASTIf* if_stmt = &stmt->stmt.if_;
+    advance(l);
+    ASSIGN_EXPR_OR_RET(if_stmt->cond, BAD_STMT);
+    EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
+    if_stmt->then_stmt = parse_stmt_block(l);
+    if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
+    if(try_consume(l, TOKEN_CT_ELSE))
+    {
+        if(tok_equal(l, TOKEN_IF))
+            if_stmt->else_stmt = parse_ct_if(l);
+        else
+        {
+            EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
+            if_stmt->else_stmt = parse_stmt_block(l);
+        }
+        if(stmt_is_bad(if_stmt->else_stmt)) return BAD_STMT;
+    }
+
+    return stmt;
+    
 }
 
 static ASTStmt* parse_labeled_stmt(Lexer* l)
@@ -1420,13 +1449,17 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
         }
     }
 
-    if(is_neg && i128_ucmp(val, INT128_MIN) > 0)
+    if(is_neg)
     {
-        sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
-        return BAD_EXPR;
+        if(i128_ucmp(val, INT128_MIN) > 0)
+        {
+            sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
+            return BAD_EXPR;
+        }
+        expr->expr.constant.i = i128_neg(val);
     }
-
-    expr->expr.constant.i = val;
+    else
+        expr->expr.constant.i = val;
 
     advance(l);
     return expr;

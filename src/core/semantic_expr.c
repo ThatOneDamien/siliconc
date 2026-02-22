@@ -173,7 +173,7 @@ RETRY:
     case EXPR_UNRESOLVED_DOT:
         SIC_TODO();
     case EXPR_UNRESOLVED_IDENT:
-        analyze_ident(expr, false);
+        if(!analyze_ident(expr, false)) return false;
         goto RETRY;
     default:
         break;

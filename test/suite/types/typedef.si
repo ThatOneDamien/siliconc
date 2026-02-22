@@ -1,0 +1,17 @@
+typedef A1 = B;
+typedef A2 = *B;
+struct B
+{
+    a1: *A1,
+    a2: A2,
+}
+
+typedef C = int;
+struct D
+{
+    c1: C,
+    c2: *C,
+}
+
+typedef E = F; // #error: Cyclic definition
+typedef F = E; 

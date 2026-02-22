@@ -9,6 +9,7 @@ static void analyze_return(ASTStmt* stmt);
 static void analyze_swap(ASTStmt* stmt);
 static void analyze_switch(ASTStmt* stmt);
 static void analyze_while(ASTStmt* stmt);
+static void analyze_ct_if(ASTStmt* stmt);
 
 void analyze_stmt(ASTStmt* stmt)
 {
@@ -21,7 +22,7 @@ void analyze_stmt(ASTStmt* stmt)
     case STMT_BLOCK: {
         uint32_t scope = 0;
         scope = push_scope();
-        stmt->always_returns = analyze_stmt_block(stmt->stmt.block.body);
+        stmt->always_returns = analyze_stmt_block(stmt->stmt.block);
         pop_scope(scope);
         return;
     }
@@ -60,6 +61,9 @@ void analyze_stmt(ASTStmt* stmt)
     case STMT_CT_ASSERT:
         analyze_ct_assert(stmt);
         stmt->kind = STMT_NOP;
+        return;
+    case STMT_CT_IF:
+        analyze_ct_if(stmt);
         return;
     case STMT_CT_UNREACHABLE:
         stmt->always_returns = true;
@@ -123,6 +127,7 @@ static void analyze_expr_stmt(ASTStmt* stmt)
     switch(expr->kind)
     {
     case EXPR_INVALID:
+    case EXPR_POSTFIX:
         return;
     case EXPR_BINARY:
         if(expr->expr.binary.kind == BINARY_ASSIGN) return;
@@ -135,6 +140,11 @@ static void analyze_expr_stmt(ASTStmt* stmt)
         if(get_builtin_attribute(func, ATTR_NODISCARD) == NULL) return;
         sic_error_at(expr->loc, "Result of function marked @nodiscard should not be discarded.");
         return;
+    }
+    case EXPR_UNARY: {
+        UnaryOpKind kind = expr->expr.unary.kind;
+        if(kind == UNARY_INC || kind == UNARY_DEC) return;
+        break;
     }
     default:
         break;
@@ -323,6 +333,36 @@ void analyze_ct_assert(ASTStmt* stmt)
     if(!assert_->cond->expr.constant.b)
     {
         sic_error_at(stmt->loc, "Compile-time assertion failed: %s", assert_->err_msg->expr.constant.str.val);
+    }
+}
+
+void analyze_ct_if(ASTStmt* stmt)
+{
+    ASTIf* if_ = &stmt->stmt.if_;
+    if(!implicit_cast(&if_->cond, g_type_bool)) return;
+
+    ASTExpr* cond = if_->cond;
+    if(cond->kind != EXPR_CONSTANT)
+    {
+        sic_error_at(if_->cond->loc, "Compile-time if's condition must be compile-time evaluable.");
+        return;
+    }
+
+    DBG_ASSERT(cond->expr.constant.kind == CONSTANT_BOOL);
+    if(cond->expr.constant.b)
+    {
+        DBG_ASSERT(if_->then_stmt->kind == STMT_BLOCK);
+        analyze_stmt_block(if_->then_stmt->stmt.block);
+    }
+    else if(if_->else_stmt)
+    {
+        if(if_->else_stmt->kind == STMT_CT_IF)
+            analyze_ct_if(if_->else_stmt);
+        else
+        {
+            DBG_ASSERT(if_->else_stmt->kind == STMT_BLOCK);
+            analyze_stmt_block(if_->else_stmt->stmt.block);
+        }
     }
 }
 

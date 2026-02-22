@@ -98,7 +98,7 @@ static bool stmt_empty(ASTStmt* stmt)
 {
     return (stmt == NULL) ||
            (stmt->kind == STMT_NOP && stmt->next == NULL) ||
-           (stmt->kind == STMT_BLOCK && stmt_empty(stmt->stmt.block.body));
+           (stmt->kind == STMT_BLOCK && stmt_empty(stmt->stmt.block));
 }
 
 static bool s_initialized = false;
@@ -299,7 +299,7 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
     switch(stmt->kind)
     {
     case STMT_BLOCK:
-        emit_block_stmt(c, stmt->stmt.block.body);
+        emit_block_stmt(c, stmt->stmt.block);
         return;
     case STMT_BREAK:
         emit_break_stmt(c, stmt);
@@ -350,6 +350,7 @@ static void emit_stmt(CodegenContext* c, ASTStmt* stmt)
         return;
     case STMT_INVALID:
     case STMT_CT_ASSERT:
+    case STMT_CT_IF:
         break;
     }
     SIC_UNREACHABLE();

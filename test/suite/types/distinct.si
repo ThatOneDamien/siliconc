@@ -1,0 +1,7 @@
+typedef distinct SpecialInt = int;
+typedef distinct OtherSpecial = SpecialInt;
+
+const a = cast<SpecialInt>(1);
+const b = cast<OtherSpecial>(1);
+
+const c: SpecialInt = 1; // #error: requires an explicit cast

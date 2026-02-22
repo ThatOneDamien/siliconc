@@ -6,31 +6,95 @@ import pathlib
 import argparse
 import tempfile
 import shutil
+import signal
 import re
+from enum import Enum
 from dataclasses import dataclass
 
+class StatusColor(Enum):
+    PASS = "32"
+    FAIL = "31"
+    INFO = "34"
+
+def color_str(s: str, color: StatusColor):
+    if sys.stdout.isatty():
+        return f'\033[{color.value}m{s}\033[0m'
+    return s
+
 @dataclass(frozen=True)
-class Diagnostic:
+class ExpectedDiag:
     is_error: bool
     message: str
-    line: int
-    found: bool
-    
-@dataclass(frozen=True)
+    line_nr: int
+
 class TestResult:
-    passed: bool
-    message: str
-    details: str
+    timeout: bool
+
 
 class TestMeta:
-    diags: list[Diagnostic]
+    path: str
+    expected: list[ExpectedDiag]
 
-    def __init__(self):
-        self.diags = []
+    def __init__(self, path: str):
+        self.path = path
+        self.expected = []
 
+    def find_diag(self, is_error: bool, message: str, line_nr: int):
+        for diag in self.expected:
+            if diag.is_error == is_error and diag.line_nr == line_nr and diag.message in message:
+                self.expected.remove(diag)
+                return True
+
+        return False
+
+    def check_result(self, proc_res: subprocess.CompletedProcess[str]):
+        lines = proc_res.stderr.splitlines()
+        unexpected: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            m = re.match(r'[^:]+:(\d+):\d+: (\w+): (.*)', line)
+            if m:
+                line_nr = int(m.group(1))
+                kind = m.group(2).lower()
+                message = m.group(3)
+                success = True
+                if kind == 'error':
+                    success = self.find_diag(is_error=True, message=message, line_nr=line_nr)
+                elif kind == 'warning':
+                    success = self.find_diag(is_error=False, message=message, line_nr=line_nr)
+
+                if not success:
+                    unexpected.append(line)
+            i += 1
+
+        has_more_expected = len(self.expected) > 0
+        has_unexpected = len(unexpected) > 0
+        if not has_more_expected and not has_unexpected:
+            print(color_str(f'[PASS] {self.path}', StatusColor.PASS))
+            return True
+
+        self.print_fail('Mismatched diagnostics')
+
+        if has_more_expected:
+            print(color_str('    Diagnostics that were expected, but never occurred:', StatusColor.INFO))
+            for diag in self.expected:
+                print(f'        {diag.line_nr}: {'Error' if diag.is_error else 'Warning'}: {diag.message}')
+        if has_unexpected:
+            print(color_str('    Diagnostics that were unexcpected:', StatusColor.INFO))
+            for l in unexpected:
+                print(f'        {l}')
+        return False 
+
+    def print_fail(self, msg: str):
+        print(color_str(f'[FAIL] {self.path}: {msg}', StatusColor.FAIL))
 
 class TestRunner:
-    def __init__(self, compiler_path: str, tmpdir):
+    tests_passed: int
+    test_count: int
+    compiler_path: str
+    tmpdir: str
+    def __init__(self, compiler_path: str, tmpdir: str):
         self.tests_passed = 0
         self.test_count = 0
         self.compiler_path = compiler_path
@@ -39,73 +103,55 @@ class TestRunner:
 
     def print_results(self):
         print('\n******** Result *********')
-        completion_str = f'Completed {self.test_count} test(s): \033[32m{self.tests_passed}\033[0m passed, \033[31m{self.test_count - self.tests_passed}\033[0m failed.'
+        passed_str = color_str(f'{self.tests_passed} passed', StatusColor.PASS)
+        failed_str = color_str(f'{self.test_count - self.tests_passed} failed', StatusColor.FAIL)
         if self.test_count == self.tests_passed:
-            print_pass(completion_str)
+            print(f'{color_str('[PASS]', StatusColor.PASS)} Completed {self.test_count} test(s): {passed_str}, {failed_str}.')
         else:
-            print_fail(completion_str)
+            print(f'{color_str('[FAIL]', StatusColor.FAIL)} Completed {self.test_count} test(s): {passed_str}, {failed_str}.')
         print('\n')
 
 
     def run_test_file(self, test_path: str):
         test = parse_test_file(test_path)
         self.test_count += 1
-        result = self.run_test(test_path, test)
-        if result.passed:
-            self.tests_passed += 1
-            print_pass(test_path)
-        else:
-            print_fail(test_path, result.details)
-
-
-    def run_test(self, test_path: str, test: TestMeta):
         cmd = [self.compiler_path, test_path, '--emit', 'ir', '--out-dir', self.tmpdir]
-        result = None
-        result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, timeout=20, text=True)
-        return check_test_result(test=test, proc_res=result)
+        try:
+            proc_res = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, timeout=20, text=True)
+            if proc_res.returncode < 0:
+                sig = -proc_res.returncode
+                try:
+                    sig_name = signal.Signals(sig).name
+                except ValueError:
+                    sig_name = f'signal {sig}'
+                test.print_fail(f'Compiler crashed with {sig_name}.')
+            elif test.check_result(proc_res):
+                self.tests_passed += 1
+        except subprocess.TimeoutExpired:
+            test.print_fail('Test timed out.')
+            return
 
-
-def print_fail(test_name: str, details: str | None = None):
-    print(f'\033[31m[FAIL]\033[0m {test_name}')
-    if details:
-        print('\n---- Details ----\n')
-        print(details)
-        print('-----------------\n')
-
-
-def print_pass(test_name: str):
-    print(f'\033[32m[PASS]\033[0m {test_name}')
-
-
-
-def check_test_result(test: TestMeta, proc_res):
-    result = TestResult(passed=True, message=None, details=None)
-    rc = proc_res.returncode
-    return result
 
 
 def parse_test_file(test_path: str):
-    test = TestMeta()
+    test = TestMeta(test_path)
     with open(test_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         i = 0
         while i < len(lines):
             line = lines[i].strip()
-            start = i
             m = re.search(r'// #(\w+):\s+(\w.*)$', line)
             if m:
                 directive, message = m.groups()
                 if directive == 'error':
-                    test.diags.append(
-                        Diagnostic(is_error=True, message=message, line=i + (2 if line.startswith('// #') else 1), found=False)
+                    test.expected.append(
+                        ExpectedDiag(is_error=True, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
                     )
                 elif directive == 'warning':
-                    test.diags.append(
-                        Diagnostic(is_error=False, message=message, line=i + (2 if line.startswith('// #') else 1), found=False)
+                    test.expected.append(
+                        ExpectedDiag(is_error=False, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
                     )
-                else:
-                    print('Bad directive')
             i += 1
 
     return test
@@ -117,7 +163,7 @@ def main():
     args = parser.parse_args()
 
     if not pathlib.Path(args.compiler_path).is_file():
-        print(f'Failed to find compiler binary \'{args.compiler_path}\', try performing a make.')
+        print(f'Failed to find compiler binary \'{args.compiler_path}\', try performing a make.', file=sys.stderr)
         sys.exit(1)
 
     print('******** Tests **********')

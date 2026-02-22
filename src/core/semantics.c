@@ -407,7 +407,7 @@ static void analyze_function_body(ObjFunc* func)
     if(!func->is_extern)
     {
         g_sema->cur_func = func;
-        if(!analyze_stmt_block(func->body->stmt.block.body) && 
+        if(!analyze_stmt_block(func->body->stmt.block) && 
            func->signature.ret_type.type->kind != TYPE_VOID)
         {
             sic_error_at(func->header.loc, "Function does not return from all control paths.");

@@ -21,8 +21,11 @@ static void print_debug_stats()
 
 int main(int argc, char* argv[])
 {
+    g_compiler.compiler_name = argv[0];
     get_current_dir();
     global_arenas_init();
+
+    g_compiler.stderr_is_tty= isatty(STDERR_FILENO);
     process_args(argc, argv);
     
     sym_map_init();
