@@ -313,7 +313,7 @@ bool analyze_global_var(ObjVar* var)
     }
     g_sema->in_global_init = prev;
 
-    if(var->initial_val != NULL && !var->initial_val->const_eval)
+    if(var->initial_val != NULL && !var->initial_val->is_const_eval)
     {
         // printf("HERE %p %d %d %p\n", var, var->initial_val->loc.file, var->initial_val->kind, var->initial_val);
         sic_error_at(var->initial_val->loc, "Global variable must be initialized with a compile-time evaluable value.");

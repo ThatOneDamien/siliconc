@@ -125,29 +125,21 @@ bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
 const char* type_to_string(const Type* type);
+bool type_kind_is_signed(TypeKind kind);
 
 static inline bool type_kind_is_integer(TypeKind kind)
 {
     return kind >= TYPE_INTEGER_START && kind <= TYPE_INTEGER_END;
 }
 
-static inline bool type_kind_is_signed(TypeKind kind)
-{
-    static_assert((TYPE_BYTE & 1) == 0, "Adjust type methods.");
-    DBG_ASSERT(type_kind_is_integer(kind));
-    return (kind & 1) == 0;
-}
-
-static inline bool type_kind_is_unsigned(TypeKind kind)
-{
-    static_assert((TYPE_UBYTE & 1) == 1, "Adjust type methods.");
-    DBG_ASSERT(type_kind_is_integer(kind));
-    return (kind & 1) == 1;
-}
-
 static inline bool type_kind_is_char(TypeKind kind)
 {
     return kind >= TYPE_CHAR_START && kind <= TYPE_CHAR_END;
+}
+
+static inline bool type_kind_is_unsigned(TypeKind kind) 
+{ 
+    return !type_kind_is_signed(kind); 
 }
 
 static inline bool type_kind_is_float(TypeKind kind)
@@ -170,6 +162,7 @@ static inline bool type_kind_is_distinct(TypeKind kind)
     return kind == TYPE_ENUM_DISTINCT || kind == TYPE_ALIAS_DISTINCT;
 }
 
+static inline bool type_is_int_literal(Type* ty) { return ty == g_type_neg_int_lit || ty == g_type_pos_int_lit; }
 static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->kind); }
 static inline bool type_is_signed(const Type* ty) { return type_kind_is_signed(ty->kind); }
 static inline bool type_is_unsigned(const Type* ty) { return type_kind_is_unsigned(ty->kind); }

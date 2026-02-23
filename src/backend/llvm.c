@@ -671,7 +671,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
 {
     DBG_ASSERT(right->kind == EXPR_ARRAY_INIT_LIST);
     result->kind = GEN_VAL_ADDRESS;
-    if(right->const_eval)
+    if(right->is_const_eval)
     {
         LLVMValueRef global = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, right->type), "__anon.const");
         LLVMSetGlobalConstant(global, true);
@@ -980,8 +980,6 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
     case CONSTANT_BOOL:
         result->value = LLVMConstInt(LLVMInt1Type(), constant->b, false);
         return;
-    case CONSTANT_CHAR:
-        SIC_TODO();
     case CONSTANT_FLOAT:
         result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->f);
         return;
@@ -1058,7 +1056,7 @@ static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_le
 
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
 {
-    DBG_ASSERT(expr->const_eval);
+    DBG_ASSERT(expr->is_const_eval);
     switch(expr->kind)
     {
     case EXPR_ARRAY_INIT_LIST:
@@ -1083,7 +1081,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
 {
     DBG_ASSERT(expr->type != g_type_init_list);
-    DBG_ASSERT(expr->const_eval);
+    DBG_ASSERT(expr->is_const_eval);
     ArrInitList* list = &expr->expr.array_init;
     Type* arr_type = expr->type->canonical;
     if(list->size == 0)
@@ -1470,9 +1468,21 @@ static LLVMValueRef get_llvm_const_int(CodegenContext* c, Int128 val, Type* type
 			uint64_t words[2] = { val.lo, val.hi };
 			return LLVMConstIntOfArbitraryPrecision(get_llvm_type(c, type), 2, words);
 		}
-		default:
-            DBG_ASSERT(type_is_integer(type) || type->kind == TYPE_BOOL);
+        case TYPE_BOOL:
+        case TYPE_CHAR:
+        case TYPE_CHAR16:
+        case TYPE_CHAR32:
+        case TYPE_BYTE:
+        case TYPE_UBYTE:
+        case TYPE_SHORT:
+        case TYPE_USHORT:
+        case TYPE_INT:
+        case TYPE_UINT:
+        case TYPE_LONG:
+        case TYPE_ULONG:
 			return LLVMConstInt(get_llvm_type(c, type), val.lo, false);
+        default:
+            SIC_UNREACHABLE();
 	}
 }
 

@@ -298,6 +298,8 @@ UNRESOLVED_ARROW:
     case EXPR_CT_ALIGNOF:
     case EXPR_CT_OFFSETOF:
     case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_MAX:
+    case EXPR_CT_TYPE_MIN:
         SIC_TODO();
     }
 }
@@ -325,17 +327,14 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
                constant->b ? "true" : "false", 
                debug_type_to_str(expr->type, allow_unresolved));
         return;
-    case CONSTANT_CHAR:
-        printf("Constant Char val: %d (%c) ] (Type: %s)\n",
-               constant->c, (char)constant->c, debug_type_to_str(expr->type, allow_unresolved));
-        return;
     case CONSTANT_FLOAT:
         printf("Constant Float val: %lf ] (Type: %s)\n",
                constant->f, debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_INTEGER:
-        printf("Constant Integer val: %lu hex: 0x%lX%lX] (Type: %s)\n",
-               constant->i.lo, constant->i.hi, constant->i.lo, 
+        printf("Constant Integer val: %s hex: 0x%lX%lX] (Type: %s)\n",
+               i128_to_string(constant->i, type_is_signed(expr->type->canonical)), 
+               constant->i.hi, constant->i.lo, 
                debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_POINTER:

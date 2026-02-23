@@ -397,6 +397,11 @@ bool analyze_declaration(ObjVar* decl)
             // TODO: Replace this with actual string type. Most likely a char slice.
             rhs_type = type_pointer_to(g_type_char);
         }
+        else if(type_is_int_literal(rhs_type))
+        {
+            resolve_int_lit_type(decl->initial_val);
+            rhs_type = decl->initial_val->type;
+        }
         decl->type_loc.type = decl->is_const_binding ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;
     }

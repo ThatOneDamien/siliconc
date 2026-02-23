@@ -98,7 +98,6 @@ typedef enum : uint8_t
 {
     CONSTANT_INVALID = 0,
     CONSTANT_BOOL,
-    CONSTANT_CHAR,
     CONSTANT_FLOAT,
     CONSTANT_INTEGER,
     CONSTANT_POINTER,
@@ -152,6 +151,8 @@ typedef enum : uint8_t
     EXPR_CT_ALIGNOF,
     EXPR_CT_OFFSETOF,
     EXPR_CT_SIZEOF,
+    EXPR_CT_TYPE_MAX,
+    EXPR_CT_TYPE_MIN,
 } ExprKind;
 
 typedef enum : uint8_t
@@ -403,6 +404,8 @@ typedef enum : uint8_t
     TOKEN_CT_IF,
 	TOKEN_CT_OFFSETOF,
 	TOKEN_CT_SIZEOF,
+    TOKEN_CT_TYPE_MAX,
+    TOKEN_CT_TYPE_MIN,
 	TOKEN_CT_TYPEOF,
 	TOKEN_CT_UNREACHABLE,
     TOKEN_KEYWORD_END = TOKEN_CT_UNREACHABLE,
@@ -537,5 +540,7 @@ typedef enum : uint8_t
             case EXPR_UNRESOLVED_IDENT: \
             case EXPR_CT_ALIGNOF:       \
             case EXPR_CT_OFFSETOF:      \
-            case EXPR_CT_SIZEOF
+            case EXPR_CT_SIZEOF:        \
+            case EXPR_CT_TYPE_MAX:      \
+            case EXPR_CT_TYPE_MIN
 

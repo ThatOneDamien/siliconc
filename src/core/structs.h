@@ -403,7 +403,6 @@ struct ASTExprConstant
         Int128        i; // Integer
         double        f; // Float
         bool          b; // Bool
-        uint32_t      c; // Char
         ConstString   str; // String
         ObjEnumValue* enum_; // Enum Value
     };
@@ -453,9 +452,8 @@ struct ASTExpr
     Type*     type;
     SourceLoc loc;
     ExprKind  kind;
-    bool      evaluated : 1;
-    bool      const_eval : 1;
-    bool      pure : 1;
+    bool      is_evaluated : 1;
+    bool      is_const_eval : 1;
 
     union
     {
@@ -475,8 +473,7 @@ struct ASTExpr
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
 
-        TypeLoc         ct_alignof;
-        TypeLoc         ct_sizeof;
+        TypeLoc         ct_typearg;
         ASTExprCTOffset ct_offsetof;
     } expr;
 };

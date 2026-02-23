@@ -431,3 +431,27 @@ const char* type_to_string(const Type* type)
         res = str_format("const %s", res);
     return res;
 }
+
+bool type_kind_is_signed(TypeKind kind)
+{
+    switch(kind)
+    {
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+    case TYPE_INT:
+    case TYPE_LONG:
+    case TYPE_INT128:
+        return true;
+    case TYPE_CHAR:
+    case TYPE_CHAR16:
+    case TYPE_CHAR32:
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_UINT128:
+        return false;
+    default:
+        SIC_UNREACHABLE();
+    }
+}

@@ -18,7 +18,6 @@ void scratch_append_i128(Int128 val, bool is_signed)
 		Int128 rem;
         i128_udivrem(val, base, &val, &rem);
 		*(loc++) = '0' + rem.lo;
-		val = i128_udiv(val, base);
 	} while (!i128_is_zero(val));
 
 	if (add_minus) scratch_appendc('-');
@@ -40,14 +39,10 @@ char* i128_to_string(Int128 val, bool is_signed)
 		Int128 rem;
         i128_udivrem(val, base, &val, &rem);
 		buffer[len++] = '0' + rem.lo;
-		val = i128_udiv(val, base);
 	} while (!i128_is_zero(val));
 
 	if (add_minus)
-    {
-        scratch_appendc('-');
-        len++;
-    }
+        buffer[len++] = '-';
 
     char* res = MALLOC(len + 1, sizeof(char));
     char* c = res;
@@ -413,16 +408,6 @@ Int128 i128_rem(Int128 lhs, Int128 rhs, TypeKind kind)
     return type_kind_is_signed(kind) ? i128_srem(lhs, rhs) : i128_urem(lhs, rhs);
 }
 
-Int128 i128_from_s64(int64_t i)
-{
-	return (Int128){ i < 0 ? UINT64_MAX : 0, (uint64_t)i };
-}
-
-Int128 i128_from_u64(uint64_t i)
-{
-	return (Int128){ 0, i };
-}
-
 Int128 i128_sdiv(Int128 lhs, Int128 rhs)
 {
 	uint64_t topbit1 = lhs.hi & 0x8000000000000000;
@@ -442,8 +427,10 @@ Int128 i128_div(Int128 lhs, Int128 rhs, TypeKind kind)
     return type_kind_is_signed(kind) ? i128_sdiv(lhs, rhs) : i128_udiv(lhs, rhs);
 }
 
-bool int128_fits(Int128 val, TypeKind optype, TypeKind totype)
+bool i128_fits(Int128 val, Type* optype, TypeKind totype)
 {
+    // This should only be called for integer literals, not any integer.
+    DBG_ASSERT(type_is_int_literal(optype));
 	Int128 min;
 	Int128 max;
 	bool is_signed = false;
@@ -492,7 +479,7 @@ bool int128_fits(Int128 val, TypeKind optype, TypeKind totype)
     default:
         SIC_UNREACHABLE();
 	}
-	bool op_is_signed = type_kind_is_signed(optype);
+	bool op_is_signed = optype == g_type_neg_int_lit;
 	if (is_signed)
 	{
 		if (op_is_signed)
@@ -501,7 +488,6 @@ bool int128_fits(Int128 val, TypeKind optype, TypeKind totype)
 			if (i128_scmp(val, max) == 1) return false;
 			return true;
 		}
-		// In the unsigned case, we don't need to test the loer limit.
 		return i128_ucmp(val, max) != 1;
 	}
 	if (op_is_signed)
@@ -510,7 +496,6 @@ bool int128_fits(Int128 val, TypeKind optype, TypeKind totype)
 		if (i128_ucmp(val, max) == 1) return false;
 		return true;
 	}
-	// In the unsigned case, we don't need to test the loer limit.
 	return i128_ucmp(val, max) != 1;
 }
 

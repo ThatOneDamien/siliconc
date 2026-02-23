@@ -93,11 +93,12 @@ double   i128_to_float_unsigned(Int128 val);
 bool     i128_is_zero(Int128 val);
 uint32_t i128_clz(const Int128 *val);
 uint32_t i128_ctz(const Int128 *val);
-Int128   i128_from_s64(int64_t i);
-Int128   i128_from_u64(uint64_t i);
 Int128   i128_from_double(double x, TypeKind kind);
 Int128   i128_unsigned_from_double(double x);
 Int128   i128_signed_from_double(double x);
+bool     i128_fits(Int128 val, Type* optype, TypeKind totype);
+static inline Int128 i128_from_s64(int64_t i) { return (Int128){ i < 0 ? UINT64_MAX : 0, (uint64_t)i }; }
+static inline Int128 i128_from_u64(uint64_t i) { return (Int128){ 0, i }; }
 
 // hash.c - Hashmap functions
 void    hashmap_reserve(HashMap* map, uint32_t entry_cnt);

@@ -32,6 +32,7 @@ bool       analyze_stmt_block(ASTStmt* stmt);
 void       analyze_ct_assert(ASTStmt* stmt);
 bool       analyze_declaration(ObjVar* decl);
 bool       analyze_expr(ASTExpr* expr);
+bool       analyze_rvalue(ASTExpr* expr);
 bool       analyze_lvalue(ASTExpr* expr, bool will_write);
 bool       analyze_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
@@ -52,6 +53,7 @@ void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 void       pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 ASTStmt*   find_labeled_stmt(SymbolLoc label);
 void       set_object_link_name(Object* obj);
+void       resolve_int_lit_type(ASTExpr* lit);
 
 static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
 {
@@ -60,8 +62,7 @@ static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
 
 static inline void const_int_correct(ASTExpr* expr)
 {
-    DBG_ASSERT(expr->kind == EXPR_CONSTANT &&
-               expr->expr.constant.kind == CONSTANT_INTEGER);
+    DBG_ASSERT(expr->kind == EXPR_CONSTANT && expr->expr.constant.kind == CONSTANT_INTEGER);
     Type* ctype = expr->type->canonical;
     BitSize shift = 128 - ctype->builtin.bit_size;
     Int128 val = i128_shl64(expr->expr.constant.i, shift);
@@ -109,8 +110,7 @@ static inline Type* flatten_type(Type* type)
 static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
 {
     expr->kind = EXPR_CONSTANT;
-    expr->const_eval = true;
-    expr->pure = true;
+    expr->is_const_eval = true;
     expr->expr.constant.kind = kind;
 }
 
@@ -119,13 +119,6 @@ static inline void convert_to_const_bool(ASTExpr* expr, bool value)
     DBG_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
     convert_to_constant(expr, CONSTANT_BOOL);
     expr->expr.constant.b = value;
-}
-
-static inline void convert_to_const_char(ASTExpr* expr, uint32_t value)
-{
-    DBG_ASSERT(type_is_char(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_CHAR);
-    expr->expr.constant.c = value;
 }
 
 static inline void convert_to_const_float(ASTExpr* expr, double value)

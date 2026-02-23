@@ -1456,7 +1456,10 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
             sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
             return BAD_EXPR;
         }
-        expr->expr.constant.i = i128_neg(val);
+        if(val.hi == 0 && val.lo == 0)
+            expr->type = g_type_pos_int_lit;
+        else
+            expr->expr.constant.i = i128_neg(val);
     }
     else
         expr->expr.constant.i = val;
@@ -1468,8 +1471,8 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
 
 static ASTExpr* parse_char_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_CHAR);
-    expr->expr.constant.c = peek(l)->chr.val;
+    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
+    expr->expr.constant.i = i128_from_u64(peek(l)->chr.val);
     switch(peek(l)->chr.kind)
     {
     case TYPE_CHAR:
@@ -1562,20 +1565,6 @@ static ASTExpr* parse_nullptr(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_ct_alignof(Lexer* l)
-{
-    ASTExpr* expr = new_expr(EXPR_CT_ALIGNOF);
-    expr->loc = peek(l)->loc;
-    advance(l);
-    CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
-    if(!parse_type(l, &expr->expr.ct_alignof))
-        return BAD_EXPR;
-    CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
-    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
-    expr->type = g_type_usize;
-    return expr;
-}
-
 static ASTExpr* parse_ct_offsetof(Lexer* l)
 {
     ASTExpr* expr = new_expr(EXPR_CT_ALIGNOF);
@@ -1590,13 +1579,31 @@ static ASTExpr* parse_ct_offsetof(Lexer* l)
 
 }
 
-static ASTExpr* parse_ct_sizeof(Lexer* l)
+static ASTExpr* parse_ct_typearg(Lexer* l)
 {
-    ASTExpr* expr = new_expr(EXPR_CT_SIZEOF);
+    ExprKind kind;
+    switch(peek(l)->kind)
+    {
+    case TOKEN_CT_ALIGNOF:
+        kind = EXPR_CT_ALIGNOF;
+        break;
+    case TOKEN_CT_SIZEOF:
+        kind = EXPR_CT_SIZEOF;
+        break;
+    case TOKEN_CT_TYPE_MAX:
+        kind = EXPR_CT_TYPE_MAX;
+        break;
+    case TOKEN_CT_TYPE_MIN:
+        kind = EXPR_CT_TYPE_MIN;
+        break;
+    default:
+        SIC_UNREACHABLE();
+    }
+    ASTExpr* expr = new_expr(kind);
     expr->loc = peek(l)->loc;
     advance(l);
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
-    if(!parse_type(l, &expr->expr.ct_sizeof))
+    if(!parse_type(l, &expr->expr.ct_typearg))
         return BAD_EXPR;
     CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
     expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
@@ -1746,7 +1753,7 @@ static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
     expr->kind = EXPR_CONSTANT;
     expr->loc = peek(l)->loc;
     expr->expr.constant.kind = kind;
-    expr->const_eval = true;
+    expr->is_const_eval = true;
     return expr;
 
 }
@@ -1821,7 +1828,9 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 
-    [TOKEN_CT_ALIGNOF]      = { parse_ct_alignof, NULL, PREC_NONE },
+    [TOKEN_CT_ALIGNOF]      = { parse_ct_typearg, NULL, PREC_NONE },
 	[TOKEN_CT_OFFSETOF]     = { parse_ct_offsetof, NULL, PREC_NONE },
-	[TOKEN_CT_SIZEOF]       = { parse_ct_sizeof, NULL, PREC_NONE },
+	[TOKEN_CT_SIZEOF]       = { parse_ct_typearg, NULL, PREC_NONE },
+	[TOKEN_CT_TYPE_MAX]     = { parse_ct_typearg, NULL, PREC_NONE },
+	[TOKEN_CT_TYPE_MIN]     = { parse_ct_typearg, NULL, PREC_NONE },
 };

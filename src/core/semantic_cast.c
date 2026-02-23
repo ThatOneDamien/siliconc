@@ -107,7 +107,7 @@ bool implicit_cast(ASTExpr** expr_to_cast, Type* desired)
     new_cast->kind = EXPR_CAST;
     new_cast->loc = prev->loc;
     new_cast->expr.cast.inner = prev;
-    new_cast->evaluated = true;
+    new_cast->is_evaluated = true;
     new_cast->type = desired;
 
     rule.conversion(new_cast, prev, params.fromc, params.toc);
@@ -133,7 +133,7 @@ static bool can_cast_params(CastParams* params)
 
 bool can_cast(ASTExpr* expr, Type* to)
 {
-    DBG_ASSERT(to->status == STATUS_RESOLVED && expr->evaluated);
+    DBG_ASSERT(to->status == STATUS_RESOLVED && expr->is_evaluated);
 
     CastParams params;
     params.inner     = expr;
@@ -190,41 +190,47 @@ static bool rule_not_defined(UNUSED const CastParams* const params) { SIC_UNREAC
 static bool rule_always(UNUSED const CastParams* const params) { return true; }
 static bool rule_explicit_only(const CastParams* const params)
 {
-    if(params->explicit)
-        return true;
+    if(params->explicit) return true;
     CAST_ERROR("%s cannot be implicitly converted to %s.",
+               type_to_string(params->from), type_to_string(params->to));
+}
+
+static bool rule_int_to_int(const CastParams* const params)
+{
+    if(params->explicit) return true;
+    DBG_ASSERT(!type_is_int_literal(params->toc));
+    if(type_is_int_literal(params->fromc))
+    {
+        if(!i128_fits(params->inner->expr.constant.i, params->fromc, params->toc->kind))
+        {
+            CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
+        }
+        return true;
+    }
+
+    if(type_is_signed(params->fromc) != type_is_signed(params->toc))
+    {
+        CAST_ERROR("Casting between signed and unsigned integers requires explicit cast.");
+    }
+
+    if(type_size(params->fromc) < type_size(params->toc)) return true;
+
+    CAST_ERROR("Narrowing from %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
 static bool rule_size_change(const CastParams* const params)
 {
-    // FIXME: Change this to be more specific for int to int, float to float,
-    //        and char to char.
-    if(params->explicit)
+    if(params->explicit || type_size(params->fromc) < type_size(params->toc))
         return true;
 
-    if(params->toc->kind == TYPE_CHAR && params->fromc->kind != TYPE_CHAR)
-    {
-        CAST_ERROR("Casting from %s to char requires explicit cast."
-                   "Use byte or ubyte for single byte integer.",
-                   type_to_string(params->from));
-    }
-
-    if(type_size(params->from) <= type_size(params->to))
-        return true;
-
-    // TODO: Add bounds checking for warning/error if constant goes out of bounds.
-    if(params->inner->kind == EXPR_CONSTANT)
-        return true;
-
-    CAST_ERROR("Narrowing integer type %s to %s requires explicit cast.",
+    CAST_ERROR("Narrowing from %s to %s requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
 static bool rule_ptr_to_ptr(const CastParams* const params)
 {
-    if(params->explicit)
-        return true;
+    if(params->explicit) return true;
 
     Type* from_ptr = params->fromc->pointer_base;
     Type* to_ptr   = params->toc->pointer_base;
@@ -391,6 +397,33 @@ static void cast_any_to_void(UNUSED ASTExpr* cast, UNUSED ASTExpr* inner,
     SIC_TODO_MSG("Cast any to void");
 }
 
+
+static void cast_bool_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, UNUSED Type* to)
+{
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        convert_to_const_int(cast, i128_from_u64(inner->expr.constant.b));
+        return;
+    }
+
+    cast->is_const_eval = inner->is_const_eval;
+    cast->expr.cast.kind = CAST_UINT_EXT_TRUNC;
+}
+
+
+static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner, 
+                             UNUSED Type* from, UNUSED Type* to)
+{
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        convert_to_const_bool(cast, inner->expr.constant.i.hi != 0 || inner->expr.constant.i.lo != 0);
+        return;
+    }
+
+    cast->is_const_eval = inner->is_const_eval;
+    cast->expr.cast.kind = CAST_INT_TO_BOOL;
+}
+
 static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 {
     if(inner->kind == EXPR_CONSTANT)
@@ -431,35 +464,10 @@ static void cast_int_to_int(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = type_is_signed(from) ? 
                             CAST_SINT_EXT_TRUNC : 
                             CAST_UINT_EXT_TRUNC;
-}
-
-static void cast_bool_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, UNUSED Type* to)
-{
-    if(inner->kind == EXPR_CONSTANT)
-    {
-        convert_to_const_int(cast, i128_from_u64(inner->expr.constant.b));
-        return;
-    }
-
-    cast->const_eval = inner->const_eval;
-    cast->expr.cast.kind = CAST_UINT_EXT_TRUNC;
-}
-
-static void cast_int_to_bool(ASTExpr* cast, ASTExpr* inner, 
-                             UNUSED Type* from, UNUSED Type* to)
-{
-    if(inner->kind == EXPR_CONSTANT)
-    {
-        convert_to_const_bool(cast, inner->expr.constant.i.hi != 0 || inner->expr.constant.i.lo != 0);
-        return;
-    }
-
-    cast->const_eval = inner->const_eval;
-    cast->expr.cast.kind = CAST_INT_TO_BOOL;
 }
 
 static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner, Type* from, UNUSED Type* to)
@@ -470,7 +478,7 @@ static void cast_int_to_float(ASTExpr* cast, ASTExpr* inner, Type* from, UNUSED 
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = type_is_signed(from) ? 
                             CAST_SINT_TO_FLOAT : 
                             CAST_UINT_TO_FLOAT;
@@ -485,7 +493,7 @@ static void cast_int_to_ptr(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_INT_TO_PTR;
 }
 
@@ -498,7 +506,7 @@ static void cast_float_to_float(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_FLOAT_EXT_TRUNC;
 }
 
@@ -511,7 +519,7 @@ static void cast_float_to_bool(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_FLOAT_TO_BOOL;
 }
 
@@ -523,7 +531,7 @@ static void cast_float_to_int(ASTExpr* cast, ASTExpr* inner, UNUSED Type* from, 
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = type_is_signed(to) ? 
                             CAST_FLOAT_TO_SINT : 
                             CAST_FLOAT_TO_UINT;
@@ -538,7 +546,7 @@ static void cast_ptr_to_bool(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_PTR_TO_BOOL;
 }
 
@@ -551,7 +559,7 @@ static void cast_ptr_to_int(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_PTR_TO_INT;
 }
 
@@ -564,7 +572,7 @@ static void cast_ptr_to_ptr(ASTExpr* cast, ASTExpr* inner,
         return;
     }
 
-    cast->const_eval = inner->const_eval;
+    cast->is_const_eval = inner->is_const_eval;
     cast->expr.cast.kind = CAST_REINTERPRET;
 }
 
@@ -589,9 +597,12 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 #define NOALLW { NULL                    , NULL }
 #define NOTDEF { rule_not_defined        , NULL }
 #define TOVOID { rule_explicit_only      , cast_any_to_void }
-#define INTINT { rule_size_change        , cast_int_to_int }
 #define BOOINT { rule_explicit_only      , cast_bool_to_int }
+#define CHABOO { rule_explicit_only      , cast_int_to_bool }
+#define CHAINT { rule_explicit_only      , cast_int_to_int }
+#define CHAFLT { rule_explicit_only      , cast_int_to_float }
 #define INTBOO { rule_explicit_only      , cast_int_to_bool }
+#define INTINT { rule_int_to_int         , cast_int_to_int }
 #define INTFLT { rule_always             , cast_int_to_float }
 #define INTPTR { rule_explicit_only      , cast_int_to_ptr }
 #define FLTFLT { rule_size_change        , cast_float_to_float }
@@ -608,14 +619,14 @@ static void cast_distinct(ASTExpr* cast, ASTExpr* inner, Type* from, Type* to)
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
     [CAST_GROUP_VOID]      = { NOTDEF, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
-    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, NOTDEF, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_CHAR]      = { TOVOID, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, DISTIN },
-    [CAST_GROUP_INT]       = { TOVOID, INTBOO, NOTDEF, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, NOTDEF, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, NOTDEF, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOTDEF, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
+    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_CHAR]      = { TOVOID, CHABOO, INTINT, CHAINT, CHAFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]       = { TOVOID, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
     [CAST_GROUP_DISTINCT]  = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
 };
 
