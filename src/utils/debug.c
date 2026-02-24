@@ -332,9 +332,8 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
                constant->f, debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_INTEGER:
-        printf("Constant Integer val: %s hex: 0x%lX%lX] (Type: %s)\n",
+        printf("Constant Integer val: %s ] (Type: %s)\n",
                i128_to_string(constant->i, type_is_signed(expr->type->canonical)), 
-               constant->i.hi, constant->i.lo, 
                debug_type_to_str(expr->type, allow_unresolved));
         return;
     case CONSTANT_POINTER:

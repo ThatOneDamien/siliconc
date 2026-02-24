@@ -47,8 +47,8 @@ static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref);
 static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
 
-static bool arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc);
-static void promote_int_type(ASTExpr** expr);
+static bool basic_arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc);
+static void promote_type(ASTExpr** expr);
 static void expr_overwrite(ASTExpr* original, const ASTExpr* new);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
@@ -518,9 +518,10 @@ static bool analyze_ternary(ASTExpr* expr)
     valid &= analyze_expr(tern->else_expr);
     if(!valid) return false;
 
-    if(!type_equal(tern->then_expr->type, tern->else_expr->type) &&
-       !arith_type_conv(&tern->then_expr, &tern->else_expr, expr->loc))
-        return false;
+    SIC_TODO();
+    // if(!type_equal(tern->then_expr->type, tern->else_expr->type) &&
+    //    !arith_type_conv(&tern->then_expr, &tern->else_expr, expr->loc))
+    //     return false;
 
     expr->type = tern->else_expr->type;
     return implicit_cast(&tern->cond_expr, g_type_bool);
@@ -709,6 +710,35 @@ static bool analyze_ct_type_min(ASTExpr* expr)
     SIC_TODO();
 }
 
+static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr** rhs)
+{
+    DBG_ASSERT(pointer->type->kind == TYPE_POINTER);
+    ASTExpr* right = *rhs;
+    Type* rt = right->type->canonical;
+    if(!type_is_integer(rt))
+    {
+        sic_error_at(expr->loc, "Invalid operand types %s and %s.",
+                     type_to_string(pointer->type), type_to_string(right->type));
+        return false;
+    }
+    // Make sure pointer's inner type is resolved so we can get its size.
+    if(!resolve_type(&pointer->type->pointer_base, RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to")) 
+        return false;
+
+    expr->type = pointer->type;
+    if(pointer->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
+    {
+        uint64_t actual_val_to_add = right->expr.constant.i.lo * type_size(pointer->type->pointer_base);
+        DBG_ASSERT(expr->kind == EXPR_BINARY);
+        if(expr->expr.binary.kind == BINARY_SUB)
+            actual_val_to_add = -actual_val_to_add;
+        convert_to_const_pointer(expr, pointer->expr.constant.i.lo + actual_val_to_add);
+        return true;
+    }
+
+    return implicit_cast(rhs, type_is_unsigned(rt) ? g_type_uptr : g_type_iptr);
+}
+
 static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
 {
     bool valid = true;
@@ -721,38 +751,41 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     Type* rt = right->type->canonical;
     bool left_is_pointer = lt->kind == TYPE_POINTER;
     bool right_is_pointer = rt->kind == TYPE_POINTER;
+
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = left->expr.constant.i;
+        Int128 r = right->expr.constant.i;
+        if(lt == rt) expr->type = lt;
+        else 
+        {
+            if(lt == g_type_neg_int_lit)
+                expr->type = i128_ucmp(i128_neg(l), r) > 0 ? lt : rt;
+            else
+                expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
+        }
+        convert_to_const_int(expr, i128_add(l, r));
+        return true;
+    }
+
     if(right_is_pointer)
     {
         left_is_pointer = true;
         *lhs = right;
         *rhs = left;
         left = right;
-        right = *rhs;
-        rt = lt;
     }
 
     if(left_is_pointer)
-    {
-        if(!type_is_integer(rt))
-        {
-            sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                         type_to_string(left->type), type_to_string(right->type));
-            return false;
-        }
+        return analyze_pointer_arith(expr, left, rhs);
 
-        implicit_cast(rhs, type_is_unsigned(rt) ? g_type_uptr : g_type_iptr);
-        expr->type = left->type;
-        return true;
-    }
-
-    if(!arith_type_conv(lhs, rhs, expr->loc))
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     left = *lhs;
     right = *rhs;
 
     expr->type = left->type;
-
     if(left->kind == EXPR_CONSTANT && right->kind == EXPR_CONSTANT)
     {
         if(left->expr.constant.kind == CONSTANT_FLOAT)
@@ -761,6 +794,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
             convert_to_const_int(expr, i128_add(left->expr.constant.i, right->expr.constant.i));
         return true;
     }
+
 
     expr->is_const_eval = left->is_const_eval && right->is_const_eval;
     return true;
@@ -774,19 +808,27 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     if(!valid) return false;
     ASTExpr* left = *lhs;
     ASTExpr* right = *rhs;
-    if(left->type->canonical->kind == TYPE_POINTER)
+    Type* lt = left->type;
+    Type* rt = right->type;
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
     {
-        if(!type_is_integer(right->type->canonical))
+        Int128 l = left->expr.constant.i;
+        Int128 r = right->expr.constant.i;
+        if(lt != rt) expr->type = lt;
+        else 
         {
-            sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                         type_to_string(left->type), type_to_string(right->type));
-            return false;
+            if(lt == g_type_neg_int_lit)
+                expr->type = i128_scmp(l, r) >= 0 ? g_type_pos_int_lit : lt;
+            else
+                expr->type = i128_ucmp(l, r) >= 0 ? lt : g_type_neg_int_lit;
         }
-        expr->type = left->type;
+        convert_to_const_int(expr, i128_sub(l, r));
         return true;
     }
+    if(left->type->canonical->kind == TYPE_POINTER)
+        return analyze_pointer_arith(expr, left, rhs);
 
-    if(!arith_type_conv(lhs, rhs, expr->loc))
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     left = *lhs;
@@ -812,7 +854,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     valid &= analyze_expr(*lhs);
     valid &= analyze_expr(*rhs);
     if(!valid) return false;
-    if(!arith_type_conv(lhs, rhs, expr->loc))
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     ASTExpr* left = *lhs;
@@ -838,7 +880,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     valid &= analyze_expr(*lhs);
     valid &= analyze_expr(*rhs);
     if(!valid) return false;
-    if(!arith_type_conv(lhs, rhs, expr->loc))
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     ASTExpr* left = *lhs;
@@ -865,7 +907,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
                 sic_error_at(expr->loc, "Right side of division evaluates to 0.");
                 return false;
             }
-            convert_to_const_int(expr, i128_div(left->expr.constant.i, rval, right->type->kind));
+            convert_to_const_int(expr, i128_div(left->expr.constant.i, rval, expr->type->canonical->kind));
         }
         return true;
     }
@@ -889,7 +931,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return false;
     }
 
-    DBG_ASSERT(arith_type_conv(lhs, rhs, expr->loc));
+    DBG_ASSERT(basic_arith_type_conv(lhs, rhs, expr->loc));
 
     left = *lhs;
     right = *rhs;
@@ -965,7 +1007,7 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     {
     }
 
-    return arith_type_conv(lhs, rhs, expr->loc);
+    return basic_arith_type_conv(lhs, rhs, expr->loc);
 }
 
 static bool analyze_eq_ne(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
@@ -1089,10 +1131,9 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
     expr->type = left->type;
     if(right->kind == EXPR_CONSTANT)
     {
-        // TODO: Fix print
         if(i128_ucmp(right->expr.constant.i, i128_from_u64(lhs_ctype->builtin.bit_size)) >= 0)
-            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount (%lu) >= integer width (%u).",
-                              right->expr.constant.i.hi, lhs_ctype->builtin.bit_size);
+            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount exceeds integer width (%u).",
+                              lhs_ctype->builtin.bit_size);
 
         if(left->kind == EXPR_CONSTANT)
         {
@@ -1128,7 +1169,7 @@ static bool analyze_bit_op(ASTExpr* expr, ASTExpr** lhs, ASTExpr** rhs)
         return false;
     }
 
-    if(!arith_type_conv(lhs, rhs, expr->loc)) return false;
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
     expr->type = (*lhs)->type;
     return true;
 
@@ -1253,7 +1294,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
         return false;
     }
 
-    promote_int_type(inner);
+    // promote_int_type(inner);
     ASTExpr* in = *inner;
 
     expr->type = in->type;
@@ -1333,8 +1374,8 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
     }
 
 
-    if(type_is_integer(ctype))
-        promote_int_type(inner_ref);
+    // if(type_is_integer(ctype))
+        // promote_int_type(inner_ref);
 
     inner = *inner_ref;
     expr->type = inner->type;
@@ -1354,40 +1395,67 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
 }
 
 
-static bool arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc)
+// For add/sub/mult/div/mod
+static bool basic_arith_type_conv(ASTExpr** expr1, ASTExpr** expr2, SourceLoc loc)
 {
     Type* t1  = (*expr1)->type->canonical;
     Type* t2  = (*expr2)->type->canonical;
-    if(type_is_distinct(t1) && type_is_distinct(t2) && type_equal(t1, t2))
+    if(type_is_int_literal(t1))
     {
-        t1 = type_reduce(t1);
-        t2 = type_reduce(t2);
+        promote_type(expr2);
+        return implicit_cast(expr1, (*expr2)->type);
     }
+    else if(type_is_int_literal(t2))
+    {
+        promote_type(expr1);
+        return implicit_cast(expr2, (*expr1)->type);
+    }
+    TypeKind k1 = t1->kind;
+    TypeKind k2 = t2->kind;
 
-    if(!type_is_numeric(t1) || !type_is_numeric(t2))
+    if(!type_kind_is_numeric(k1) || !type_kind_is_numeric(k2))
     {
         sic_error_at(loc, "Invalid operand types %s and %s.",
                      type_to_string((*expr1)->type), type_to_string((*expr2)->type));
         return false;
     }
 
-    int w1 = type_is_float(t1) * 100 + t1->builtin.byte_size + (type_is_integer(t1) && type_is_unsigned(t1));
-    int w2 = type_is_float(t2) * 100 + t2->builtin.byte_size + (type_is_integer(t1) && type_is_unsigned(t2));
+    if(type_kind_is_integer(k1) && type_kind_is_integer(k2) && type_kind_is_signed(k1) != type_kind_is_signed(k2))
+    {
+        sic_error_at(loc, "You cannot combine signed and unsigned integer types.");
+        return false;
+    }
 
-    if(w1 < w2)
+    if(k1 < k2)
     {
         ASTExpr** temp = expr1;
         expr1 = expr2;
         expr2 = temp;
         t1 = t2;
-        w1 = w2;
+        k1 = k2;
     }
 
-    if(w1 < 100) // int
-        promote_int_type(expr1);
-    implicit_cast(expr2, (*expr1)->type);
+    promote_type(expr1);
+    implicit_cast_ensured(expr2, (*expr1)->type);
     DBG_ASSERT(type_equal((*expr1)->type, (*expr2)->type));
     return true;
+}
+
+static void promote_type(ASTExpr** expr)
+{
+    switch((*expr)->type->canonical->kind)
+    {
+    case TYPE_BYTE:
+    case TYPE_SHORT:
+        implicit_cast_ensured(expr, g_type_int);
+        break;
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+        implicit_cast_ensured(expr, g_type_uint);
+        break;
+    default:
+        break;
+    }
 }
 
 void resolve_int_lit_type(ASTExpr* lit)
@@ -1397,7 +1465,7 @@ void resolve_int_lit_type(ASTExpr* lit)
     Int128 val = lit->expr.constant.i;
     if(lit->type == g_type_neg_int_lit)
     {
-        DBG_ASSERT(i128_scmp(val, UINT128_MIN) < 0);
+        DBG_ASSERT(i128_is_neg(val));
         if(i128_scmp(val, i128_from_s64(INT64_MIN)) < 0)
         {
             lit->type = g_type_int128;
@@ -1420,14 +1488,6 @@ void resolve_int_lit_type(ASTExpr* lit)
     }
 
     lit->type = val.lo > (uint64_t)INT32_MAX ? g_type_long : g_type_int;
-}
-
-static inline void promote_int_type(ASTExpr** expr)
-{
-    Type* ctype = (*expr)->type->canonical;
-    DBG_ASSERT(type_is_integer(ctype));
-    if(ctype->builtin.byte_size < 4)
-        implicit_cast_ensured(expr, g_type_int);
 }
 
 static void expr_overwrite(ASTExpr* original, const ASTExpr* new)

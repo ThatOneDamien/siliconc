@@ -198,7 +198,6 @@ static bool rule_explicit_only(const CastParams* const params)
 static bool rule_int_to_int(const CastParams* const params)
 {
     if(params->explicit) return true;
-    DBG_ASSERT(!type_is_int_literal(params->toc));
     if(type_is_int_literal(params->fromc))
     {
         if(!i128_fits(params->inner->expr.constant.i, params->fromc, params->toc->kind))

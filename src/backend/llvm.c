@@ -232,6 +232,7 @@ static void emit_global_var(CodegenContext* c, ObjVar* global)
     if(global->kind == VAR_CT_CONST) return;
     get_llvm_ref(c, &global->header);
 
+    if(global->is_extern) return;
     if(global->initial_val == NULL)
     {
         LLVMSetInitializer(global->header.llvm_ref, LLVMConstNull(get_llvm_type(c, global->type_loc.type)));

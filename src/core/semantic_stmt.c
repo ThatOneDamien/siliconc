@@ -234,11 +234,13 @@ static void analyze_switch(ASTStmt* stmt)
     uint32_t scope;
     bool has_default = false;
     analyze_expr(swi->expr);
-    if(!type_is_integer(swi->expr->type))
+    TypeKind kind = swi->expr->type->canonical->kind;
+    if(!type_kind_is_integer(kind) && !type_kind_is_char(kind) && kind != TYPE_ENUM_DISTINCT)
     {
-        sic_error_at(swi->expr->loc, "Switch expression must be an integer type.");
+        sic_error_at(swi->expr->loc, "Switch expression can only be an integer, char, or enum type.");
         return;
     }
+
     if(type_size(swi->expr->type) < 4)
         implicit_cast(&swi->expr, g_type_int);
 

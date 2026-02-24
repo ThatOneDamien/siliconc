@@ -57,7 +57,11 @@ void       resolve_int_lit_type(ASTExpr* lit);
 
 static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
 {
-    DBG_ASSERT(implicit_cast(expr_to_cast, desired));
+    if(!implicit_cast(expr_to_cast, desired))
+    {
+        DBG_ERROR("Implicit cast failed when it should be impossible.");
+        SIC_UNREACHABLE();
+    }
 }
 
 static inline void const_int_correct(ASTExpr* expr)

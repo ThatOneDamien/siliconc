@@ -32,6 +32,7 @@
             fprintf(stderr, "\033[31m[DEBUG]: ");   \
             fprintf(stderr, __VA_ARGS__);           \
             fprintf(stderr, "\033[0m\n");           \
+            fflush(stderr);                         \
             __asm__ volatile("int3");               \
         } while(0)
     #define DBG_ASSERT(cond)                                \
@@ -63,13 +64,20 @@ Int128   i128_add(Int128 lhs, Int128 rhs);
 Int128   i128_add64(Int128 lhs, uint64_t rhs);
 Int128   i128_sub(Int128 lhs, Int128 rhs);
 Int128   i128_sub64(Int128 lhs, uint64_t rhs);
+Int128   i128_mult(Int128 lhs, Int128 rhs);
+Int128   i128_mult64(Int128 lhs, uint64_t rhs);
+Int128   i128_udiv(Int128 lhs, Int128 rhs);
+Int128   i128_sdiv(Int128 lhs, Int128 rhs);
+Int128   i128_div(Int128 lhs, Int128 rhs, TypeKind kind);
+Int128   i128_urem(Int128 lhs, Int128 rhs);
+Int128   i128_srem(Int128 lhs, Int128 rhs);
+Int128   i128_rem(Int128 lhs, Int128 rhs, TypeKind kind);
+void     i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem);
 Int128   i128_and(Int128 lhs, Int128 rhs);
 Int128   i128_or(Int128 lhs, Int128 rhs);
 Int128   i128_xor(Int128 lhs, Int128 rhs);
 Int128   i128_neg(Int128 lhs);
 Int128   i128_not(Int128 lhs);
-Int128   i128_mult(Int128 lhs, Int128 rhs);
-Int128   i128_mult64(Int128 lhs, uint64_t rhs);
 bool     i128_is_neg(Int128 val);
 int      i128_ucmp(Int128 lhs, Int128 rhs);
 int      i128_scmp(Int128 lhs, Int128 rhs);
@@ -80,13 +88,6 @@ Int128   i128_ashr64(Int128 lhs, uint64_t amount);
 Int128   i128_ashr(Int128 lhs, Int128 rhs);
 Int128   i128_lshr64(Int128 lhs, uint64_t amount);
 Int128   i128_lshr(Int128 lhs, Int128 rhs);
-Int128   i128_udiv(Int128 lhs, Int128 rhs);
-Int128   i128_sdiv(Int128 lhs, Int128 rhs);
-Int128   i128_div(Int128 lhs, Int128 rhs, TypeKind kind);
-Int128   i128_urem(Int128 lhs, Int128 rhs);
-Int128   i128_srem(Int128 lhs, Int128 rhs);
-Int128   i128_rem(Int128 lhs, Int128 rhs, TypeKind kind);
-void     i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem);
 double   i128_to_float(Int128 val, TypeKind kind);
 double   i128_to_float_signed(Int128 val);
 double   i128_to_float_unsigned(Int128 val);

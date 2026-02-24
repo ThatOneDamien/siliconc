@@ -4,4 +4,4 @@
 #include "utils/file_utils.h"
 
 void gen_ir();
-void llvm_initialize(void);
+void llvm_initialize();

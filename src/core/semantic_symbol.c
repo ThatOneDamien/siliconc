@@ -136,7 +136,7 @@ Object* find_obj(ModulePath* path)
                                "you wish to use it externally.", last.sym);
         return NULL;
     }
-    // TODO: Check visibility rules.
+
     return o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
 }
 

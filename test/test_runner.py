@@ -103,12 +103,15 @@ class TestRunner:
 
     def print_results(self):
         print('\n******** Result *********')
-        passed_str = color_str(f'{self.tests_passed} passed', StatusColor.PASS)
-        failed_str = color_str(f'{self.test_count - self.tests_passed} failed', StatusColor.FAIL)
+        tests_failed = self.test_count - self.tests_passed
+        passed_str = color_str(f' {self.tests_passed} passed', StatusColor.PASS) if self.tests_passed != 0 else ''
+        failed_str = color_str(f' {tests_failed} failed', StatusColor.FAIL) if tests_failed != 0 else ''
+        separator = ',' if self.tests_passed != 0 and tests_failed != 0 else ''
+
         if self.test_count == self.tests_passed:
-            print(f'{color_str('[PASS]', StatusColor.PASS)} Completed {self.test_count} test(s): {passed_str}, {failed_str}.')
+            print(f'{color_str('[PASS]', StatusColor.PASS)} Completed {self.test_count} test(s):{passed_str}{separator}{failed_str}.')
         else:
-            print(f'{color_str('[FAIL]', StatusColor.FAIL)} Completed {self.test_count} test(s): {passed_str}, {failed_str}.')
+            print(f'{color_str('[FAIL]', StatusColor.FAIL)} Completed {self.test_count} test(s):{passed_str}{separator}{failed_str}.')
         print('\n')
 
 
@@ -126,6 +129,11 @@ class TestRunner:
                 except ValueError:
                     sig_name = f'signal {sig}'
                 test.print_fail(f'Compiler crashed with {sig_name}.')
+                if proc_res.stderr:
+                    print(color_str('    Extra stderr: ', StatusColor.INFO))
+                    for line in proc_res.stderr.splitlines():
+                        print(f'        {line}')
+
             elif test.check_result(proc_res):
                 self.tests_passed += 1
         except subprocess.TimeoutExpired:

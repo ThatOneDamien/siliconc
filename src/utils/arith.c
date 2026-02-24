@@ -84,46 +84,6 @@ Int128 i128_sub64(Int128 lhs, uint64_t rhs)
 	return (Int128){ lo > lhs.lo ? lhs.hi - 1 : lhs.hi, lo };
 }
 
-// Int128 i128_extend(Int128 op, TypeKind type)
-// {
-// 	int bits = type_kind_bitsize(type);
-// 	if (bits == 128) return op;
-// 	uint64_t shift = 128 - (uint64_t)bits;
-// 	op = i128_shl64(op, shift);
-// 	bool is_signed = type_kind_is_signed(type);
-// 	if (is_signed)
-// 	{
-// 		return i128_ashr64(op, shift);
-// 	}
-// 	return i128_lshr64(op, shift);
-// }
-
-Int128 i128_and(Int128 lhs, Int128 rhs)
-{
-	return (Int128){ lhs.hi & rhs.hi, lhs.lo & rhs.lo };
-}
-
-Int128 i128_or(Int128 lhs, Int128 rhs)
-{
-	return (Int128){ lhs.hi | rhs.hi, lhs.lo | rhs.lo };
-}
-
-Int128 i128_xor(Int128 lhs, Int128 rhs)
-{
-	return (Int128){ lhs.hi ^ rhs.hi, lhs.lo ^ rhs.lo };
-}
-
-Int128 i128_neg(Int128 val)
-{
-	if (!val.lo && !val.hi) return val;
-	return i128_add64(i128_not(val), 1);
-}
-
-Int128 i128_not(Int128 val)
-{
-	return (Int128){ ~val.hi, ~val.lo };
-}
-
 static Int128 int64_mult(uint64_t u, uint64_t v)
 {
 	uint64_t u1 = LO32(u);
@@ -157,13 +117,107 @@ Int128 i128_mult64(Int128 lhs, uint64_t rhs)
 	return lo_mult;
 }
 
-
-int i128_ucmp(Int128 lhs, Int128 rhs)
+void i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem)
 {
-	if (lhs.hi > rhs.hi) return 1;
-	if (lhs.hi < rhs.hi) return -1;
-	if (lhs.lo == rhs.lo) return 0;
-	return lhs.lo > rhs.lo ? 1 : -1;
+	*div = (Int128){ 0, 0 };
+	int32_t shift = (int32_t)(i128_clz(&rhs) - i128_clz(&lhs));
+	if (shift < 0)
+	{
+		*rem = lhs;
+		return;
+	}
+	rhs = i128_shl64(rhs, (uint64_t)shift);
+	do
+	{
+		*div = i128_shl64(*div, 1);
+		if (i128_ucmp(lhs, rhs) != -1)
+		{
+			lhs = i128_sub(lhs, rhs);
+			div->lo |= 1;
+		}
+		rhs = i128_lshr64(rhs, 1);
+
+	} while (shift-- != 0);
+	rem->hi = lhs.hi;
+	rem->lo = lhs.lo;
+}
+
+Int128 i128_udiv(Int128 lhs, Int128 rhs)
+{
+	Int128 div, rem;
+	i128_udivrem(lhs, rhs, &div, &rem);
+	return div;
+}
+
+Int128 i128_urem(Int128 lhs, Int128 rhs)
+{
+	Int128 div, rem;
+	i128_udivrem(lhs, rhs, &div, &rem);
+	return rem;
+}
+
+Int128 i128_srem(Int128 lhs, Int128 rhs)
+{
+	uint64_t topbit1 = lhs.hi & 0x8000000000000000;
+	uint64_t topbit2 = rhs.hi & 0x8000000000000000;
+	if (topbit1) lhs = i128_neg(lhs);
+	if (topbit2) rhs = i128_neg(rhs);
+	Int128 res = i128_urem(lhs, rhs);
+	if (topbit2 ^ topbit1)
+	{
+		return i128_neg(res);
+	}
+	return res;
+}
+
+Int128 i128_rem(Int128 lhs, Int128 rhs, TypeKind kind)
+{
+    return type_kind_is_signed(kind) ? i128_srem(lhs, rhs) : i128_urem(lhs, rhs);
+}
+
+Int128 i128_sdiv(Int128 lhs, Int128 rhs)
+{
+	uint64_t topbit1 = lhs.hi & 0x8000000000000000;
+	uint64_t topbit2 = rhs.hi & 0x8000000000000000;
+	if (topbit1) lhs = i128_neg(lhs);
+	if (topbit2) rhs = i128_neg(rhs);
+	Int128 res = i128_udiv(lhs, rhs);
+	if (topbit2 ^ topbit1)
+	{
+		return i128_neg(res);
+	}
+	return res;
+}
+
+Int128 i128_div(Int128 lhs, Int128 rhs, TypeKind kind)
+{
+    return type_kind_is_signed(kind) ? i128_sdiv(lhs, rhs) : i128_udiv(lhs, rhs);
+}
+
+Int128 i128_and(Int128 lhs, Int128 rhs)
+{
+	return (Int128){ lhs.hi & rhs.hi, lhs.lo & rhs.lo };
+}
+
+Int128 i128_or(Int128 lhs, Int128 rhs)
+{
+	return (Int128){ lhs.hi | rhs.hi, lhs.lo | rhs.lo };
+}
+
+Int128 i128_xor(Int128 lhs, Int128 rhs)
+{
+	return (Int128){ lhs.hi ^ rhs.hi, lhs.lo ^ rhs.lo };
+}
+
+Int128 i128_neg(Int128 val)
+{
+	if (!val.lo && !val.hi) return val;
+	return i128_add64(i128_not(val), 1);
+}
+
+Int128 i128_not(Int128 val)
+{
+	return (Int128){ ~val.hi, ~val.lo };
 }
 
 Int128 i128_shl64(Int128 lhs, uint64_t amount)
@@ -193,11 +247,6 @@ Int128 i128_lshr64(Int128 lhs, uint64_t amount)
 	return lhs;
 }
 
-bool i128_is_zero(Int128 op)
-{
-	return op.hi == 0 && op.lo == 0;
-}
-
 Int128 i128_lshr(Int128 lhs, Int128 rhs)
 {
 	if (rhs.hi != 0) return (Int128){ 0, 0 };
@@ -220,16 +269,6 @@ Int128 i128_ashr(Int128 lhs, Int128 rhs)
 	return i128_ashr64(lhs, rhs.lo);
 }
 
-bool i128_is_neg(Int128 op)
-{
-	return ISNEG(op.hi);
-}
-
-int i128_cmp(Int128 lhs, Int128 rhs, TypeKind kind)
-{
-	return type_kind_is_signed(kind) ? i128_scmp(lhs, rhs) : i128_ucmp(lhs, rhs);
-}
-
 int i128_scmp(Int128 lhs, Int128 rhs)
 {
 	bool lhs_sign = lhs.hi & ((uint64_t)INT64_MIN);
@@ -244,16 +283,27 @@ int i128_scmp(Int128 lhs, Int128 rhs)
 	return lhs.lo > rhs.lo ? 1 : -1;
 }
 
-static uint32_t popcnt64(uint64_t n)
+int i128_ucmp(Int128 lhs, Int128 rhs)
 {
-	n -= ((n >> 1) & 0x5555555555555555);
-	n = (n & 0x3333333333333333) + ((n >> 2) & 0x3333333333333333);
-	return (((n + (n >> 4)) & 0xF0F0F0F0F0F0F0F) * 0x101010101010101) >> 56;
+	if (lhs.hi > rhs.hi) return 1;
+	if (lhs.hi < rhs.hi) return -1;
+	if (lhs.lo == rhs.lo) return 0;
+	return lhs.lo > rhs.lo ? 1 : -1;
 }
 
-UNUSED uint32_t i128_popcnt(Int128 i)
+int i128_cmp(Int128 lhs, Int128 rhs, TypeKind kind)
 {
-	return popcnt64(i.hi) + popcnt64(i.lo);
+	return type_kind_is_signed(kind) ? i128_scmp(lhs, rhs) : i128_ucmp(lhs, rhs);
+}
+
+bool i128_is_zero(Int128 op)
+{
+	return op.hi == 0 && op.lo == 0;
+}
+
+bool i128_is_neg(Int128 op)
+{
+	return ISNEG(op.hi);
 }
 
 static uint32_t ctz64(uint64_t n)
@@ -332,7 +382,7 @@ static uint32_t clz64(uint64_t n)
 
 uint32_t i128_clz(const Int128 *op)
 {
-	return op->hi ? clz64(op->hi) : clz64(op->lo) + 64;
+	return op->hi == 0 ? clz64(op->lo) + 64 : clz64(op->hi);
 }
 
 double i128_to_float(Int128 op, TypeKind kind)
@@ -348,83 +398,6 @@ double i128_to_float_signed(Int128 op)
 double i128_to_float_unsigned(Int128 op)
 {
 	return (double)op.lo + ldexp((double)op.hi, 64);
-}
-
-void i128_udivrem(Int128 lhs, Int128 rhs, Int128 *div, Int128 *rem)
-{
-	*div = (Int128){ 0, 0 };
-	int32_t shift = (int32_t)(i128_clz(&rhs) - i128_clz(&lhs));
-	if (shift < 0)
-	{
-		*rem = lhs;
-		return;
-	}
-	rhs = i128_shl64(rhs, (uint64_t)shift);
-	do
-	{
-		*div = i128_shl64(*div, 1);
-		if (i128_ucmp(lhs, rhs) != -1)
-		{
-			lhs = i128_sub(lhs, rhs);
-			div->lo |= 1;
-		}
-		rhs = i128_lshr64(rhs, 1);
-
-	} while (shift-- != 0);
-	rem->hi = lhs.hi;
-	rem->lo = lhs.lo;
-}
-
-Int128 i128_udiv(Int128 lhs, Int128 rhs)
-{
-	Int128 div, rem;
-	i128_udivrem(lhs, rhs, &div, &rem);
-	return div;
-}
-
-Int128 i128_urem(Int128 lhs, Int128 rhs)
-{
-	Int128 div, rem;
-	i128_udivrem(lhs, rhs, &div, &rem);
-	return rem;
-}
-
-Int128 i128_srem(Int128 lhs, Int128 rhs)
-{
-	uint64_t topbit1 = lhs.hi & 0x8000000000000000;
-	uint64_t topbit2 = rhs.hi & 0x8000000000000000;
-	if (topbit1) lhs = i128_neg(lhs);
-	if (topbit2) rhs = i128_neg(rhs);
-	Int128 res = i128_urem(lhs, rhs);
-	if (topbit2 ^ topbit1)
-	{
-		return i128_neg(res);
-	}
-	return res;
-}
-
-Int128 i128_rem(Int128 lhs, Int128 rhs, TypeKind kind)
-{
-    return type_kind_is_signed(kind) ? i128_srem(lhs, rhs) : i128_urem(lhs, rhs);
-}
-
-Int128 i128_sdiv(Int128 lhs, Int128 rhs)
-{
-	uint64_t topbit1 = lhs.hi & 0x8000000000000000;
-	uint64_t topbit2 = rhs.hi & 0x8000000000000000;
-	if (topbit1) lhs = i128_neg(lhs);
-	if (topbit2) rhs = i128_neg(rhs);
-	Int128 res = i128_udiv(lhs, rhs);
-	if (topbit2 ^ topbit1)
-	{
-		return i128_neg(res);
-	}
-	return res;
-}
-
-Int128 i128_div(Int128 lhs, Int128 rhs, TypeKind kind)
-{
-    return type_kind_is_signed(kind) ? i128_sdiv(lhs, rhs) : i128_udiv(lhs, rhs);
 }
 
 bool i128_fits(Int128 val, Type* optype, TypeKind totype)

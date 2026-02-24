@@ -4,6 +4,7 @@
 typedef enum : uint8_t
 {
     ATTR_ABI,
+    ATTR_DYNAMIC,
     ATTR_INLINE,
     ATTR_LINK_NAME,
     ATTR_NODISCARD,

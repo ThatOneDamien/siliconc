@@ -18,6 +18,7 @@ struct ExprParseRule
 // Top-level grammar
 static bool parse_top_level(Lexer* l);
 static bool parse_attributes(Lexer* l, AttrDA* attrs);
+static bool parse_expr_arguments(Lexer* l, ASTExprDA* args);
 static bool parse_module_path(Lexer* l, ModulePath* out);
 static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 static bool parse_import(Lexer* l, Visibility vis);
@@ -213,13 +214,39 @@ static bool parse_attributes(Lexer* l, AttrDA* attrs)
         }
 
         attr.kind = ATTR_CUSTOM;
-        SIC_TODO_MSG("User attributes not implemented");
+        sic_error_at(attr.loc, "Unknown attribute.");
+        // TODO: Implement custom attributes
 FOUND:
-        // TODO: parse arguments
+        if(tok_equal(l, TOKEN_LPAREN) && !parse_expr_arguments(l, &attr.args))
+            return false;
         da_append(attrs, attr);
     }
     da_compact(attrs);
     return true;
+}
+
+static bool parse_expr_arguments(Lexer* l, ASTExprDA* args)
+{
+    DBG_ASSERT(peek(l)->kind == TOKEN_LPAREN);
+    advance(l);
+    if(try_consume(l, TOKEN_RPAREN)) return true;
+    while(true)
+    {
+        if(tok_equal(l, TOKEN_EOF))
+        {
+            eof_error(l, TOKEN_RPAREN);
+            return false;
+        }
+
+        da_append(args, parse_expr(l));
+        if(expr_is_bad(args->data[args->size - 1]))
+            return false;
+
+        if(!try_consume(l, TOKEN_COMMA)) break;
+    }
+
+    da_compact(args);
+    return consume(l, TOKEN_RPAREN);
 }
 
 static bool parse_module_path(Lexer* l, ModulePath* out)
@@ -333,6 +360,7 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
     SourceLoc mod_loc = peek(l)->loc;
     Object* prev;
     advance(l);
+
     if((prev = hashmap_get(&parent->module_ns, mod_name)) != NULL)
     {
         sic_diagnostic_at(DIAG_ERROR, mod_loc, "Module with name \'%s\' already exists.", mod_name);
@@ -1119,27 +1147,12 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     return binary;
 }
 
-
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
 {
     ASTExpr* call = new_expr(EXPR_FUNC_CALL);
     call->expr.call.func_expr = func_expr;
-    ASTExprDA* args = &call->expr.call.args;
-    advance(l);
-
-    while(!try_consume(l, TOKEN_RPAREN))
-    {
-        if(args->size > 0)
-            CONSUME_OR_RET(TOKEN_COMMA, BAD_EXPR);
-
-        da_append(args, parse_expr(l));
-        if(expr_is_bad(args->data[args->size - 1]))
-            return BAD_EXPR;
-    }
-
+    if(!parse_expr_arguments(l, &call->expr.call.args)) return BAD_EXPR;
     call->loc = extend_loc(func_expr->loc, peek_prev(l)->loc);
-
-    da_compact(args);
     return call;
 }
 
@@ -1456,7 +1469,7 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
             sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
             return BAD_EXPR;
         }
-        if(val.hi == 0 && val.lo == 0)
+        if(i128_is_zero(val))
             expr->type = g_type_pos_int_lit;
         else
             expr->expr.constant.i = i128_neg(val);

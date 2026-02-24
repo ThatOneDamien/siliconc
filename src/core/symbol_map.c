@@ -55,8 +55,9 @@ void sym_map_init(void)
     g_sym_main = SYM_ADD("main");
     
     kind = TOKEN_ATTRIBUTE_IDENT;
-    static_assert(__ATTR_COUNT == 7, "Add Attributes here");
+    static_assert(__ATTR_COUNT == 8, "Add Attributes here");
     g_attr_list[ATTR_ABI]       = SYM_ADD("@abi");
+    g_attr_list[ATTR_DYNAMIC]   = SYM_ADD("@dynamic");
     g_attr_list[ATTR_INLINE]    = SYM_ADD("@inline");
     g_attr_list[ATTR_LINK_NAME] = SYM_ADD("@link_name");
     g_attr_list[ATTR_NODISCARD] = SYM_ADD("@nodiscard");

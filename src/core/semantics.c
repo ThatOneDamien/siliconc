@@ -67,7 +67,8 @@ bool analyze_function(ObjFunc* func)
 
     if(func->is_extern)
     {
-        func->header.link_name = func->header.symbol;
+        if(func->header.link_name == NULL)
+            func->header.link_name = func->header.symbol;
         if(func->body != NULL)
             sic_error_at(func->header.loc, "Function marked 'extern' cannot have a body.");
     }
@@ -296,7 +297,8 @@ bool analyze_global_var(ObjVar* var)
     analyze_attributes(&var->header);
     if(var->is_extern)
     {
-        var->header.link_name = var->header.symbol;
+        if(var->header.link_name == NULL)
+            var->header.link_name = var->header.symbol;
         if(var->initial_val != NULL)
             sic_error_at(var->header.loc, "Global variable marked 'extern' cannot have an initial value.");
     }
@@ -315,7 +317,6 @@ bool analyze_global_var(ObjVar* var)
 
     if(var->initial_val != NULL && !var->initial_val->is_const_eval)
     {
-        // printf("HERE %p %d %d %p\n", var, var->initial_val->loc.file, var->initial_val->kind, var->initial_val);
         sic_error_at(var->initial_val->loc, "Global variable must be initialized with a compile-time evaluable value.");
         var->header.kind = OBJ_INVALID;
         var->header.status = STATUS_RESOLVED;
@@ -467,28 +468,42 @@ static bool analyze_attributes(Object* obj)
         {
         case ATTR_ABI:
             SIC_TODO();
+        case ATTR_DYNAMIC:
+            if(!check_attribute_args(attr, 0)) break;
+            if(kind == OBJ_FUNC) continue;
+            if(kind == OBJ_VAR && obj_as_var(obj)->kind == VAR_GLOBAL) continue;
+            sic_error_at(attr->loc, "Attribute %s can only be applied to global functions/vars.", attr->symbol);
+            break;
         case ATTR_INLINE:
             if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_FUNC)
             {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.",
-                             attr->symbol);
+                sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
                 break;
             }
             continue;
         case ATTR_LINK_NAME: {
             if(!check_attribute_args(attr, 1)) break;
+            if(kind != OBJ_FUNC && (kind != OBJ_VAR || obj_as_var(obj)->kind != VAR_GLOBAL))
+            {
+                sic_error_at(attr->loc, "Attribute %s can only be applied to global functions/vars.", attr->symbol);
+                break;
+            }
             ASTExpr* expr = attr->args.data[0];
             if(!analyze_expr(expr)) break;
-            SIC_TODO();
-            obj->link_name = NULL;
+            if(expr->kind != EXPR_CONSTANT || expr->expr.constant.kind != CONSTANT_STRING)
+            {
+                sic_error_at(attr->loc, "Attribute %s first argument should be a string constant.", attr->symbol);
+                break;
+            }
+            obj->link_name = expr->expr.constant.str.val;
             continue;
         }
         case ATTR_NODISCARD:
             if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_FUNC)
             {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
                 break;
             }
             continue;
@@ -496,7 +511,7 @@ static bool analyze_attributes(Object* obj)
             if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_FUNC)
             {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
                 break;
             }
             continue;
@@ -504,7 +519,7 @@ static bool analyze_attributes(Object* obj)
             if(!check_attribute_args(attr, 0)) break;
             if(kind != OBJ_FUNC)
             {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to struct definitions.", attr->symbol);
+                sic_error_at(attr->loc, "Attribute %s can only be applied to functions.", attr->symbol);
                 break;
             }
             continue;
@@ -524,7 +539,6 @@ static bool analyze_attributes(Object* obj)
 
         attr->kind = ATTR_INVALID;
         valid = false;
-        continue;
     }
 
     return valid;
