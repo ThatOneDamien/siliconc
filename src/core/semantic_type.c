@@ -109,7 +109,7 @@ static bool resolve_array(Type* arr_ty, ResolutionFlags flags, SourceLoc err_loc
         return false;
 
     bool was_signed = type_is_signed(arr->size_expr->type->canonical);
-    if(!implicit_cast(&arr->size_expr, g_type_usize))
+    if(!implicit_cast(arr->size_expr, g_type_usize))
         return false;
 
 

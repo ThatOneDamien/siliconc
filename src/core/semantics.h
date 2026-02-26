@@ -34,14 +34,14 @@ bool       analyze_declaration(ObjVar* decl);
 bool       analyze_expr(ASTExpr* expr);
 bool       analyze_rvalue(ASTExpr* expr);
 bool       analyze_lvalue(ASTExpr* expr, bool will_write);
-bool       analyze_cast(ASTExpr* cast);
+bool       analyze_explicit_cast(ASTExpr* cast);
 bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_enum(ObjEnum* enum_, Type** o_type);
 bool       analyze_struct(ObjStruct* struct_, Type** o_type);
 bool       analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_union(ObjStruct* union_, Type** o_type);
-bool       implicit_cast(ASTExpr** expr_to_cast, Type* desired);
-bool       implicit_cast_vararg(ASTExpr** arg);
+bool       implicit_cast(ASTExpr* expr, Type* desired);
+bool       implicit_cast_vararg(ASTExpr* arg);
 bool       resolve_import(ObjModule* module, ObjImport* import);
 bool       resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 void       push_obj(Object* obj);
@@ -55,13 +55,12 @@ ASTStmt*   find_labeled_stmt(SymbolLoc label);
 void       set_object_link_name(Object* obj);
 void       resolve_int_lit_type(ASTExpr* lit);
 
-static inline void implicit_cast_ensured(ASTExpr** expr_to_cast, Type* desired)
+static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
 {
-    if(!implicit_cast(expr_to_cast, desired))
-    {
-        DBG_ERROR("Implicit cast failed when it should be impossible.");
-        SIC_UNREACHABLE();
-    }
+    if(dst == src) return;
+    SourceLoc loc = dst->loc;
+    *dst = *src;
+    dst->loc = loc;
 }
 
 static inline void const_int_correct(ASTExpr* expr)
@@ -140,10 +139,10 @@ static inline void convert_to_const_int(ASTExpr* expr, Int128 value)
     const_int_correct(expr);
 }
 
-static inline void convert_to_const_pointer(ASTExpr* expr, uint64_t value)
+static inline void convert_to_const_pointer(ASTExpr* expr, Int128 value)
 {
     convert_to_constant(expr, CONSTANT_POINTER);
-    expr->expr.constant.i = i128_from_u64(value);
+    expr->expr.constant.i = value;
 }
 
 static inline void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value)

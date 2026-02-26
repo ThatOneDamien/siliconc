@@ -619,7 +619,7 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
             sic_error_at(value->header.loc, "Enum value must be assigned a constant integer expression.");
             goto ERR;
         }
-        else if(!implicit_cast(&value->raw_value, enum_->underlying.type))
+        else if(!implicit_cast(value->raw_value, enum_->underlying.type))
             goto ERR;
         else
         {

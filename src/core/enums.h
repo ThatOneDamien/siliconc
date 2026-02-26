@@ -82,10 +82,11 @@ typedef enum : uint8_t
     CAST_PTR_TO_BOOL,
     CAST_PTR_TO_INT,
     CAST_INT_TO_PTR,
-    CAST_FLOAT_EXT_TRUNC,
-    CAST_SINT_EXT_TRUNC,
-    CAST_UINT_EXT_TRUNC,
-    CAST_REINTERPRET,
+    CAST_FLOAT_WIDEN,
+    CAST_FLOAT_TRUNCATE,
+    CAST_SINT_WIDEN,
+    CAST_UINT_WIDEN,
+    CAST_INT_TRUNCATE,
 } CastKind;
 
 // Could be expanded later to support multiple architectures.

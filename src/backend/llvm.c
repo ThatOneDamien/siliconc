@@ -702,12 +702,9 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
         {
             if(list->data[j].const_index == i)
             {
-                ASTExpr cast;
-                cast.kind = EXPR_CAST;
-                cast.type = lhs->type->array.elem_type;
-                cast.expr.cast.inner = list->data[j].init_value;
-                perform_cast(&cast);
-                emit_assign(c, &index, &cast, &temp);
+                ASTExpr* init_value = list->data[j].init_value;
+                perform_cast(init_value, lhs->type->array.elem_type);
+                emit_assign(c, &index, init_value, &temp);
                 goto NEXT_ENTRY;
             }
         }
@@ -943,26 +940,20 @@ static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValu
     case CAST_INT_TO_PTR:
         result->value = LLVMBuildIntToPtr(c->builder, inner->value, c->ptr_type, "");
         return;
-    case CAST_FLOAT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
-        result->value = is_widen ? LLVMBuildFPExt(c->builder, inner->value, to_llvm, "") :
-                                   LLVMBuildFPTrunc(c->builder, inner->value, to_llvm, "");
+    case CAST_FLOAT_WIDEN:
+        result->value = LLVMBuildFPExt(c->builder, inner->value, to_llvm, "");
         return;
-    }
-    case CAST_SINT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
-        result->value = is_widen ? LLVMBuildSExt(c->builder, inner->value, to_llvm, "") :
-                                   LLVMBuildTrunc(c->builder, inner->value, to_llvm, "");
+    case CAST_FLOAT_TRUNCATE:
+        result->value = LLVMBuildFPTrunc(c->builder, inner->value, to_llvm, "");
         return;
-    }
-    case CAST_UINT_EXT_TRUNC: {
-        bool is_widen = type_size(expr->type) > type_size(cast->inner->type);
-        result->value = is_widen ? LLVMBuildZExt(c->builder, inner->value, to_llvm, "") :
-                                   LLVMBuildTrunc(c->builder, inner->value, to_llvm, "");
+    case CAST_SINT_WIDEN:
+        result->value = LLVMBuildSExt(c->builder, inner->value, to_llvm, "");
         return;
-    }
-    case CAST_REINTERPRET:
-        result->value = inner->value;
+    case CAST_UINT_WIDEN:
+        result->value = LLVMBuildZExt(c->builder, inner->value, to_llvm, "");
+        return;
+    case CAST_INT_TRUNCATE:
+        result->value = LLVMBuildTrunc(c->builder, inner->value, to_llvm, "");
         return;
     case CAST_INVALID:
         break;
@@ -1091,12 +1082,9 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, arr_type->array.static_len);
     for(uint32_t i = 0; i < list->size; ++i)
     {
-        ASTExpr cast;
-        cast.kind = EXPR_CAST;
-        cast.type = arr_type->array.elem_type;
-        cast.expr.cast.inner = list->data[i].init_value;
-        perform_cast(&cast);
-        values[list->data[i].const_index] = emit_const_initializer(c, &cast);
+        ASTExpr* init_val = list->data[i].init_value;
+        perform_cast(init_val, arr_type->array.elem_type);
+        values[list->data[i].const_index] = emit_const_initializer(c, init_val);
     }
     for(uint32_t i = 0; i < arr_type->array.static_len; ++i)
     {

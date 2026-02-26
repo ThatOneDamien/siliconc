@@ -178,7 +178,7 @@ static void analyze_for(ASTStmt* stmt)
 static void analyze_if(ASTStmt* stmt)
 {
     ASTIf* if_stmt = &stmt->stmt.if_;
-    implicit_cast(&if_stmt->cond, g_type_bool);
+    implicit_cast(if_stmt->cond, g_type_bool);
     analyze_stmt(if_stmt->then_stmt);
     if(if_stmt->else_stmt != NULL)
     {
@@ -221,7 +221,7 @@ static void analyze_return(ASTStmt* stmt)
                             "Function returning void should not return a value.");
             return;
         }
-        implicit_cast(&ret->ret_expr, ret_type);
+        implicit_cast(ret->ret_expr, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
         sic_error_at(stmt->loc, "Function returning non-void should return a value.");
@@ -242,7 +242,7 @@ static void analyze_switch(ASTStmt* stmt)
     }
 
     if(type_size(swi->expr->type) < 4)
-        implicit_cast(&swi->expr, g_type_int);
+        implicit_cast(swi->expr, g_type_int);
 
     ASTStmt* prev_break = g_sema->break_target;
     g_sema->break_target = stmt;
@@ -252,7 +252,7 @@ static void analyze_switch(ASTStmt* stmt)
         ASTCase* cas = swi->cases.data + i;
         if(cas->expr != NULL)
         {
-            if(!implicit_cast(&cas->expr, swi->expr->type)) goto CASE_BODY;
+            if(!implicit_cast(cas->expr, swi->expr->type)) goto CASE_BODY;
             if(cas->expr->kind != EXPR_CONSTANT)
             {
                 sic_error_at(cas->expr->loc, "Case expression must be a compile-time evaluable constant.");
@@ -290,7 +290,7 @@ static void analyze_switch(ASTStmt* stmt)
 static void analyze_while(ASTStmt* stmt)
 {
     ASTWhile* while_stmt = &stmt->stmt.while_;
-    implicit_cast(&while_stmt->cond, g_type_bool);
+    implicit_cast(while_stmt->cond, g_type_bool);
 
     ASTStmt* prev_break = g_sema->break_target;
     ASTStmt* prev_continue = g_sema->continue_target;
@@ -315,7 +315,7 @@ static void analyze_while(ASTStmt* stmt)
 void analyze_ct_assert(ASTStmt* stmt)
 {
     ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
-    bool valid = implicit_cast(&assert_->cond, g_type_bool);
+    bool valid = implicit_cast(assert_->cond, g_type_bool);
     valid &= analyze_expr(assert_->err_msg);
     if(!valid) return;
     if(assert_->cond->kind != EXPR_CONSTANT)
@@ -341,7 +341,7 @@ void analyze_ct_assert(ASTStmt* stmt)
 void analyze_ct_if(ASTStmt* stmt)
 {
     ASTIf* if_ = &stmt->stmt.if_;
-    if(!implicit_cast(&if_->cond, g_type_bool)) return;
+    if(!implicit_cast(if_->cond, g_type_bool)) return;
 
     ASTExpr* cond = if_->cond;
     if(cond->kind != EXPR_CONSTANT)
@@ -454,10 +454,10 @@ bool analyze_declaration(ObjVar* decl)
 
                 decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
                 decl->type_loc.type->array.static_len = decl->initial_val->expr.array_init.max + 1;
-                implicit_cast(&decl->initial_val, decl->type_loc.type);
+                implicit_cast(decl->initial_val, decl->type_loc.type);
             }
         }
-        else if(!implicit_cast(&decl->initial_val, decl->type_loc.type))
+        else if(!implicit_cast(decl->initial_val, decl->type_loc.type))
             return false;
     }
     if(decl->is_const_binding)

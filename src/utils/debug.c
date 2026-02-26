@@ -102,11 +102,10 @@ void print_func(const ObjFunc* func, bool allow_unresolved)
 
 void print_global_var(const ObjVar* var, bool allow_unresolved)
 {
-    printf("%s Global Var \'%s\' (Type: %s) %p\n",
+    printf("%s Global Var \'%s\' (Type: %s)\n",
            s_vis_strs[var->header.visibility],
            var->header.symbol,
-           debug_type_to_str(var->type_loc.type, allow_unresolved),
-           var);
+           debug_type_to_str(var->type_loc.type, allow_unresolved));
 
     if(var->initial_val != NULL)
         print_expr_at_depth(var->initial_val, 1, NULL, allow_unresolved);
