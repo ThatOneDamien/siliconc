@@ -133,7 +133,7 @@ struct MemArena
     size_t   capacity;
     size_t   allocated;
 #ifdef SI_DEBUG
-
+    size_t saved;
 #endif
 };
 
@@ -404,7 +404,6 @@ struct ASTExprConstant
         double        f; // Float
         bool          b; // Bool
         ConstString   str; // String
-        ObjEnumValue* enum_; // Enum Value
     };
 };
 

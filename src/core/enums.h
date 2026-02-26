@@ -104,7 +104,6 @@ typedef enum : uint8_t
     CONSTANT_INTEGER,
     CONSTANT_POINTER,
     CONSTANT_STRING,
-    CONSTANT_ENUM,
 } ConstantKind;
 
 typedef enum : uint8_t

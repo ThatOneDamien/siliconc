@@ -40,6 +40,8 @@ bool       analyze_enum(ObjEnum* enum_, Type** o_type);
 bool       analyze_struct(ObjStruct* struct_, Type** o_type);
 bool       analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
 bool       analyze_union(ObjStruct* union_, Type** o_type);
+bool       can_cast(ASTExpr* expr, Type* to, bool silent);
+void       perform_cast(ASTExpr* expr, Type* to);
 bool       implicit_cast(ASTExpr* expr, Type* desired);
 bool       implicit_cast_vararg(ASTExpr* arg);
 bool       resolve_import(ObjModule* module, ObjImport* import);
@@ -143,11 +145,4 @@ static inline void convert_to_const_pointer(ASTExpr* expr, Int128 value)
 {
     convert_to_constant(expr, CONSTANT_POINTER);
     expr->expr.constant.i = value;
-}
-
-static inline void convert_to_const_enum(ASTExpr* expr, ObjEnumValue* enum_value)
-{
-    convert_to_constant(expr, CONSTANT_ENUM);
-    expr->type = enum_value->enum_type;
-    expr->expr.constant.enum_ = enum_value;
 }

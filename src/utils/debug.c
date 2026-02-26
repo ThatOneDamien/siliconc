@@ -342,8 +342,6 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
     case CONSTANT_STRING:
         printf("Constant String ]\n");
         return;
-    case CONSTANT_ENUM:
-        SIC_TODO();
     }
     SIC_UNREACHABLE();
 }

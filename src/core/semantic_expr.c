@@ -28,7 +28,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
+static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne);
 static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
@@ -49,8 +49,6 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref);
 static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
 
 static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc);
-static void promote_type(ASTExpr* expr);
-static void expr_overwrite(ASTExpr* original, const ASTExpr* new);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
 bool analyze_expr(ASTExpr* expr)
@@ -135,16 +133,16 @@ RETRY:
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS:
-        // FIXME: Make this an lvalue version
-        return analyze_array_access(expr);
+        if(!analyze_expr(expr)) return false;
+        if(!analyze_lvalue_dispatch(expr->expr.array_access.array_expr, will_write)) return false;
+        expr->is_const_eval = expr->expr.array_access.array_expr->is_const_eval;
+        break;
     case EXPR_IDENT: {
         Object* ident = expr->expr.ident;
         switch(ident->kind)
         {
         case OBJ_VAR: {
             ObjVar* var = obj_as_var(ident);
-            if(var->kind == VAR_CT_CONST)
-                goto ERR;
             if(var->kind == VAR_GLOBAL)
                 expr->is_const_eval = true;
             var->written = true;
@@ -163,8 +161,9 @@ RETRY:
         break;
     }
     case EXPR_MEMBER_ACCESS:
-        expr = expr->expr.member_access.parent_expr;
-        goto RETRY;
+        if(!analyze_lvalue_dispatch(expr->expr.member_access.parent_expr, will_write)) return false;
+        expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
+        break;
     case EXPR_UNARY:
         if(!analyze_expr(expr)) return false;
         if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
@@ -190,7 +189,6 @@ RETRY:
     return true;
 
 ERR:
-
     sic_error_at(expr->loc, will_write ? "Expression is not assignable." : "Expression is not an lvalue.");
     return false;
 }
@@ -203,6 +201,7 @@ static bool analyze_array_access(ASTExpr* expr)
     valid &= analyze_expr(expr->expr.array_access.index_expr);
     if(!valid) return false;
     Type* arr_t = type_reduce(arr_expr->type);
+    Type* elem_type;
 
     if(arr_t->kind == TYPE_INIT_LIST)
     {
@@ -213,11 +212,11 @@ static bool analyze_array_access(ASTExpr* expr)
     }
     if(arr_t->kind == TYPE_POINTER)
     {
-        expr->type = type_apply_qualifiers(arr_t->pointer_base, arr_expr->type->qualifiers);
-        if(!resolve_type(&expr->type, RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
+        elem_type = arr_t->pointer_base;
+        if(!resolve_type(&elem_type, RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
     }
     else if(type_is_array(arr_t))
-        expr->type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
+        elem_type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
     else
     {
         sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
@@ -248,17 +247,17 @@ static bool analyze_array_access(ASTExpr* expr)
             {
                 if(list->data[i].const_index == idx)
                 {
-                    Type* t = expr->type;
                     expr_copy(expr, list->data[i].init_value);
-                    perform_cast(expr, t);
                     return true;
                 }
             }
 
-            convert_to_const_zero(expr, expr->type);
+            convert_to_const_zero(expr, elem_type);
+            return true;
         }
     }
-    
+
+    expr->type = elem_type;
     return true;
 }
 
@@ -440,7 +439,7 @@ static bool analyze_ident(ASTExpr* expr, bool mark_read)
     switch(ident->kind)
     {
     case OBJ_ENUM_VALUE:
-        convert_to_const_enum(expr, obj_as_enum_value(ident));
+        convert_to_const_int(expr, obj_as_enum_value(ident)->const_value);
         return true;
     case OBJ_FUNC: {
         ObjFunc* func = obj_as_func(ident);
@@ -1049,14 +1048,14 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(lhs->kind == EXPR_CONSTANT)
     {
         DBG_ASSERT(lhs->expr.constant.kind == CONSTANT_BOOL);
-        expr_overwrite(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
+        expr_copy(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
         return true;
     }
 
     if(rhs->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ rhs->expr.constant.b))
     {
         DBG_ASSERT(rhs->expr.constant.kind == CONSTANT_BOOL);
-        expr_overwrite(expr, lhs); 
+        expr_copy(expr, lhs);
         return true;
     }
 
@@ -1064,30 +1063,55 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne)
 {
-    Type* lhs_type = lhs->type;
-    Type* rhs_type = rhs->type;
-    Type* lhs_ctype = lhs_type->canonical;
-    Type* rhs_ctype = rhs_type->canonical;
+    TypeKind lkind = lhs->type->canonical->kind;
+    TypeKind rkind = rhs->type->canonical->kind;
     expr->type = g_type_bool;
-    if(lhs_ctype->kind == TYPE_STRING_LITERAL || rhs_ctype->kind == TYPE_STRING_LITERAL)
+    if(lkind == TYPE_STRING_LITERAL || rkind == TYPE_STRING_LITERAL)
     {
         // TODO: Remove this. It is temporarily here because the string type is not
         // fleshed out. There are two options: allow comparisons between strings
         // which would resolve to a strcmp under the hood, or disallow them entirely.
+        //
         sic_error_at(expr->loc, "String literals cannot be compared.");
         return false;
     }
-    if(lhs_ctype->kind == TYPE_POINTER || lhs_ctype->kind == TYPE_FUNC_PTR)
-        return implicit_cast(rhs, lhs_type);
-    if(rhs_ctype->kind == TYPE_POINTER || rhs_ctype->kind == TYPE_FUNC_PTR)
-        return implicit_cast(lhs, rhs_type);
-    if(type_is_integer(lhs_ctype) && type_is_integer(rhs_ctype))
+
+    switch(lkind)
     {
+    case TYPE_BOOL:
+        if(rkind != TYPE_BOOL || !is_eq_ne) goto ERR;
+        return true;
+    case TYPE_CHAR:
+    case TYPE_CHAR16:
+    case TYPE_CHAR32:
+        if(rkind != lkind) goto ERR;
+        return true;
+    case INT_TYPES:
+        if(!type_kind_is_integer(rkind)) goto ERR;
+        return basic_arith_type_conv(lhs, rhs, expr->loc);
+    case FLOAT_TYPES:
+        if(!type_kind_is_float(rkind)) goto ERR;
+        return basic_arith_type_conv(lhs, rhs, expr->loc);
+    case TYPE_POINTER:
+    case TYPE_FUNC_PTR:
+        if(rkind != TYPE_POINTER && rkind != TYPE_FUNC_PTR) goto ERR;
+        if(!can_cast(rhs, lhs->type, true)) goto ERR;
+        perform_cast(rhs, lhs->type);
+        return true;
+    case TYPE_ALIAS_DISTINCT:
+    case TYPE_ENUM_DISTINCT:
+        if(!type_equal(lhs->type, rhs->type)) goto ERR;
+        return true;
+    default:
+        goto ERR;
     }
 
-    return basic_arith_type_conv(lhs, rhs, expr->loc);
+ERR:
+    sic_error_at(expr->loc, "Invalid operand types %s and %s.",
+                 type_to_string(lhs->type), type_to_string(rhs->type));
+    return false;
 }
 
 static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
@@ -1096,7 +1120,7 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(lhs);
     valid &= analyze_expr(rhs);
     if(!valid) return false;
-    if(!analyze_comparison(expr, lhs, rhs)) return false;
+    if(!analyze_comparison(expr, lhs, rhs, true)) return false;
 
     Type* ty = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
@@ -1121,7 +1145,7 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(lhs);
     valid &= analyze_expr(rhs);
     if(!valid) return false;
-    if(!analyze_comparison(expr, lhs, rhs)) return false;
+    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
     Type* ty = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
@@ -1146,7 +1170,7 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(lhs);
     valid &= analyze_expr(rhs);
     if(!valid) return false;
-    if(!analyze_comparison(expr, lhs, rhs)) return false;
+    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
     Type* ty = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
@@ -1172,9 +1196,6 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(rhs);
     if(!valid) return false;
 
-    // FIXME: Actually promote the lhs integer type to i32 or something
-
-    SIC_TODO_MSG("Shifts are not working properly.");
     Type* lhs_ctype = lhs->type->canonical;
     Type* rhs_ctype = rhs->type->canonical;
 
@@ -1185,8 +1206,8 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
         return false;
     }
 
-    // if(lhs_ctype->builtin.byte_size != rhs_ctype->builtin.byte_size)
-    //     perform_cast(right, lhs_ctype);
+    if(type_is_int_literal(rhs_ctype) || lhs_ctype->builtin.byte_size != rhs_ctype->builtin.byte_size)
+        perform_cast(rhs, lhs_ctype);
 
     
     expr->type = lhs->type;
@@ -1456,15 +1477,9 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
     Type* t1  = expr1->type->canonical;
     Type* t2  = expr2->type->canonical;
     if(type_is_int_literal(t1))
-    {
-        promote_type(expr2);
         return implicit_cast(expr1, expr2->type);
-    }
     else if(type_is_int_literal(t2))
-    {
-        promote_type(expr1);
         return implicit_cast(expr2, expr1->type);
-    }
     TypeKind k1 = t1->kind;
     TypeKind k2 = t2->kind;
 
@@ -1490,27 +1505,9 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
         k1 = k2;
     }
 
-    promote_type(expr1);
     perform_cast(expr2, expr1->type);
     DBG_ASSERT(type_equal(expr1->type, expr2->type));
     return true;
-}
-
-static void promote_type(ASTExpr* expr)
-{
-    switch(expr->type->canonical->kind)
-    {
-    case TYPE_BYTE:
-    case TYPE_SHORT:
-        perform_cast(expr, g_type_int);
-        break;
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-        perform_cast(expr, g_type_uint);
-        break;
-    default:
-        break;
-    }
 }
 
 void resolve_int_lit_type(ASTExpr* lit)
@@ -1543,13 +1540,6 @@ void resolve_int_lit_type(ASTExpr* lit)
     }
 
     lit->type = val.lo > (uint64_t)INT32_MAX ? g_type_long : g_type_int;
-}
-
-static void expr_overwrite(ASTExpr* original, const ASTExpr* new)
-{
-    SourceLoc loc = original->loc;
-    *original = *new;
-    original->loc = loc;
 }
 
 static void convert_to_const_zero(ASTExpr* expr, Type* type)

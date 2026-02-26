@@ -96,7 +96,6 @@ void parse_source_file(FileId fileid);
 
 // Semantic analysis functions
 void  analyze_module(ObjModule* module);
-void  perform_cast(ASTExpr* expr, Type* to);
 Attr* get_builtin_attribute(Object* obj, AttrKind kind);
 
 // Symbol map functions

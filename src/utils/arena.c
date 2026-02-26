@@ -92,8 +92,7 @@ void* arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, siz
         {
             arena->allocated -= prev_size - size;
 #ifdef SI_DEBUG
-            if(g_compiler.debug_output & DEBUG_MEMORY)
-                printf("Reduced from %lu to %lu. Saved %lu bytes.\n", prev_size, size, prev_size - size);
+            arena->saved += prev_size - size;
 #endif
             return ptr;
         }

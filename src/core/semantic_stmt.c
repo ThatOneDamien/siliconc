@@ -273,7 +273,7 @@ static void analyze_switch(ASTStmt* stmt)
         else if(has_default)
         {
             // TODO: Improve this error message, Im just too fucking lazy right now.
-            sic_error_at(swi->expr->loc, "Switch statement contains duplicate default cases.");
+            sic_error_at(stmt->loc, "Switch statement contains duplicate default cases.");
         }
         else
             has_default = true;

@@ -15,7 +15,9 @@ static void resolve_dependency_paths(char** crt, char** gcclib);
 static void print_debug_stats() 
 {
     if(g_compiler.debug_output & DEBUG_MEMORY)
-        printf("\nMemory Allocated: %zu bytes\n", g_global_arena.allocated); 
+        printf("\nTotal Memory Allocated: %zu bytes\nMemory Saved From Free/Realloc: %zu bytes\n", 
+                g_global_arena.allocated,
+                g_global_arena.saved); 
 }
 #endif // SI_DEBUG
 

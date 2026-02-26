@@ -702,9 +702,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
         {
             if(list->data[j].const_index == i)
             {
-                ASTExpr* init_value = list->data[j].init_value;
-                perform_cast(init_value, lhs->type->array.elem_type);
-                emit_assign(c, &index, init_value, &temp);
+                emit_assign(c, &index, list->data[j].init_value, &temp);
                 goto NEXT_ENTRY;
             }
         }
@@ -993,9 +991,6 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
         result->value = global_string;
         return;
     }
-    case CONSTANT_ENUM:
-        result->value = get_llvm_const_int(c, constant->enum_->const_value, false); 
-        return;
     }
     SIC_UNREACHABLE();
 }
@@ -1082,9 +1077,7 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, arr_type->array.static_len);
     for(uint32_t i = 0; i < list->size; ++i)
     {
-        ASTExpr* init_val = list->data[i].init_value;
-        perform_cast(init_val, arr_type->array.elem_type);
-        values[list->data[i].const_index] = emit_const_initializer(c, init_val);
+        values[list->data[i].const_index] = emit_const_initializer(c, list->data[i].init_value);
     }
     for(uint32_t i = 0; i < arr_type->array.static_len; ++i)
     {
