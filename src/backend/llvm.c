@@ -78,9 +78,10 @@ static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, Gen
 
 static void     store_default(CodegenContext* c, GenValue* ptr);
 
-static LLVMValueRef      emit_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment);
-static LLVMValueRef      emit_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment);
-static LLVMValueRef      emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
+static inline void       emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* value);
+static LLVMValueRef      emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment);
+static LLVMValueRef      emit_llvm_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment);
+static LLVMValueRef      emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
 static void              emit_var_alloca(CodegenContext* c, ObjVar* obj);
 static LLVMBasicBlockRef create_basic_block(const char* label);
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label);
@@ -229,7 +230,7 @@ static void gen_module(CodegenContext* c, ObjModule* module)
 
 static void emit_global_var(CodegenContext* c, ObjVar* global)
 {
-    if(global->kind == VAR_CT_CONST) return;
+    if(global->binding_kind == VAR_BINDING_CT_CONST) return;
     get_llvm_ref(c, &global->header);
 
     if(global->is_extern) return;
@@ -252,9 +253,9 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
     c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32Type(), ".alloca_ptr");
     if(func->swap_stmt_size > 0)
     {
-        c->swap_ref = emit_alloca(c, ".swap_space", 
-                                  LLVMArrayType2(LLVMInt8Type(), func->swap_stmt_size), 
-                                  func->swap_stmt_align);
+        c->swap_ref = emit_llvm_alloca(c, ".swap_space", 
+                                       LLVMArrayType2(LLVMInt8Type(), func->swap_stmt_size), 
+                                       func->swap_stmt_align);
     }
 
     const ObjVarDA params = func->signature.params;
@@ -265,7 +266,7 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
         if(param->header.symbol)
         {
             emit_var_alloca(c, param);
-            emit_store(c, LLVMGetParam(func->header.llvm_ref, i), param->header.llvm_ref, type_alignment(param->type_loc.type));
+            emit_llvm_store(c, LLVMGetParam(func->header.llvm_ref, i), param->header.llvm_ref, type_alignment(param->type_loc.type));
         }
     }
 
@@ -404,6 +405,7 @@ static void emit_continue_stmt(CodegenContext* c, ASTStmt* stmt)
 
 static void emit_declaration(CodegenContext* c, ObjVar* decl)
 {
+    if(decl->binding_kind == VAR_BINDING_CT_CONST) return;
     DBG_ASSERT(decl->kind == VAR_LOCAL);
     emit_var_alloca(c, decl);
     GenValue var;
@@ -513,10 +515,10 @@ static void emit_swap(CodegenContext* c, ASTStmt* stmt)
     GenValue rhs = emit_expr(c, stmt->stmt.swap.right);
     if(type_is_trivially_copyable(ty))
     {
-        LLVMValueRef lrval = emit_load(c, get_llvm_type(c, ty), lhs.value, lhs.alignment);
-        LLVMValueRef rrval = emit_load(c, get_llvm_type(c, ty), rhs.value, rhs.alignment);
-        emit_store(c, rrval, lhs.value, lhs.alignment);
-        emit_store(c, lrval, rhs.value, rhs.alignment);
+        LLVMValueRef lrval = emit_llvm_load(c, get_llvm_type(c, ty), lhs.value, lhs.alignment);
+        LLVMValueRef rrval = emit_llvm_load(c, get_llvm_type(c, ty), rhs.value, rhs.alignment);
+        emit_llvm_store(c, rrval, lhs.value, lhs.alignment);
+        emit_llvm_store(c, lrval, rhs.value, rhs.alignment);
         return;
     }
 
@@ -707,7 +709,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
             }
         }
         
-        emit_store(c, LLVMConstNull(get_llvm_type(c, index.type)), index.value, index.alignment);
+        emit_llvm_store(c, LLVMConstNull(get_llvm_type(c, index.type)), index.value, index.alignment);
 
     NEXT_ENTRY:;
     }
@@ -1116,7 +1118,7 @@ static void emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenVa
         emit_add(c, &inner_rval, &temp, result);
     else
         emit_sub(c, &inner_rval, &temp, result);
-    emit_store(c, result->value, inner->value, inner->alignment);
+    emit_llvm_store(c, result->value, inner->value, inner->alignment);
     result->kind = GEN_VAL_RVALUE;
     if(is_post)
         result->value = inner_rval.value;
@@ -1293,25 +1295,8 @@ static void emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* right, GenVal
     }
 
     GenValue rhs = emit_expr(c, right);
-    if(rhs.kind == GEN_VAL_ADDRESS)
-    {
-        if(type_is_trivially_copyable(rhs.type))
-            load_rvalue(c, &rhs);
-        else
-        {
-            LLVMBuildMemCpy(c->builder, 
-                            lhs->value, lhs->alignment, 
-                            rhs.value, rhs.alignment, 
-                            LLVMConstInt(LLVMInt64Type(), type_size(rhs.type), false));
-            result->kind = GEN_VAL_ADDRESS;
-            result->value = rhs.value;
-            return;
-        }
-    }
-
-    emit_store(c, rhs.value, lhs->value, lhs->alignment);
-    result->kind = GEN_VAL_RVALUE;
-    result->value = rhs.value;
+    emit_smart_store(c, lhs, &rhs);
+    *result = rhs;
 }
 
 
@@ -1348,7 +1333,7 @@ static void store_default(CodegenContext* c, GenValue* ptr)
     case NUMERIC_TYPES:
     case TYPE_POINTER:
     case TYPE_FUNC_PTR:
-        emit_store(c, LLVMConstNull(ty_ref), ptr->value, ptr->alignment);
+        emit_llvm_store(c, LLVMConstNull(ty_ref), ptr->value, ptr->alignment);
         break;
     case TYPE_STATIC_ARRAY:
     case TYPE_STRUCT:
@@ -1373,7 +1358,28 @@ static void store_default(CodegenContext* c, GenValue* ptr)
     }
 }
 
-static inline LLVMValueRef emit_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment)
+// Emit a store based on the type being stored. This will sometimes be a memcpy
+static inline void emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* value)
+{
+    if(value->kind == GEN_VAL_ADDRESS)
+    {
+        if(type_is_trivially_copyable(value->type))
+            load_rvalue(c, value);
+        else
+        {
+            LLVMBuildMemCpy(c->builder, 
+                            ptr->value, ptr->alignment, 
+                            value->value, value->alignment, 
+                            LLVMConstInt(LLVMInt64Type(), type_size(value->type), false));
+            return;
+        }
+    }
+
+    emit_llvm_store(c, value->value, ptr->value, ptr->alignment);
+
+}
+
+static inline LLVMValueRef emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment)
 {
     DBG_ASSERT(is_pow_of_2(alignment));
     LLVMValueRef result = LLVMBuildStore(c->builder, value, ptr);
@@ -1381,7 +1387,7 @@ static inline LLVMValueRef emit_store(CodegenContext* c, LLVMValueRef value, LLV
     return result;
 }
 
-static inline LLVMValueRef emit_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment)
+static inline LLVMValueRef emit_llvm_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment)
 {
     DBG_ASSERT(is_pow_of_2(alignment));
     LLVMValueRef result = LLVMBuildLoad2(c->builder, type, ptr, "");
@@ -1389,7 +1395,7 @@ static inline LLVMValueRef emit_load(CodegenContext* c, LLVMTypeRef type, LLVMVa
     return result;
 }
 
-static LLVMValueRef emit_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align)
+static LLVMValueRef emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align)
 {
     LLVMBasicBlockRef bb = c->cur_block;
     LLVMPositionBuilderBefore(c->builder, c->alloca_ref);
@@ -1411,7 +1417,7 @@ static void emit_var_alloca(CodegenContext* c, ObjVar* var)
                                                     var->header.symbol); 
         return;
     }
-    var->header.llvm_ref = emit_alloca(c, var->header.symbol, get_llvm_type(c, var->type_loc.type), type_alignment(var->type_loc.type));
+    var->header.llvm_ref = emit_llvm_alloca(c, var->header.symbol, get_llvm_type(c, var->type_loc.type), type_alignment(var->type_loc.type));
 }
 
 static LLVMBasicBlockRef create_basic_block(const char* label)
@@ -1629,7 +1635,7 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     switch(ptr->type->canonical->kind)
     {
     case TYPE_BOOL:
-        ptr->value = emit_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment); 
+        ptr->value = emit_llvm_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment); 
         ptr->value = LLVMBuildTrunc(c->builder, ptr->value, LLVMInt1Type(), "");
         return;
     case TYPE_CHAR:
@@ -1653,7 +1659,7 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     case TYPE_ENUM_DISTINCT:
     case TYPE_STRUCT:
     case TYPE_UNION:
-        ptr->value = emit_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment);
+        ptr->value = emit_llvm_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment);
         return;
     case TYPE_STATIC_ARRAY:
     case TYPE_RUNTIME_ARRAY:

@@ -227,14 +227,6 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
-    RES_NORMAL           = 0,
-    RES_ALLOW_VOID       = 1 << 0,
-    RES_ALLOW_AUTO_ARRAY = 1 << 1,
-    RES_ALLOW_ALL        = 0xF,
-} ResolutionFlags;
-
-typedef enum : uint8_t
-{
     STATUS_UNRESOLVED,
     STATUS_RESOLVING,
     STATUS_RESOLVED
@@ -451,6 +443,7 @@ typedef enum : uint8_t
     TYPE_FUNC_PTR,
     TYPE_STATIC_ARRAY,
     TYPE_RUNTIME_ARRAY,
+    TYPE_INFERRED_ARRAY,
     TYPE_SLICE,
 
     TYPE_ALIAS,
@@ -468,6 +461,16 @@ typedef enum : uint8_t
     TYPE_UNRESOLVED_USER,
     __TYPE_COUNT,
 } TypeKind;
+
+// Stands for type resolution flags. When analyzing if a type is allowed
+// in a certain context, these are the flags to pass to resolve_type.
+typedef enum : uint8_t
+{
+    TYPE_RES_NORMAL           = 0,
+    TYPE_RES_ALLOW_VOID       = 1 << 0,
+    TYPE_RES_ALLOW_AUTO_ARRAY = 1 << 1,
+    TYPE_RES_ALLOW_ALL        = 0xF,
+} TypeResFlags;
 
 typedef enum : uint8_t
 {
@@ -490,13 +493,21 @@ typedef enum : uint8_t
 
 typedef enum : uint8_t
 {
+    VAR_BINDING_INVALID = 0,
+    VAR_BINDING_MUTABLE,  // Mutable
+    VAR_BINDING_RT_CONST, // Runtime const
+    VAR_BINDING_CT_CONST, // Compile-time const
+} VarBindingKind;
+
+typedef enum : uint8_t
+{
     VAR_INVALID = 0,
-    VAR_CT_CONST,
     VAR_GLOBAL,
     VAR_LOCAL,
     VAR_MEMBER,
     VAR_PARAM,
 } VarKind;
+
 
 #define CHAR_TYPES            \
             TYPE_CHAR:        \
@@ -526,7 +537,8 @@ typedef enum : uint8_t
             case FLOAT_TYPES
                 
 #define SEMA_ONLY_TYPES                 \
-            TYPE_INIT_LIST:             \
+            TYPE_INFERRED_ARRAY:        \
+            case TYPE_INIT_LIST:        \
             case TYPE_STRING_LITERAL:   \
             case TYPE_TYPEOF:           \
             case TYPE_UNRESOLVED_ARRAY: \

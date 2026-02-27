@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
         printf("\n\n");
     }
 #endif
-    analyze_module(&g_compiler.top_module);
+    semantic_analysis();
 
     if(g_error_cnt > 0)
     {
@@ -62,6 +62,7 @@ int main(int argc, char* argv[])
     if(g_warning_cnt > 0)
         fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
 
+    exit(0);
     gen_ir();
 
     if(!g_compiler.emit_link)

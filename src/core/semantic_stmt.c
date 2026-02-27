@@ -404,12 +404,12 @@ bool analyze_declaration(ObjVar* decl)
             resolve_int_lit_type(decl->initial_val);
             rhs_type = decl->initial_val->type;
         }
-        decl->type_loc.type = decl->is_const_binding ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
+        decl->type_loc.type = decl->binding_kind == VAR_BINDING_RT_CONST ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;
     }
 
-    else if(!resolve_type(&decl->type_loc.type, RES_ALLOW_AUTO_ARRAY, 
-                          decl->type_loc.loc, "Variable cannot be of type"))
+    else if(!resolve_type(&decl->type_loc.type, TYPE_RES_ALLOW_AUTO_ARRAY, 
+                          decl->type_loc.loc, "Variable cannot be of type %s."))
         goto ERR;
 
     TypeKind kind = decl->type_loc.type->kind;
@@ -460,7 +460,7 @@ bool analyze_declaration(ObjVar* decl)
         else if(!implicit_cast(decl->initial_val, decl->type_loc.type))
             return false;
     }
-    if(decl->is_const_binding)
+    if(decl->binding_kind == VAR_BINDING_RT_CONST)
         decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);
     return true;
 ERR:

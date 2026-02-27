@@ -17,35 +17,41 @@ struct SemaContext
     
     ASTStmt*     break_target;
     ASTStmt*     continue_target;
-    bool         in_ptr : 1;
-    bool         in_typedef : 1;
+    bool         type_res_allow_unresolved : 1;
     bool         in_global_init : 1;
 
 };
 
 extern SemaContext* g_sema;
 
-bool       analyze_global_var(ObjVar* var);
-bool       analyze_function(ObjFunc* function);
-void       analyze_stmt(ASTStmt* stmt);
-bool       analyze_stmt_block(ASTStmt* stmt);
-void       analyze_ct_assert(ASTStmt* stmt);
-bool       analyze_declaration(ObjVar* decl);
-bool       analyze_expr(ASTExpr* expr);
-bool       analyze_rvalue(ASTExpr* expr);
-bool       analyze_lvalue(ASTExpr* expr, bool will_write);
-bool       analyze_explicit_cast(ASTExpr* cast);
-bool       analyze_type_obj(Object* type_obj, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
-bool       analyze_enum(ObjEnum* enum_, Type** o_type);
-bool       analyze_struct(ObjStruct* struct_, Type** o_type);
-bool       analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
-bool       analyze_union(ObjStruct* union_, Type** o_type);
-bool       can_cast(ASTExpr* expr, Type* to, bool silent);
-void       perform_cast(ASTExpr* expr, Type* to);
-bool       implicit_cast(ASTExpr* expr, Type* desired);
-bool       implicit_cast_vararg(ASTExpr* arg);
-bool       resolve_import(ObjModule* module, ObjImport* import);
-bool       resolve_type(Type** type_ref, ResolutionFlags flags, SourceLoc err_loc, const char* err_str);
+// Top level
+bool analyze_global_var(ObjVar* var);
+bool analyze_function(ObjFunc* function);
+bool analyze_type_obj(Object* type_obj);
+bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
+void resolve_int_lit_type(ASTExpr* lit);
+bool resolve_import(ObjModule* module, ObjImport* import);
+
+// Statements
+void analyze_stmt(ASTStmt* stmt);
+bool analyze_stmt_block(ASTStmt* stmt);
+void analyze_ct_assert(ASTStmt* stmt);
+bool analyze_declaration(ObjVar* decl);
+
+// Expressions
+bool analyze_expr(ASTExpr* expr);
+bool analyze_rvalue(ASTExpr* expr);
+bool analyze_rvalue_no_mutate(ASTExpr* expr);
+bool analyze_lvalue(ASTExpr* expr, bool will_write);
+bool analyze_explicit_cast(ASTExpr* cast);
+
+// Casting
+bool can_cast(ASTExpr* expr, Type* to, bool silent);
+void perform_cast(ASTExpr* expr, Type* to);
+bool implicit_cast(ASTExpr* expr, Type* desired);
+bool implicit_cast_vararg(ASTExpr* arg);
+
+// Misc
 void       push_obj(Object* obj);
 ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
 Object*    find_obj(ModulePath* path);
@@ -55,7 +61,6 @@ void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 void       pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 ASTStmt*   find_labeled_stmt(SymbolLoc label);
 void       set_object_link_name(Object* obj);
-void       resolve_int_lit_type(ASTExpr* lit);
 
 static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
 {

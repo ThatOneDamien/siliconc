@@ -703,15 +703,15 @@ struct ObjTypedef
 
 struct ObjVar
 {
-    Object    header;
-    TypeLoc   type_loc;
-    ASTExpr*  initial_val;
-    bool      uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
-    bool      is_const_binding;
-    bool      written;
-    bool      read;
-    bool      is_extern;
-    VarKind   kind;
+    Object          header;
+    TypeLoc         type_loc;
+    ASTExpr*        initial_val;
+    bool            uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
+    bool            written;
+    bool            read;
+    bool            is_extern;
+    VarKind         kind;
+    VarBindingKind  binding_kind;
 };
 
 struct SourceFile

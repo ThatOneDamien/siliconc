@@ -83,7 +83,7 @@ void perform_cast(ASTExpr* expr, Type* to)
 bool analyze_explicit_cast(ASTExpr* cast)
 {
     ASTExpr* inner = cast->expr.cast.inner;
-    if(!analyze_expr(inner) || !resolve_type(&cast->type, RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
+    if(!analyze_expr(inner) || !resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
         return false;
 
     CastParams params;
@@ -223,36 +223,36 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
 {
     if(params->explicit) return true;
 
-    Type* from_ptr = params->fromc->pointer_base;
-    Type* to_ptr   = params->toc->pointer_base;
+    Type* from_base = params->fromc->pointer_base;
+    Type* to_base   = params->toc->pointer_base;
 
     // Going from *const T to *T is illegal.
-    if((from_ptr->qualifiers & TYPE_QUAL_CONST) && 
-       (to_ptr->qualifiers & TYPE_QUAL_CONST) == 0)
+    if((from_base->qualifiers & TYPE_QUAL_CONST) && 
+       (to_base->qualifiers & TYPE_QUAL_CONST) == 0)
     {
         CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
     }
 
-    from_ptr = from_ptr->canonical;
-    to_ptr = to_ptr->canonical;
-    if((params->fromc->kind == TYPE_POINTER && from_ptr->kind == TYPE_VOID) || 
-       (params->toc->kind == TYPE_POINTER && to_ptr->kind == TYPE_VOID))
+    from_base = from_base->canonical;
+    to_base = to_base->canonical;
+    if((params->fromc->kind == TYPE_POINTER && from_base->kind == TYPE_VOID) || 
+       (params->toc->kind == TYPE_POINTER && to_base->kind == TYPE_VOID))
        return true;
 
 
-    bool from_is_arr = type_is_array(from_ptr);
-    if(type_is_array(to_ptr))
+    bool from_is_arr = type_is_array(from_base);
+    if(type_is_array(to_base))
     {
         if(from_is_arr)
             goto ERR;
         from_is_arr = true;
-        Type* temp = from_ptr;
-        from_ptr = to_ptr;
-        to_ptr = temp;
+        Type* temp = from_base;
+        from_base = to_base;
+        to_base = temp;
     }
 
-    if(from_is_arr && !type_equal(from_ptr->array.elem_type, to_ptr))
+    if(from_is_arr && !type_equal(from_base->array.elem_type, to_base))
         goto ERR;
 
     return true;
@@ -382,12 +382,6 @@ static bool rule_distinct(const CastParams* const params)
 }
 
 // Casting functions
-
-static void cast_any_to_void(UNUSED const CastParams* const params)
-{
-    SIC_TODO_MSG("Cast any to void");
-}
-
 
 static void cast_bool_to_int(const CastParams* const params)
 {
@@ -586,7 +580,6 @@ static void cast_init_list(const CastParams* const params)
 
 #define NOALLW { NULL                    , NULL }
 #define NOTDEF { rule_not_defined        , NULL }
-#define TOVOID { rule_explicit_only      , cast_any_to_void }
 #define BOOINT { rule_explicit_only      , cast_bool_to_int }
 #define CHABOO { rule_explicit_only      , cast_int_to_bool }
 #define CHAINT { rule_explicit_only      , cast_int_to_int }
@@ -608,16 +601,16 @@ static void cast_init_list(const CastParams* const params)
 
 static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
-    [CAST_GROUP_VOID]      = { NOTDEF, NOALLW, NOTDEF, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, NOALLW },
-    [CAST_GROUP_BOOL]      = { TOVOID, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_CHAR]      = { TOVOID, CHABOO, INTINT, CHAINT, CHAFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INT]       = { TOVOID, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_FLOAT]     = { TOVOID, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_PTR]       = { TOVOID, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]     = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_STRUCT]    = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INIT_LIST] = { TOVOID, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
-    [CAST_GROUP_DISTINCT]  = { TOVOID, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
+    [CAST_GROUP_VOID]      = { NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF },
+    [CAST_GROUP_BOOL]      = { NOALLW, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_CHAR]      = { NOALLW, CHABOO, INTINT, CHAINT, CHAFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]       = { NOALLW, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]     = { NOALLW, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]       = { NOALLW, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]    = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
+    [CAST_GROUP_DISTINCT]  = { NOALLW, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
 };
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.

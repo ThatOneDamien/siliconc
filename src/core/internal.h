@@ -95,7 +95,7 @@ static inline SourceLoc extend_loc(SourceLoc original, SourceLoc end)
 void parse_source_file(FileId fileid);
 
 // Semantic analysis functions
-void  analyze_module(ObjModule* module);
+void  semantic_analysis();
 Attr* get_builtin_attribute(Object* obj, AttrKind kind);
 
 // Symbol map functions

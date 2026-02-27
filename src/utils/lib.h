@@ -11,6 +11,9 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
+#define FLAG_IS_SET(x, flag) ((x & flag) == flag)
+#define FLAG_IS_NOT_SET(x, flag) ((x & flag) != flag)
+
 #define SCRATCH_SIZE (1 << 14)
 #ifdef __GNUC__
     #define UNUSED __attribute__((unused))
@@ -158,6 +161,14 @@ static inline void sic_diagnostic_after(DiagnosticType diag, SourceLoc loc, cons
 
 PRINTF_FMT(2, 3)
 static inline void sic_error_at(SourceLoc loc, const char* message, ...)
+{
+    va_list va;
+    va_start(va, message);
+    sic_diagnostic_atv(DIAG_ERROR, loc, message, va);
+    va_end(va);
+}
+
+static inline void sic_error_at_ignore_fmt_warning(SourceLoc loc, const char* message, ...)
 {
     va_list va;
     va_start(va, message);

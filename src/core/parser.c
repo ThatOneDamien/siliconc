@@ -435,7 +435,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
         p->header.kind = OBJ_VAR;
         p->header.visibility = VIS_PUBLIC;
         p->kind = VAR_PARAM;
-        p->is_const_binding = true;
+        p->binding_kind = VAR_BINDING_RT_CONST;
 
         if(peek(l)->kind == TOKEN_UNDERSCORE && peek_next(l)->kind == TOKEN_COLON)
         {
@@ -648,23 +648,24 @@ RETRY:
         break;
     case TOKEN_LBRACKET: {
         advance(l);
-        ASTExpr* size_expr;
         if(peek(l)->kind == TOKEN_ASTERISK &&
            peek_next(l)->kind == TOKEN_RBRACKET)
         {
             // We have an array whose size is to be determined.
-            size_expr = NULL;
             advance(l);
             advance(l);
+            ty = parse_type_internal(l);
+            ty = type_array_of(ty, NULL);
+            ty->kind = TYPE_INFERRED_ARRAY;
         }
         else
         {
+            ASTExpr* size_expr;
             ASSIGN_EXPR_OR_RET(size_expr, false);
             CONSUME_OR_RET(TOKEN_RBRACKET, false);
+            ty = parse_type_internal(l);
+            ty = type_array_of(ty, size_expr);
         }
-
-        ty = parse_type_internal(l);
-        ty = type_array_of(ty, size_expr);
         break;
     }
     case TOKEN_CONST:
@@ -750,8 +751,21 @@ static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
     var->header.loc = peek(l)->loc;
     var->header.kind = OBJ_VAR;
     var->header.visibility = vis;
-    var->kind = peek_prev(l)->kind == TOKEN_CT_CONST ? VAR_CT_CONST : kind;
-    var->is_const_binding = peek_prev(l)->kind != TOKEN_VAR;
+    var->kind = kind;
+    switch(peek_prev(l)->kind)
+    {
+    case TOKEN_VAR:
+        var->binding_kind = VAR_BINDING_MUTABLE;
+        break;
+    case TOKEN_CONST:
+        var->binding_kind = VAR_BINDING_RT_CONST;
+        break;
+    case TOKEN_CT_CONST:
+        var->binding_kind = VAR_BINDING_CT_CONST;
+        break;
+    default:
+        SIC_UNREACHABLE();
+    }
     advance(l);
     if(try_consume(l, TOKEN_COLON) && !parse_type(l, &var->type_loc))
         return NULL;

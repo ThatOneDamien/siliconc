@@ -2,14 +2,17 @@
 #include <float.h>
 
 static bool analyze_expr_dispatch(ASTExpr* expr);
+static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate);
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
+
+static bool analyze_ident_rvalue(ASTExpr* expr);
 
 // Expr kind functions
 static bool analyze_array_access(ASTExpr* expr);
 static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
-static bool analyze_ident(ASTExpr* expr, bool mark_read);
+static bool analyze_ident(ASTExpr* expr);
 static bool analyze_struct_init_list(ASTExpr* expr);
 static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
@@ -53,6 +56,7 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type);
 
 bool analyze_expr(ASTExpr* expr)
 {
+    DBG_ASSERT(expr != NULL);
     if(expr->is_evaluated) return !expr_is_bad(expr);
     bool success = analyze_expr_dispatch(expr);
     DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
@@ -61,8 +65,21 @@ bool analyze_expr(ASTExpr* expr)
     return success;
 }
 
+bool analyze_rvalue(ASTExpr* expr)
+{
+    DBG_ASSERT(expr != NULL);
+    return analyze_expr(expr) && analyze_rvalue_dispatch(expr, true);
+}
+
+bool analyze_rvalue_no_mutate(ASTExpr* expr)
+{
+    DBG_ASSERT(expr != NULL);
+    return analyze_expr(expr) && analyze_rvalue_dispatch(expr, false);
+}
+
 bool analyze_lvalue(ASTExpr* expr, bool will_write)
 {
+    DBG_ASSERT(expr != NULL);
     if(expr->is_evaluated) return !expr_is_bad(expr);
     bool success = analyze_lvalue_dispatch(expr, will_write);
     DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
@@ -105,7 +122,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_UNRESOLVED_DOT:
         return analyze_unresolved_dot(expr);
     case EXPR_UNRESOLVED_IDENT:
-        return analyze_ident(expr, true);
+        return analyze_ident(expr);
     case EXPR_CT_ALIGNOF:
         return analyze_ct_alignof(expr);
     case EXPR_CT_OFFSETOF:
@@ -125,6 +142,20 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
+static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
+{
+    (void)mutate;
+    // The expressions must always be evaluated prior to calling this function.
+    DBG_ASSERT(expr->is_evaluated);
+    switch(expr->kind)
+    {
+    case EXPR_IDENT:
+        return analyze_ident_rvalue(expr);
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
 {
 RETRY:
@@ -132,11 +163,13 @@ RETRY:
     {
     case EXPR_INVALID:
         return false;
-    case EXPR_ARRAY_ACCESS:
+    case EXPR_ARRAY_ACCESS: {
+        ASTExprAAccess access = expr->expr.array_access;
         if(!analyze_expr(expr)) return false;
-        if(!analyze_lvalue_dispatch(expr->expr.array_access.array_expr, will_write)) return false;
-        expr->is_const_eval = expr->expr.array_access.array_expr->is_const_eval;
+        if(!analyze_lvalue_dispatch(access.array_expr, will_write)) return false;
+        expr->is_const_eval = access.array_expr->is_const_eval && access.index_expr->is_const_eval;
         break;
+    }
     case EXPR_IDENT: {
         Object* ident = expr->expr.ident;
         switch(ident->kind)
@@ -173,7 +206,7 @@ RETRY:
         if(!analyze_expr(expr)) return false;
         goto RETRY;
     case EXPR_UNRESOLVED_IDENT:
-        if(!analyze_ident(expr, !will_write)) return false;
+        if(!analyze_ident(expr)) return false;
         goto RETRY;
     default:
         if(!analyze_expr(expr)) return false;
@@ -187,41 +220,87 @@ RETRY:
     }
 
     return true;
-
 ERR:
     sic_error_at(expr->loc, will_write ? "Expression is not assignable." : "Expression is not an lvalue.");
     return false;
 }
+
+static bool analyze_ident_rvalue(ASTExpr* expr)
+{
+    Object* ident = expr->expr.ident;
+    switch(ident->kind)
+    {
+    case OBJ_FUNC:
+        sic_error_at(expr->loc, "Functions cannot be used directly. If you want to get the address do '&func'.");
+        return false;
+    case OBJ_VAR: {
+        ObjVar* var = obj_as_var(ident);
+        switch(var->kind)
+        {
+        case VAR_GLOBAL:
+            if(var->binding_kind == VAR_BINDING_CT_CONST || g_sema->in_global_init)
+            {
+                if(!analyze_global_var(var)) return false;
+                // FIXME: This might need to be a deep copy. For now I am shallow copying
+                // becuase I don't see a case where deep copying is strictly necessary.
+                if(var->initial_val)
+                    expr_copy(expr, var->initial_val);
+                else
+                    convert_to_const_zero(expr, var->type_loc.type);
+            }
+            return true;
+        case VAR_LOCAL:
+            if(var->binding_kind == VAR_BINDING_CT_CONST)
+            {
+                DBG_ASSERT(var->initial_val != NULL);
+                expr_copy(expr, var->initial_val);
+            }
+            return true;
+        default:
+            return true;
+        }
+    }
+    default:
+        sic_error_at(expr->loc, "Identifier is not an rvalue.");
+        return false;
+    }
+}
+
 
 static bool analyze_array_access(ASTExpr* expr)
 {
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     bool valid = true;
     valid &= analyze_expr(arr_expr);
-    valid &= analyze_expr(expr->expr.array_access.index_expr);
+    valid &= analyze_rvalue(expr->expr.array_access.index_expr);
     if(!valid) return false;
     Type* arr_t = type_reduce(arr_expr->type);
     Type* elem_type;
 
-    if(arr_t->kind == TYPE_INIT_LIST)
+    switch(arr_t->kind)
     {
+    case TYPE_POINTER:
+
+    case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
                      "Cannot access element of array literal. Please first assign the array to a const "
                      "literal or cast it to a typed array (i.e. int[*]), then perform the access.");
+        return false;
+    default:
+        sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
+                     type_to_string(arr_expr->type));
         return false;
     }
     if(arr_t->kind == TYPE_POINTER)
     {
         elem_type = arr_t->pointer_base;
-        if(!resolve_type(&elem_type, RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
+        if(!analyze_rvalue(arr_expr)) return false;
+        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
     }
     else if(type_is_array(arr_t))
         elem_type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
     else
     {
-        sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
-                     type_to_string(arr_expr->type));
-        return false;
     }
 
     if(!implicit_cast(expr->expr.array_access.index_expr, g_type_usize))
@@ -431,7 +510,7 @@ static bool analyze_call(ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(ASTExpr* expr, bool mark_read)
+static bool analyze_ident(ASTExpr* expr)
 {
     Object* ident = find_obj(&expr->expr.pre_sema_ident);
     if(ident == NULL) return false;
@@ -453,21 +532,18 @@ static bool analyze_ident(ASTExpr* expr, bool mark_read)
     }
     case OBJ_BITFIELD:
     case OBJ_ENUM:
+    case OBJ_STRUCT:
+    case OBJ_TYPEDEF:
+    case OBJ_UNION:
         expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
         expr->expr.ident = ident;
         return true;
-    case OBJ_STRUCT:
-    case OBJ_TYPEDEF:
-    case OBJ_UNION:
-        SIC_TODO_MSG("Type expressions.");
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
         expr->type = var->type_loc.type;
         expr->kind = EXPR_IDENT;
         expr->expr.ident = &var->header;
-        if(mark_read)
-            var->read = true;
         return true;
     }
     case OBJ_INVALID:
@@ -595,6 +671,7 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_STRING_LITERAL:
         break;
     case TYPE_INVALID:
+    case TYPE_INFERRED_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
     case TYPE_UNRESOLVED_ARRAY:
@@ -661,7 +738,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 
 static bool analyze_ct_alignof(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_typearg.type, RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get alignment of type"))
+    if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get alignment of type"))
         return false;
 
     ByteSize align = type_alignment(expr->expr.ct_typearg.type);
@@ -673,7 +750,7 @@ static bool analyze_ct_alignof(ASTExpr* expr)
 static bool analyze_ct_offsetof(ASTExpr* expr)
 {
     ASTExprCTOffset* off = &expr->expr.ct_offsetof;
-    if(!resolve_type(&off->struct_.type, RES_NORMAL, off->struct_.loc, "Cannot get offsetof member with base type"))
+    if(!resolve_type(&off->struct_.type, TYPE_RES_NORMAL, off->struct_.loc, "Cannot get offsetof member with base type %s."))
         return false;
     if(off->struct_.type->canonical->kind != TYPE_STRUCT)
     {
@@ -684,7 +761,7 @@ static bool analyze_ct_offsetof(ASTExpr* expr)
 
 static bool analyze_ct_sizeof(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_typearg.type, RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get size of type"))
+    if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get size of type %s."))
         return false;
     
     uint32_t size = type_size(expr->expr.ct_typearg.type);
@@ -695,7 +772,7 @@ static bool analyze_ct_sizeof(ASTExpr* expr)
 
 static bool analyze_ct_type_max(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_typearg.type, RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get max of type"))
+    if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get max of type %s."))
         return false;
     Type* type = expr->type = expr->expr.ct_typearg.type;
 
@@ -757,7 +834,7 @@ RETRY:
 
 static bool analyze_ct_type_min(ASTExpr* expr)
 {
-    if(!resolve_type(&expr->expr.ct_typearg.type, RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get min of type"))
+    if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get min of type %s."))
         return false;
     Type* type = expr->type = expr->expr.ct_typearg.type;
 
@@ -820,20 +897,20 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* rhs)
         return false;
     }
     // Make sure pointer's inner type is resolved so we can get its size.
-    if(!resolve_type(&pointer->type->pointer_base, RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to")) 
+    if(!resolve_type(&pointer->type->pointer_base, TYPE_RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to %s.")) 
         return false;
 
     expr->type = pointer->type;
-    if(pointer->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        Int128 actual_val_to_add = i128_mult64(rhs->expr.constant.i, type_size(pointer->type->pointer_base));
-        DBG_ASSERT(expr->kind == EXPR_BINARY);
-        if(expr->expr.binary.kind == BINARY_SUB)
-            actual_val_to_add = i128_neg(actual_val_to_add);
-        convert_to_const_pointer(expr, i128_add(pointer->expr.constant.i, actual_val_to_add));
-        return true;
-    }
-
+    // if(pointer->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     Int128 actual_val_to_add = i128_mult64(rhs->expr.constant.i, type_size(pointer->type->pointer_base));
+    //     DBG_ASSERT(expr->kind == EXPR_BINARY);
+    //     if(expr->expr.binary.kind == BINARY_SUB)
+    //         actual_val_to_add = i128_neg(actual_val_to_add);
+    //     convert_to_const_pointer(expr, i128_add(pointer->expr.constant.i, actual_val_to_add));
+    //     return true;
+    // }
+    //
     return implicit_cast(rhs, type_is_unsigned(rt) ? g_type_uptr : g_type_iptr);
 }
 
@@ -848,22 +925,22 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     bool lhs_is_pointer = lt->kind == TYPE_POINTER;
     bool rhs_is_pointer = rt->kind == TYPE_POINTER;
 
-    if(type_is_int_literal(lt) && type_is_int_literal(rt))
-    {
-        Int128 l = lhs->expr.constant.i;
-        Int128 r = rhs->expr.constant.i;
-        if(lt == rt) expr->type = lt;
-        else 
-        {
-            if(lt == g_type_neg_int_lit)
-                expr->type = i128_ucmp(i128_neg(l), r) > 0 ? lt : rt;
-            else
-                expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
-        }
-        convert_to_const_int(expr, i128_add(l, r));
-        return true;
-    }
-
+    // if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    // {
+    //     Int128 l = lhs->expr.constant.i;
+    //     Int128 r = rhs->expr.constant.i;
+    //     if(lt == rt) expr->type = lt;
+    //     else 
+    //     {
+    //         if(lt == g_type_neg_int_lit)
+    //             expr->type = i128_ucmp(i128_neg(l), r) > 0 ? lt : rt;
+    //         else
+    //             expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
+    //     }
+    //     convert_to_const_int(expr, i128_add(l, r));
+    //     return true;
+    // }
+    //
     if(rhs_is_pointer)
     {
         lhs_is_pointer = true;
@@ -880,17 +957,15 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
         return false;
 
     expr->type = lhs->type;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f + rhs->expr.constant.f);
-        else
-            convert_to_const_int(expr, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+    //         convert_to_const_float(expr, lhs->expr.constant.f + rhs->expr.constant.f);
+    //     else
+    //         convert_to_const_int(expr, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -901,40 +976,38 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(rhs);
     if(!valid) return false;
 
-    Type* lt = lhs->type;
-    Type* rt = rhs->type;
-    if(type_is_int_literal(lt) && type_is_int_literal(rt))
-    {
-        Int128 l = lhs->expr.constant.i;
-        Int128 r = rhs->expr.constant.i;
-        if(lt != rt) expr->type = lt;
-        else 
-        {
-            if(lt == g_type_neg_int_lit)
-                expr->type = i128_scmp(l, r) >= 0 ? g_type_pos_int_lit : lt;
-            else
-                expr->type = i128_ucmp(l, r) >= 0 ? lt : g_type_neg_int_lit;
-        }
-        convert_to_const_int(expr, i128_sub(l, r));
-        return true;
-    }
+    // Type* lt = lhs->type;
+    // Type* rt = rhs->type;
+    // if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    // {
+    //     Int128 l = lhs->expr.constant.i;
+    //     Int128 r = rhs->expr.constant.i;
+    //     if(lt != rt) expr->type = lt;
+    //     else 
+    //     {
+    //         if(lt == g_type_neg_int_lit)
+    //             expr->type = i128_scmp(l, r) >= 0 ? g_type_pos_int_lit : lt;
+    //         else
+    //             expr->type = i128_ucmp(l, r) >= 0 ? lt : g_type_neg_int_lit;
+    //     }
+    //     convert_to_const_int(expr, i128_sub(l, r));
+    //     return true;
+    // }
     if(lhs->type->canonical->kind == TYPE_POINTER)
         return analyze_pointer_arith(expr, lhs, rhs);
 
-    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
-        return false;
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f - rhs->expr.constant.f);
-        else
-            convert_to_const_int(expr, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+    //         convert_to_const_float(expr, lhs->expr.constant.f - rhs->expr.constant.f);
+    //     else
+    //         convert_to_const_int(expr, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -944,20 +1017,19 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(lhs);
     valid &= analyze_expr(rhs);
     if(!valid) return false;
-    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
-        return false;
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f * rhs->expr.constant.f);
-        else
-            convert_to_const_int(expr, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+    //         convert_to_const_float(expr, lhs->expr.constant.f * rhs->expr.constant.f);
+    //     else
+    //         convert_to_const_int(expr, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -967,36 +1039,35 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_expr(lhs);
     valid &= analyze_expr(rhs);
     if(!valid) return false;
-    if(!basic_arith_type_conv(lhs, rhs, expr->loc))
-        return false;
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-        {
-            double rval = rhs->expr.constant.f;
-            if(rval == 0.0)
-            {
-                sic_error_at(expr->loc, "Right side of division evaluates to 0.");
-                return false;
-            }
-            convert_to_const_float(expr, lhs->expr.constant.f / rval);
-        }
-        else
-        {
-            Int128 rval = rhs->expr.constant.i;
-            if(rval.hi == 0 && rval.lo == 0)
-            {
-                sic_error_at(expr->loc, "Right side of division evaluates to 0.");
-                return false;
-            }
-            convert_to_const_int(expr, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
-        }
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+    //     {
+    //         double rval = rhs->expr.constant.f;
+    //         if(rval == 0.0)
+    //         {
+    //             sic_error_at(expr->loc, "Right side of division evaluates to 0.");
+    //             return false;
+    //         }
+    //         convert_to_const_float(expr, lhs->expr.constant.f / rval);
+    //     }
+    //     else
+    //     {
+    //         Int128 rval = rhs->expr.constant.i;
+    //         if(rval.hi == 0 && rval.lo == 0)
+    //         {
+    //             sic_error_at(expr->loc, "Right side of division evaluates to 0.");
+    //             return false;
+    //         }
+    //         convert_to_const_int(expr, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
+    //     }
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1014,22 +1085,22 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
         return false;
     }
 
-    DBG_ASSERT(basic_arith_type_conv(lhs, rhs, expr->loc));
+    if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        Int128 rval = rhs->expr.constant.i;
-        if(rval.hi == 0 && rval.lo == 0)
-        {
-            sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
-            return false;
-        }
-        convert_to_const_int(expr, i128_rem(lhs->expr.constant.i, rval, rhs->type->kind));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     Int128 rval = rhs->expr.constant.i;
+    //     if(rval.hi == 0 && rval.lo == 0)
+    //     {
+    //         sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
+    //         return false;
+    //     }
+    //     convert_to_const_int(expr, i128_rem(lhs->expr.constant.i, rval, rhs->type->kind));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1045,21 +1116,21 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
     expr->type = g_type_bool;
 
-    if(lhs->kind == EXPR_CONSTANT)
-    {
-        DBG_ASSERT(lhs->expr.constant.kind == CONSTANT_BOOL);
-        expr_copy(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
-        return true;
-    }
-
-    if(rhs->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ rhs->expr.constant.b))
-    {
-        DBG_ASSERT(rhs->expr.constant.kind == CONSTANT_BOOL);
-        expr_copy(expr, lhs);
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT)
+    // {
+    //     DBG_ASSERT(lhs->expr.constant.kind == CONSTANT_BOOL);
+    //     expr_copy(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
+    //     return true;
+    // }
+    //
+    // if(rhs->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ rhs->expr.constant.b))
+    // {
+    //     DBG_ASSERT(rhs->expr.constant.kind == CONSTANT_BOOL);
+    //     expr_copy(expr, lhs);
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1122,20 +1193,20 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, true)) return false;
 
-    Type* ty = lhs->type->canonical;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        bool value;
-        if(type_is_float(ty))
-            value = lhs->expr.constant.f == rhs->expr.constant.f;
-        else
-            value = i128_ucmp(lhs->expr.constant.i, rhs->expr.constant.i) == 0;
-
-        convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_NE));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // Type* ty = lhs->type->canonical;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     bool value;
+    //     if(type_is_float(ty))
+    //         value = lhs->expr.constant.f == rhs->expr.constant.f;
+    //     else
+    //         value = i128_ucmp(lhs->expr.constant.i, rhs->expr.constant.i) == 0;
+    //
+    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_NE));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1147,20 +1218,20 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    Type* ty = lhs->type->canonical;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        bool value;
-        if(type_is_float(ty))
-            value = lhs->expr.constant.f < rhs->expr.constant.f;
-        else
-            value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) < 0;
-
-        convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GE));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // Type* ty = lhs->type->canonical;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     bool value;
+    //     if(type_is_float(ty))
+    //         value = lhs->expr.constant.f < rhs->expr.constant.f;
+    //     else
+    //         value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) < 0;
+    //
+    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GE));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1172,20 +1243,20 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    Type* ty = lhs->type->canonical;
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        bool value;
-        if(type_is_float(ty))
-            value = lhs->expr.constant.f <= rhs->expr.constant.f;
-        else
-            value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) <= 0;
-
-        convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GT));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // Type* ty = lhs->type->canonical;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     bool value;
+    //     if(type_is_float(ty))
+    //         value = lhs->expr.constant.f <= rhs->expr.constant.f;
+    //     else
+    //         value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) <= 0;
+    //
+    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GT));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1211,32 +1282,32 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
     
     expr->type = lhs->type;
-    if(rhs->kind == EXPR_CONSTANT)
-    {
-        if(i128_ucmp(rhs->expr.constant.i, i128_from_u64(lhs_ctype->builtin.bit_size)) >= 0)
-            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount exceeds integer width (%u).",
-                              lhs_ctype->builtin.bit_size);
-
-        if(lhs->kind == EXPR_CONSTANT)
-        {
-            Int128 new_val;
-            BinaryOpKind kind = expr->expr.binary.kind;
-            if(kind == BINARY_SHL)
-                new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
-            else if(kind == BINARY_LSHR)
-                new_val = i128_lshr(lhs->expr.constant.i, rhs->expr.constant.i);
-            else
-            {
-                BitSize shift = 128 - lhs_ctype->builtin.bit_size;
-                new_val = i128_shl64(lhs->expr.constant.i, shift);
-                new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
-            }
-            convert_to_const_int(expr, new_val);
-            return true;
-        }
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(rhs->kind == EXPR_CONSTANT)
+    // {
+    //     if(i128_ucmp(rhs->expr.constant.i, i128_from_u64(lhs_ctype->builtin.bit_size)) >= 0)
+    //         sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount exceeds integer width (%u).",
+    //                           lhs_ctype->builtin.bit_size);
+    //
+    //     if(lhs->kind == EXPR_CONSTANT)
+    //     {
+    //         Int128 new_val;
+    //         BinaryOpKind kind = expr->expr.binary.kind;
+    //         if(kind == BINARY_SHL)
+    //             new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
+    //         else if(kind == BINARY_LSHR)
+    //             new_val = i128_lshr(lhs->expr.constant.i, rhs->expr.constant.i);
+    //         else
+    //         {
+    //             BitSize shift = 128 - lhs_ctype->builtin.bit_size;
+    //             new_val = i128_shl64(lhs->expr.constant.i, shift);
+    //             new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
+    //         }
+    //         convert_to_const_int(expr, new_val);
+    //         return true;
+    //     }
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1265,13 +1336,13 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 
@@ -1283,13 +1354,13 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
-    expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    //
+    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
     return true;
 }
 static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
@@ -1300,12 +1371,12 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    {
-        convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
-        return true;
-    }
-
+    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    // {
+    //     convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+    //     return true;
+    // }
+    //
     return true;
 }
 
@@ -1397,7 +1468,7 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
     }
 
     expr->type = ctype->pointer_base;
-    return resolve_type(&expr->type, RES_NORMAL, expr->loc, "Cannot dereference pointer to type");
+    return resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s.");
 }
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)

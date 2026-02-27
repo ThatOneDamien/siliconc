@@ -49,7 +49,7 @@ void* arena_malloc(MemArena* arena, size_t size, uint32_t align)
     DBG_ASSERT(is_pow_of_2(align));
     DBG_ASSERT(arena->capacity > 0);
 
-    arena->allocated = (arena->allocated + (align - 1)) & ~(align - 1);
+    arena->allocated = ALIGN_UP(arena->allocated, align);
     void* res = arena->base + arena->allocated;
     arena->allocated += size;
     if(arena->capacity < size)

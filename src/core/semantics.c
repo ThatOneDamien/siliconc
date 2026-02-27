@@ -1,14 +1,25 @@
 #include "semantics.h"
 #include "utils/da.h"
 
-static inline void analyze_main();
+static void analyze_module(ObjModule* module);
 static void analyze_function_body(ObjFunc* function);
 static bool analyze_attributes(Object* obj);
+static bool analyze_enum(ObjEnum* enum_);
+static bool analyze_struct(ObjStruct* struct_);
+static bool analyze_union(ObjStruct* union_);
+static bool analyze_typedef(ObjTypedef* typedef_);
+static inline void analyze_main();
 
 
 SemaContext* g_sema = NULL;
 
-void analyze_module(ObjModule* module)
+void semantic_analysis()
+{
+    // TODO: Add the other stages like checking for conditional compilation of symbols, and other things
+    analyze_module(&g_compiler.top_module);
+}
+
+static void analyze_module(ObjModule* module)
 {
     for(uint32_t i = 0; i < module->submodules.size; ++i)
         analyze_module(module->submodules.data[i]);
@@ -26,7 +37,7 @@ void analyze_module(ObjModule* module)
         analyze_main();
 
     for(uint32_t i = 0; i < module->types.size; ++i)
-        analyze_type_obj(module->types.data[i], NULL, RES_NORMAL, LOC_NULL, NULL);
+        analyze_type_obj(module->types.data[i]);
 
     for(uint32_t i = 0; i < module->vars.size; ++i)
         analyze_global_var(module->vars.data[i]);
@@ -80,7 +91,7 @@ bool analyze_function(ObjFunc* func)
     }
     
 
-    if(!resolve_type(&func->signature.ret_type.type, RES_ALLOW_VOID, 
+    if(!resolve_type(&func->signature.ret_type.type, TYPE_RES_ALLOW_VOID, 
                      func->signature.ret_type.loc, "Function cannot have return type"))
     {
         check_cyclic_def(&func->header, func->header.loc);
@@ -100,7 +111,7 @@ bool analyze_function(ObjFunc* func)
     for(uint32_t i = 0; i < params.size; ++i)
     {
         ObjVar* param = params.data[i];
-        if(!resolve_type(&param->type_loc.type, RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
+        if(!resolve_type(&param->type_loc.type, TYPE_RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
         {
             check_cyclic_def(&param->header, param->header.loc);
             success = false;
@@ -331,6 +342,41 @@ bool analyze_global_var(ObjVar* var)
     return true;
 }
 
+bool analyze_type_obj(Object* type_obj)
+{
+    DBG_ASSERT(type_obj != NULL);
+    if(type_obj->status == STATUS_RESOLVED) return type_obj->kind != OBJ_INVALID;
+    if(type_obj->status == STATUS_RESOLVING)
+    {
+        set_cyclic_def(type_obj);
+        return false;
+    }
+
+    switch(type_obj->kind)
+    {
+    case OBJ_BITFIELD:
+        SIC_TODO();
+    case OBJ_ENUM:
+        return analyze_enum(obj_as_enum(type_obj));
+    case OBJ_STRUCT:
+        return analyze_struct(obj_as_struct(type_obj));
+    case OBJ_TYPEDEF:
+        return analyze_typedef(obj_as_typedef(type_obj));
+    case OBJ_UNION:
+        return analyze_union(obj_as_struct(type_obj));
+    case OBJ_INVALID:
+        return false;
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
+    case OBJ_VAR:
+        break;
+    }
+    SIC_UNREACHABLE();
+}
+
+
 Attr* get_builtin_attribute(Object* obj, AttrKind kind)
 {
     DBG_ASSERT(obj != NULL);
@@ -339,51 +385,6 @@ Attr* get_builtin_attribute(Object* obj, AttrKind kind)
         if(obj->attrs.data[i].kind == kind)
             return obj->attrs.data + i;
     return NULL;
-}
-
-static inline void analyze_main()
-{
-    Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
-    if(main == NULL)
-        sic_fatal_error("Root module is missing main function. Declare it as 'fn main()'.");
-
-    if(main->kind != OBJ_FUNC)
-    {
-        sic_error_at(main->loc, "Symbol 'main' in the root module is reserved for the entry function.");
-        return;
-    }
-
-    ObjFunc* func = obj_as_func(main);
-    const ObjVarDA params = func->signature.params;
-    TypeKind rt_kind = func->signature.ret_type.type->kind;
-    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
-        goto BAD_SIG;
-
-    if(params.size >= 1 && params.data[0]->type_loc.type->kind != TYPE_INT)
-        goto BAD_SIG;
-
-    Type* second;
-    if(params.size >= 2)
-    {
-        second = params.data[1]->type_loc.type;
-        if(second->kind != TYPE_POINTER)
-            goto BAD_SIG;
-        second = second->pointer_base;
-        if(second->kind != TYPE_POINTER)
-            goto BAD_SIG;
-        second = second->pointer_base;
-        if(second->kind != TYPE_CHAR)
-            goto BAD_SIG;
-    }
-
-    main->link_name = main->symbol;
-    return;
-
-BAD_SIG:
-    sic_error_at(main->loc, "The signature of the main function is invalid. "
-                            "The return type should be 'int' or 'void', with "
-                            "optional parameters 'int, char**'.");
-    return;
 }
 
 static void analyze_function_body(ObjFunc* func)
@@ -426,7 +427,7 @@ static void analyze_function_body(ObjFunc* func)
                 else
                     sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is unused.");
             }
-            else if(!var->is_const_binding && !var->written)
+            else if(var->binding_kind == VAR_BINDING_MUTABLE && !var->written)
             {
                 sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
             }
@@ -544,42 +545,54 @@ static bool analyze_attributes(Object* obj)
     return valid;
 }
 
-
-bool analyze_type_obj(Object* type_obj, Type** o_type, 
-                      ResolutionFlags flags, SourceLoc err_loc, const char* err_str)
+static inline void analyze_main()
 {
-    switch(type_obj->kind)
+    Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
+    if(main == NULL)
+        sic_fatal_error("Root module is missing main function. Declare it as 'fn main()'.");
+
+    if(main->kind != OBJ_FUNC)
     {
-    case OBJ_BITFIELD:
-        SIC_TODO();
-    case OBJ_ENUM:
-        return analyze_enum(obj_as_enum(type_obj), o_type);
-    case OBJ_STRUCT:
-        return analyze_struct(obj_as_struct(type_obj), o_type);
-    case OBJ_TYPEDEF:
-        return analyze_typedef(obj_as_typedef(type_obj), o_type, flags, err_loc, err_str);
-    case OBJ_UNION:
-        return analyze_union(obj_as_struct(type_obj), o_type);
-    case OBJ_INVALID:
-        return false;
-    case OBJ_ENUM_VALUE:
-    case OBJ_FUNC:
-    case OBJ_IMPORT:
-    case OBJ_MODULE:
-    case OBJ_VAR:
-        break;
+        sic_error_at(main->loc, "Symbol 'main' in the root module is reserved for the entry function.");
+        return;
     }
-    SIC_UNREACHABLE();
+
+    ObjFunc* func = obj_as_func(main);
+    const ObjVarDA params = func->signature.params;
+    TypeKind rt_kind = func->signature.ret_type.type->kind;
+    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
+        goto BAD_SIG;
+
+    if(params.size >= 1 && params.data[0]->type_loc.type->kind != TYPE_INT)
+        goto BAD_SIG;
+
+    Type* second;
+    if(params.size >= 2)
+    {
+        second = params.data[1]->type_loc.type;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_POINTER)
+            goto BAD_SIG;
+        second = second->pointer_base;
+        if(second->kind != TYPE_CHAR)
+            goto BAD_SIG;
+    }
+
+    main->link_name = main->symbol;
+    return;
+
+BAD_SIG:
+    sic_error_at(main->loc, "The signature of the main function is invalid. "
+                            "The return type should be 'int' or 'void', with "
+                            "optional parameters 'int, char**'.");
+    return;
 }
 
-bool analyze_enum(ObjEnum* enum_, Type** o_type)
+static bool analyze_enum(ObjEnum* enum_)
 {
     Type* const type = enum_->type_ref;
-    if(o_type != NULL)
-        *o_type = type_apply_qualifiers(type, (*o_type)->qualifiers);
-
-    if(enum_->header.status == STATUS_RESOLVED) return enum_->header.kind != OBJ_INVALID;
-
     analyze_attributes(&enum_->header);
 
     type->status = STATUS_RESOLVED;
@@ -587,7 +600,7 @@ bool analyze_enum(ObjEnum* enum_, Type** o_type)
 
     if(enum_->underlying.type == NULL)
         enum_->underlying.type = g_type_int;
-    else if(!resolve_type(&enum_->underlying.type, RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
+    else if(!resolve_type(&enum_->underlying.type, TYPE_RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
         goto ERR;
     else 
     {
@@ -638,18 +651,8 @@ ERR:
     return false;
 }
 
-bool analyze_struct(ObjStruct* struct_, Type** o_type)
+static bool analyze_struct(ObjStruct* struct_)
 {
-    if(o_type != NULL)
-        *o_type = type_apply_qualifiers(struct_->type_ref, (*o_type)->qualifiers);
-
-    if(struct_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
-        return struct_->header.kind != OBJ_INVALID;
-    if(struct_->header.status == STATUS_RESOLVING)
-    {
-        set_cyclic_def(&struct_->header);
-        return false;
-    }
 
     struct_->header.status = STATUS_RESOLVING;
     analyze_attributes(&struct_->header);
@@ -659,11 +662,12 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         ObjVar* member = struct_->members.data[i];
-        if(!resolve_type(&member->type_loc.type, RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot be of type"))
+        if(!resolve_type(&member->type_loc.type, TYPE_RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot have type %s."))
         {
             check_cyclic_def(&struct_->header, struct_->header.loc);
             return false;
         }
+        if(member->type_loc.type->kind == TYPE_INFERRED_ARRAY) SIC_TODO();
         if(member->type_loc.type->visibility < struct_->header.visibility)
         {
             // TODO: Make this error print the actual visibility of both.
@@ -692,87 +696,38 @@ bool analyze_struct(ObjStruct* struct_, Type** o_type)
     return true;
 }
 
-bool analyze_typedef(ObjTypedef* typedef_, Type** o_type, ResolutionFlags flags,
-                            SourceLoc err_loc, const char* err_str)
+static bool analyze_typedef(ObjTypedef* typedef_)
 {
-    DBG_ASSERT(typedef_->header.kind == OBJ_TYPEDEF);
-    switch(typedef_->header.status)
+    typedef_->header.status = STATUS_RESOLVING;
+    analyze_attributes(&typedef_->header);
+    bool prev = g_sema->type_res_allow_unresolved;
+    g_sema->type_res_allow_unresolved = true;
+    bool success = resolve_type(&typedef_->alias.type, TYPE_RES_ALLOW_VOID, typedef_->alias.loc, "You cannot define a type equal to %s.");
+    g_sema->type_res_allow_unresolved = prev;
+    if(!success)
     {
-    case STATUS_RESOLVED:
-        if(o_type != NULL)
-        {
-            *o_type = type_apply_qualifiers(typedef_->alias.type, (*o_type)->qualifiers);
-            if(!resolve_type(o_type, flags, err_loc, err_str)) {
-                check_cyclic_def(&typedef_->header, typedef_->header.loc);
-                return false;
-            }
-            *o_type = type_apply_qualifiers(typedef_->type_ref, (*o_type)->qualifiers);
-        }
-        return true;
-    case STATUS_RESOLVING:
-        if(g_sema->in_typedef)
-        {
-            set_cyclic_def(&typedef_->header);
-            return false;
-        }
-        FALLTHROUGH;
-    case STATUS_UNRESOLVED: {
-        typedef_->header.status = STATUS_RESOLVING;
-        analyze_attributes(&typedef_->header);
-        bool prev = g_sema->in_typedef;
-        g_sema->in_typedef = true;
-        bool success = resolve_type(&typedef_->alias.type, RES_ALLOW_VOID, typedef_->alias.loc, "Typedef cannot be assigned to type");
-        g_sema->in_typedef = prev;
-        if(!success)
-        {
-            check_cyclic_def(&typedef_->header, typedef_->header.loc);
-            return false;
-        }
-        typedef_->header.status = STATUS_RESOLVED;
-        typedef_->type_ref->status = STATUS_RESOLVED;
-        typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ?
-                                            typedef_->alias.type->canonical :
-                                            typedef_->type_ref;
-        typedef_->alias.type = type_reduce(typedef_->alias.type);
-
-        if(o_type != NULL)
-        {
-            *o_type = type_apply_qualifiers(typedef_->alias.type, (*o_type)->qualifiers);
-            if(resolve_type(o_type, flags, err_loc, err_str)) 
-            {
-                *o_type = type_apply_qualifiers(typedef_->type_ref, (*o_type)->qualifiers);
-                return true;
-            }
-            return false;
-        }
-        return true;
-    }
-    default:
-        SIC_UNREACHABLE();
-    }
-}
-
-bool analyze_union(ObjStruct* union_, Type** o_type)
-{
-    if(o_type != NULL)
-        *o_type = type_apply_qualifiers(union_->type_ref, (*o_type)->qualifiers);
-    if(union_->header.status == STATUS_RESOLVED || g_sema->in_ptr || g_sema->in_typedef) 
-        return union_->header.kind != OBJ_INVALID;
-    if(union_->header.status == STATUS_RESOLVING)
-    {
-        set_cyclic_def(&union_->header);
+        check_cyclic_def(&typedef_->header, typedef_->header.loc);
         return false;
     }
+    typedef_->header.status = STATUS_RESOLVED;
+    typedef_->type_ref->status = STATUS_RESOLVED;
+    typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ?
+        typedef_->alias.type->canonical :
+        typedef_->type_ref;
+    typedef_->alias.type = type_reduce(typedef_->alias.type);
+    return true;
+}
+
+static bool analyze_union(ObjStruct* union_)
+{
     union_->header.status = STATUS_RESOLVING;
     analyze_attributes(&union_->header);
     uint32_t largest_size = 0;
 
-    if(o_type != NULL)
-        *o_type = union_->type_ref;
     for(uint32_t i = 0; i < union_->members.size; ++i)
     {
         ObjVar* member = union_->members.data[i];
-        if(!resolve_type(&member->type_loc.type, RES_NORMAL, member->type_loc.loc, "Union member cannot be of type"))
+        if(!resolve_type(&member->type_loc.type, TYPE_RES_NORMAL, member->type_loc.loc, "Union member cannot have type %s."))
         {
             check_cyclic_def(&union_->header, union_->header.loc);
             return false;
