@@ -98,7 +98,7 @@ void process_args(int argc, char* argv[])
                 goto HANDLE_FLAG;
             }
         }
-        sic_fatal_error("Bad argument.");
+        sic_fatal_error("Unknown flag \'--%s\'.", arg);
 
 HANDLE_FLAG:
         switch(kind)

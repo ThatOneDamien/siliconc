@@ -511,6 +511,7 @@ static Object* parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     enum_->header.module = l->module;
     Type* type = enum_->type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ENUM_DISTINCT : TYPE_ENUM;
+    type->status = STATUS_RESOLVING;
     type->visibility = vis;
     type->enum_ = enum_;
     advance(l);
@@ -592,6 +593,7 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA 
     struct_->header.module = l->module;
     Type* type = struct_->type_ref = CALLOC_STRUCT(Type);
     type->kind = kind == OBJ_STRUCT ? TYPE_STRUCT : TYPE_UNION;
+    type->status = STATUS_RESOLVING;
     type->visibility = vis;
     type->struct_ = struct_;
     type->canonical = type;
@@ -620,6 +622,7 @@ static Object* parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
 
     Type* type = typedef_->type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ALIAS_DISTINCT : TYPE_ALIAS;
+    type->status = STATUS_RESOLVING;
     type->visibility = vis;
     type->typedef_ = typedef_;
 
@@ -1349,7 +1352,7 @@ static ASTExpr* parse_identifier_expr(Lexer* l)
 {
     ASTExpr* expr = new_expr(EXPR_UNRESOLVED_IDENT);
     expr->loc = peek(l)->loc;
-    if(!parse_module_path(l, &expr->expr.pre_sema_ident))
+    if(!parse_module_path(l, &expr->expr.unresolved_ident))
         return BAD_EXPR;
     expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
     return expr;

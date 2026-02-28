@@ -226,21 +226,9 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         for(uint32_t i = 0; i < expr->expr.call.args.size; ++i)
             print_expr_at_depth(expr->expr.call.args.data[i], depth + 1, NULL, allow_unresolved);
         return;
-    case EXPR_IDENT: {
-        Object* obj = expr->expr.ident;
-        switch(obj->kind)
-        {
-        case OBJ_VAR:
-            printf("Variable \'%s\' ] (Type: %s)\n", obj->symbol,
-                   debug_type_to_str(expr->type, allow_unresolved));
-            return;
-        case OBJ_FUNC:
-            printf("Function \'%s\' ]\n", obj->symbol);
-            return;
-        default:
-            SIC_UNREACHABLE();
-        }
-    }
+    case EXPR_FUNCTION:
+        printf("Function \'%s\' ]\n", expr->expr.function->header.symbol);
+        return;
     case EXPR_INVALID:
         printf(HL_BLUE "Invalid" HL_STOP " ]\n");
         return;
@@ -270,6 +258,10 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.unary.inner, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_VAR:
+        printf("Variable \'%s\' ] (Type: %s)\n", expr->expr.var->header.symbol,
+                debug_type_to_str(expr->type, allow_unresolved));
+        return;
     case EXPR_UNRESOLVED_DOT:
         printf("Unresolved Dot ]\n");
         goto UNRESOLVED_ARROW;
@@ -282,12 +274,12 @@ UNRESOLVED_ARROW:
         return;
     case EXPR_UNRESOLVED_IDENT: {
         scratch_clear();
-        scratch_append(expr->expr.pre_sema_ident.data[0].sym);
-        for(uint32_t i = 1; i < expr->expr.pre_sema_ident.size; ++i)
+        scratch_append(expr->expr.unresolved_ident.data[0].sym);
+        for(uint32_t i = 1; i < expr->expr.unresolved_ident.size; ++i)
         {
             scratch_appendc(':');
             scratch_appendc(':');
-            scratch_append(expr->expr.pre_sema_ident.data[i].sym);
+            scratch_append(expr->expr.unresolved_ident.data[i].sym);
         }
         printf("Pre-Sema Identifier \'%s\' ] (Type: %s)\n", 
                scratch_string(), debug_type_to_str(expr->type, allow_unresolved));
@@ -359,11 +351,6 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
         return HL_BLUE "<Invalid>" HL_STOP;
     case TYPE_TYPEOF:
         type_string = "<typeof(...)>";
-        break;
-    case TYPE_UNRESOLVED_ARRAY:
-        type_string = type->status == STATUS_RESOLVED ? 
-                            type_to_string(type) : 
-                            str_format("%s[?]", type_to_string(type->array.elem_type));
         break;
     case TYPE_UNRESOLVED_USER:
         scratch_clear();

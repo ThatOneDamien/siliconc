@@ -95,14 +95,14 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
 
 Object* find_obj(ModulePath* path)
 {
-    ObjModule* mod = g_sema->module;
+    ObjModule* mod = g_sema.module;
     Object* o;
     SymbolLoc last = path->data[path->size - 1];
     bool allow_private;
     if(path->size == 1)
     {
         allow_private = true;
-        if(!g_sema->in_global_init)
+        if(!g_sema.in_global_init)
         {
             for(uint32_t i = s_obj_stack.bottom; i < OBJ_STACK_SIZE; ++i)
             {

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "semantics.h"
 
 #define TYPE_DEF(name, type, ...)   \
 static Type name =                  \
@@ -64,7 +65,14 @@ BUILTIN_TYPE_DEF(s_pos_int_lit, TYPE_UINT128, 16);
 BUILTIN_TYPE_DEF(s_neg_int_lit, TYPE_INT128, 16);
 
 TYPE_DEF(s_invalid    , TYPE_INVALID);
-TYPE_DEF(s_void       , TYPE_VOID, .cache = &s_voidptr);
+// Void is a special case
+static Type s_void = {
+    .kind = TYPE_VOID,
+    .status = STATUS_RESOLVING,
+    .visibility = VIS_PUBLIC,
+    .canonical = &s_void,
+    .cache = &s_voidptr,
+};
 TYPE_DEF(s_voidptr    , TYPE_POINTER, .pointer_base = &s_void);
 TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
 TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
@@ -205,7 +213,7 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 {
     DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_UNRESOLVED_ARRAY;
+    new_type->kind = TYPE_STATIC_ARRAY;
     new_type->qualifiers = elem_ty->qualifiers;
     new_type->array.elem_type = elem_ty;
     new_type->array.size_expr = size_expr;
@@ -215,6 +223,7 @@ Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
 
 Type* type_reduce(Type* t)
 {
+    DBG_ASSERT(t != NULL);
     while(true)
     {
         t = t->canonical;
@@ -236,6 +245,8 @@ bool type_equal(const Type* t1, const Type* t2)
 {
     DBG_ASSERT(t1 != NULL);
     DBG_ASSERT(t2 != NULL);
+    DBG_ASSERT(t1->canonical != NULL);
+    DBG_ASSERT(t2->canonical != NULL);
     t1 = t1->canonical;
     t2 = t2->canonical;
     if(t1->kind != t2->kind)
@@ -267,18 +278,16 @@ bool type_equal(const Type* t1, const Type* t2)
     case TYPE_STATIC_ARRAY:
         return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
-    case TYPE_RUNTIME_ARRAY:
-        SIC_TODO();
-    case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
         return t1->typedef_ == t2->typedef_;
-    case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
         return t1->enum_ == t2->enum_;
     case TYPE_STRUCT:
     case TYPE_UNION:
         return t1->struct_ == t2->struct_;
     case TYPE_INVALID:
+    case TYPE_ALIAS:
+    case TYPE_ENUM:
     case SEMA_ONLY_TYPES:
         break;
     }
@@ -288,7 +297,9 @@ bool type_equal(const Type* t1, const Type* t2)
 ByteSize type_size(const Type* ty)
 {
     DBG_ASSERT(ty != NULL);
+    DBG_ASSERT(ty->canonical != NULL);
     ty = ty->canonical;
+    DBG_ASSERT(ty->status == STATUS_RESOLVED);
     switch(ty->kind)
     {
     case TYPE_BOOL:
@@ -313,7 +324,6 @@ ByteSize type_size(const Type* ty)
         return type_size(ty->struct_->largest_type);
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
     case SEMA_ONLY_TYPES:
@@ -325,8 +335,9 @@ ByteSize type_size(const Type* ty)
 ByteSize type_alignment(const Type* ty)
 {
     DBG_ASSERT(ty != NULL);
-    DBG_ASSERT(ty->status == STATUS_RESOLVED);
+    DBG_ASSERT(ty->canonical != NULL);
     ty = ty->canonical;
+    DBG_ASSERT(ty->status == STATUS_RESOLVED || ty->kind == TYPE_VOID);
     switch(ty->kind)
     {
     case TYPE_VOID:
@@ -337,7 +348,6 @@ ByteSize type_alignment(const Type* ty)
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
-    case TYPE_RUNTIME_ARRAY:
         return type_alignment(ty->array.elem_type);
     case TYPE_SLICE:
         return MAX(g_compiler.target.ptr_size, type_alignment(g_type_usize));
@@ -362,7 +372,7 @@ ByteSize type_alignment(const Type* ty)
 const char* type_to_string(const Type* type)
 {
     DBG_ASSERT(type != NULL);
-    DBG_ASSERT(type->status == STATUS_RESOLVED);
+    DBG_ASSERT(type->status != STATUS_UNRESOLVED);
     // TODO: Improve this
     const char* res;
     switch(type->kind)
@@ -392,9 +402,6 @@ const char* type_to_string(const Type* type)
         res = str_dupn(scratch_string(), g_scratch.len);
         break;
     }
-    case TYPE_RUNTIME_ARRAY:
-        res = str_format("[*]%s", type_to_string(type->array.elem_type));
-        break;
     case TYPE_SLICE:
         res = str_format("[]%s", type_to_string(type->pointer_base));
         break;

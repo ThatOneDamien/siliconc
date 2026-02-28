@@ -457,20 +457,22 @@ struct ASTExpr
     union
     {
         ASTExprAAccess  array_access;
+        ArrInitList     array_init;
         ASTExprBinary   binary;
         ASTExprCall     call;
         ASTExprCast     cast;
         ASTExprConstant constant;
-        Object*         ident;
-        ArrInitList     array_init;
-        StructInitList  struct_init;
+        ObjFunc*        function;
         ASTExprMAccess  member_access;
         ASTExprRange    range;
-        ModulePath      pre_sema_ident;
+        ModulePath      unresolved_ident;
+        StructInitList  struct_init;
         ASTExprTernary  ternary;
         ASTExprDA       tuple;
+        Object*         type_ident;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
+        ObjVar*         var;
 
         TypeLoc         ct_typearg;
         ASTExprCTOffset ct_offsetof;

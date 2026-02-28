@@ -17,23 +17,23 @@ struct SemaContext
     
     ASTStmt*     break_target;
     ASTStmt*     continue_target;
-    bool         type_res_allow_unresolved : 1;
-    bool         in_global_init : 1;
-
+    bool         type_res_allow_unresolved;
+    bool         in_global_init;
+    bool         code_is_unreachable;
+    bool         has_errored_unreachable;
 };
 
-extern SemaContext* g_sema;
+extern SemaContext g_sema;
 
 // Top level
 bool analyze_global_var(ObjVar* var);
-bool analyze_function(ObjFunc* function);
+bool analyze_function_signature(ObjFunc* function);
 bool analyze_type_obj(Object* type_obj);
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 void resolve_int_lit_type(ASTExpr* lit);
 bool resolve_import(ObjModule* module, ObjImport* import);
 
 // Statements
-void analyze_stmt(ASTStmt* stmt);
 bool analyze_stmt_block(ASTStmt* stmt);
 void analyze_ct_assert(ASTStmt* stmt);
 bool analyze_declaration(ObjVar* decl);
@@ -85,16 +85,16 @@ static inline void const_int_correct(ASTExpr* expr)
 static inline void set_cyclic_def(Object* obj)
 {
     sic_error_at(obj->loc, "Cyclic definition.");
-    g_sema->cyclic_def = obj;
+    g_sema.cyclic_def = obj;
     obj->kind = OBJ_INVALID;
     obj->status = STATUS_RESOLVED;
 }
 
 static inline void check_cyclic_def(Object* other, SourceLoc loc)
 {
-    if(g_sema->cyclic_def == other)
-        g_sema->cyclic_def = NULL;
-    else if(g_sema->cyclic_def != NULL)
+    if(g_sema.cyclic_def == other)
+        g_sema.cyclic_def = NULL;
+    else if(g_sema.cyclic_def != NULL)
         sic_diagnostic_at(DIAG_NOTE, loc, "From declaration here.");
     other->kind = OBJ_INVALID;
     other->status = STATUS_RESOLVED;

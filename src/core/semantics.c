@@ -2,7 +2,7 @@
 #include "utils/da.h"
 
 static void analyze_module(ObjModule* module);
-static void analyze_function_body(ObjFunc* function);
+static void analyze_function(ObjFunc* function);
 static bool analyze_attributes(Object* obj);
 static bool analyze_enum(ObjEnum* enum_);
 static bool analyze_struct(ObjStruct* struct_);
@@ -11,7 +11,7 @@ static bool analyze_typedef(ObjTypedef* typedef_);
 static inline void analyze_main();
 
 
-SemaContext* g_sema = NULL;
+SemaContext g_sema = {0};
 
 void semantic_analysis()
 {
@@ -26,10 +26,9 @@ static void analyze_module(ObjModule* module)
 
     for(uint32_t i = 0; i < module->imports.size; ++i)
         resolve_import(module, module->imports.data[i]);
-    SemaContext* prev = g_sema;
-    SemaContext sema = {0};
-    g_sema = &sema;
-    g_sema->module = module;
+    const SemaContext sema = g_sema;
+    g_sema = (SemaContext){0};
+    g_sema.module = module;
 
     // FIXME: Add check that we are compiling an executable. Libraries must NOT
     //        have a main function.
@@ -43,7 +42,7 @@ static void analyze_module(ObjModule* module)
         analyze_global_var(module->vars.data[i]);
 
     for(uint32_t i = 0; i < module->funcs.size; ++i)
-        analyze_function_body(module->funcs.data[i]);
+        analyze_function(module->funcs.data[i]);
 
     ASTStmt* assert_ = module->ct_asserts;
     while(assert_ != NULL)
@@ -52,14 +51,14 @@ static void analyze_module(ObjModule* module)
         assert_ = assert_->next;
     }
 
-    g_sema = prev;
+    g_sema = sema;
 #ifdef SI_DEBUG
     if(g_compiler.debug_output & DEBUG_SEMA)
         print_module(module, false);
 #endif
 }
 
-bool analyze_function(ObjFunc* func)
+bool analyze_function_signature(ObjFunc* func)
 {
     if(func->header.status == STATUS_RESOLVED) return func->header.kind != OBJ_INVALID;
     if(func->header.status == STATUS_RESOLVING)
@@ -71,8 +70,8 @@ bool analyze_function(ObjFunc* func)
     bool success = true;
     func->header.status = STATUS_RESOLVING;
 
-    bool prev = g_sema->in_global_init;
-    g_sema->in_global_init = true;
+    bool prev = g_sema.in_global_init;
+    g_sema.in_global_init = true;
 
     if(!analyze_attributes(&func->header)) success = false;
 
@@ -126,7 +125,7 @@ bool analyze_function(ObjFunc* func)
         }
     }
 
-    g_sema->in_global_init = prev;
+    g_sema.in_global_init = prev;
     func->header.status = STATUS_RESOLVED;
     func->func_type->status = STATUS_RESOLVED;
 
@@ -281,7 +280,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         if(used)
         {
             ObjImport* prev_import = import;
-            import = CALLOC_STRUCT(ObjImport);
+            import = MALLOC_STRUCT(ObjImport);
             *import = *prev_import;
         }
         import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
@@ -300,8 +299,8 @@ bool analyze_global_var(ObjVar* var)
         return false;
     }
 
-    bool prev = g_sema->in_global_init;
-    g_sema->in_global_init = true;
+    bool prev = g_sema.in_global_init;
+    g_sema.in_global_init = true;
     var->header.status = STATUS_RESOLVING;
     DBG_ASSERT(!var->uninitialized);
 
@@ -320,11 +319,11 @@ bool analyze_global_var(ObjVar* var)
 
     if(!analyze_declaration(var))
     {
-        g_sema->in_global_init = prev;
+        g_sema.in_global_init = prev;
         check_cyclic_def(&var->header, var->header.loc);
         return false;
     }
-    g_sema->in_global_init = prev;
+    g_sema.in_global_init = prev;
 
     if(var->initial_val != NULL && !var->initial_val->is_const_eval)
     {
@@ -376,8 +375,7 @@ bool analyze_type_obj(Object* type_obj)
     SIC_UNREACHABLE();
 }
 
-
-Attr* get_builtin_attribute(Object* obj, AttrKind kind)
+Attr* get_builtin_attr(Object* obj, AttrKind kind)
 {
     DBG_ASSERT(obj != NULL);
     DBG_ASSERT(kind < ATTR_CUSTOM);
@@ -387,11 +385,11 @@ Attr* get_builtin_attribute(Object* obj, AttrKind kind)
     return NULL;
 }
 
-static void analyze_function_body(ObjFunc* func)
+static void analyze_function(ObjFunc* func)
 {
-    if(!analyze_function(func)) return;
+    if(!analyze_function_signature(func)) return;
 
-    g_sema->in_global_init = false;
+    g_sema.in_global_init = false;
     const ObjVarDA params = func->signature.params;
 
     uint32_t scope = push_scope();
@@ -401,23 +399,24 @@ static void analyze_function_body(ObjFunc* func)
         if(param->header.symbol != NULL)
         {
             push_obj(&params.data[i]->header);
-            da_append(&g_sema->locals, param);
+            da_append(&g_sema.locals, param);
         }
     }
 
 
     if(!func->is_extern)
     {
-        g_sema->cur_func = func;
-        if(!analyze_stmt_block(func->body->stmt.block) && 
-           func->signature.ret_type.type->kind != TYPE_VOID)
+        g_sema.cur_func = func;
+        g_sema.code_is_unreachable = false;
+        g_sema.has_errored_unreachable = false;
+        if(!analyze_stmt_block(func->body->stmt.block) && func->signature.ret_type.type->kind != TYPE_VOID)
         {
             sic_error_at(func->header.loc, "Function does not return from all control paths.");
         }
 
-        for(uint32_t i = 0; i < g_sema->locals.size; ++i)
+        for(uint32_t i = 0; i < g_sema.locals.size; ++i)
         {
-            ObjVar* var = g_sema->locals.data[i];
+            ObjVar* var = g_sema.locals.data[i];
             // Skip underscore and names that start with underscore.
             if(var->header.symbol == NULL || var->header.symbol[0] == '_') continue;
             if(!var->read)
@@ -432,10 +431,10 @@ static void analyze_function_body(ObjFunc* func)
                 sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
             }
         }
-        g_sema->cur_func = NULL;
+        g_sema.cur_func = NULL;
     }
 
-    g_sema->locals.size = 0; // Clear locals
+    g_sema.locals.size = 0; // Clear locals
     pop_scope(scope);
 }
 
@@ -656,7 +655,7 @@ static bool analyze_struct(ObjStruct* struct_)
 
     struct_->header.status = STATUS_RESOLVING;
     analyze_attributes(&struct_->header);
-    bool packed = get_builtin_attribute(&struct_->header, ATTR_PACKED) != NULL;
+    bool packed = has_builtin_attr(&struct_->header, ATTR_PACKED);
     if(packed)
         struct_->align = 1;
     for(uint32_t i = 0; i < struct_->members.size; ++i)
@@ -700,10 +699,10 @@ static bool analyze_typedef(ObjTypedef* typedef_)
 {
     typedef_->header.status = STATUS_RESOLVING;
     analyze_attributes(&typedef_->header);
-    bool prev = g_sema->type_res_allow_unresolved;
-    g_sema->type_res_allow_unresolved = true;
+    bool prev = g_sema.type_res_allow_unresolved;
+    g_sema.type_res_allow_unresolved = true;
     bool success = resolve_type(&typedef_->alias.type, TYPE_RES_ALLOW_VOID, typedef_->alias.loc, "You cannot define a type equal to %s.");
-    g_sema->type_res_allow_unresolved = prev;
+    g_sema.type_res_allow_unresolved = prev;
     if(!success)
     {
         check_cyclic_def(&typedef_->header, typedef_->header.loc);

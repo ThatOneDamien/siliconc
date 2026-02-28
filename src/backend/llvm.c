@@ -64,7 +64,6 @@ static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result
 static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
-static void     emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or);
@@ -82,7 +81,7 @@ static inline void       emit_smart_store(CodegenContext* c, GenValue* ptr, GenV
 static LLVMValueRef      emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
-static void              emit_var_alloca(CodegenContext* c, ObjVar* obj);
+static inline void       emit_var_alloca(CodegenContext* c, ObjVar* obj);
 static LLVMBasicBlockRef create_basic_block(const char* label);
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label);
 static void              append_old_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
@@ -90,7 +89,8 @@ static void              use_basic_block(CodegenContext* c, LLVMBasicBlockRef bl
 static LLVMValueRef      get_llvm_const_int(CodegenContext* c, Int128 val, Type* type);
 static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
 static LLVMTypeRef       get_llvm_func_type(CodegenContext* c, Type* type);
-static LLVMValueRef      get_llvm_ref(CodegenContext* c, Object* obj);
+static LLVMValueRef      get_var_llvm_ref(CodegenContext* c, ObjVar* var);
+static LLVMValueRef      get_func_llvm_ref(CodegenContext* c, ObjFunc* func);
 static LLVMTargetRef     get_llvm_target(const char* triple);
 static void              load_rvalue(CodegenContext* c, GenValue* ptr);
 static void              llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *context);
@@ -209,7 +209,7 @@ static void gen_source_file(CodegenContext* c, SourceFile* file)
 static void gen_module(CodegenContext* c, ObjModule* module)
 {
     for(uint32_t i = 0; i < module->funcs.size; ++i)
-        get_llvm_ref(c, &module->funcs.data[i]->header);
+        get_func_llvm_ref(c, module->funcs.data[i]);
 
     for(uint32_t i = 0; i < module->vars.size; ++i)
         emit_global_var(c, module->vars.data[i]);
@@ -231,7 +231,7 @@ static void gen_module(CodegenContext* c, ObjModule* module)
 static void emit_global_var(CodegenContext* c, ObjVar* global)
 {
     if(global->binding_kind == VAR_BINDING_CT_CONST) return;
-    get_llvm_ref(c, &global->header);
+    get_var_llvm_ref(c, global);
 
     if(global->is_extern) return;
     if(global->initial_val == NULL)
@@ -627,8 +627,9 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_FUNC_CALL:
         emit_call(c, expr, &result);
         break;
-    case EXPR_IDENT:
-        emit_ident(c, expr, &result);
+    case EXPR_FUNCTION:
+        result.value = get_func_llvm_ref(c, expr->expr.function);
+        result.kind = GEN_VAL_RVALUE;
         break;
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
@@ -649,6 +650,10 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         SIC_TODO();
     case EXPR_UNARY:
         emit_unary(c, expr, &result);
+        break;
+    case EXPR_VAR:
+        result.value = get_var_llvm_ref(c, expr->expr.var);
+        result.kind = GEN_VAL_ADDRESS;
         break;
     case EXPR_ZEROED_OUT:
         SIC_TODO();
@@ -1089,24 +1094,6 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     return LLVMConstArray2(get_llvm_type(c, arr_type->array.elem_type), values, arr_type->array.static_len);
 }
 
-static void emit_ident(CodegenContext* c, ASTExpr* expr, GenValue* result)
-{
-    Object* obj = expr->expr.ident;
-    result->value = get_llvm_ref(c, obj);
-    result->alignment = type_alignment(result->type);
-    switch(obj->kind)
-    {
-    case OBJ_FUNC:
-        result->kind = GEN_VAL_RVALUE;
-        return;
-    case OBJ_VAR:
-        result->kind = GEN_VAL_ADDRESS;
-        return;
-    default:
-        SIC_UNREACHABLE();
-    }
-}
-
 static void emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post)
 {
     GenValue inner_rval = *inner;
@@ -1343,8 +1330,6 @@ static void store_default(CodegenContext* c, GenValue* ptr)
                         LLVMConstInt(LLVMInt64Type(), type_size(ptr->type), false), 
                         type_alignment(ptr->type));
         break;
-    case TYPE_RUNTIME_ARRAY:
-        break;
     case TYPE_SLICE:
         SIC_TODO();
     case TYPE_INVALID:
@@ -1405,18 +1390,8 @@ static LLVMValueRef emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTy
     return new_alloca;
 }
 
-static void emit_var_alloca(CodegenContext* c, ObjVar* var)
+static inline void emit_var_alloca(CodegenContext* c, ObjVar* var)
 {
-    if(var->type_loc.type->kind == TYPE_RUNTIME_ARRAY)
-    {
-        GenValue size_val = emit_expr(c, var->type_loc.type->array.size_expr);
-        load_rvalue(c, &size_val);
-        var->header.llvm_ref = LLVMBuildArrayAlloca(c->builder, 
-                                                    get_llvm_type(c, var->type_loc.type), 
-                                                    size_val.value,
-                                                    var->header.symbol); 
-        return;
-    }
     var->header.llvm_ref = emit_llvm_alloca(c, var->header.symbol, get_llvm_type(c, var->type_loc.type), type_alignment(var->type_loc.type));
 }
 
@@ -1530,8 +1505,6 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = c->ptr_type;
     case TYPE_STATIC_ARRAY:
         return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.static_len);
-    case TYPE_RUNTIME_ARRAY:
-        return type->llvm_ref = get_llvm_type(c, type->array.elem_type);
     case TYPE_SLICE:
         SIC_TODO();
     case TYPE_ALIAS_DISTINCT:
@@ -1549,7 +1522,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         scratch_append("struct.");
         scratch_append(struct_->header.symbol);
         struct_->header.llvm_ref = LLVMStructCreateNamed(s_context, scratch_string());
-        LLVMStructSetBody(struct_->header.llvm_ref, element_types, struct_->members.size, get_builtin_attribute(&struct_->header, ATTR_PACKED) != NULL);
+        LLVMStructSetBody(struct_->header.llvm_ref, element_types, struct_->members.size, has_builtin_attr(&struct_->header, ATTR_PACKED));
         return type->llvm_ref = struct_->header.llvm_ref;
     }
     case TYPE_UNION: {
@@ -1585,37 +1558,21 @@ static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
     return sig->llvm_ref = LLVMFunctionType(get_llvm_type(c, sig->ret_type.type), param_types, sig->params.size, sig->is_var_arg);
 }
 
-static LLVMValueRef get_llvm_ref(CodegenContext* c, Object* obj)
+static LLVMValueRef get_var_llvm_ref(CodegenContext* c, ObjVar* var)
 {
-    if(obj->llvm_ref != NULL && LLVMGetGlobalParent(obj->llvm_ref) == c->llvm_module)
-        return obj->llvm_ref;
+    Object* header = &var->header;
+    if(var->kind != VAR_GLOBAL) return header->llvm_ref;
+    if(header->llvm_ref != NULL && LLVMGetGlobalParent(header->llvm_ref) == c->llvm_module) return header->llvm_ref;
+    DBG_ASSERT(header->link_name != NULL);
+    return header->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, var->type_loc.type), header->link_name);
+}
 
-    switch(obj->kind)
-    {
-    case OBJ_FUNC: {
-        DBG_ASSERT(obj->link_name != NULL);
-        ObjFunc* func = obj_as_func(obj);
-        return obj->llvm_ref = LLVMAddFunction(c->llvm_module, obj->link_name, get_llvm_func_type(c, func->func_type));
-    }
-    case OBJ_VAR: {
-        ObjVar* var = obj_as_var(obj);
-        if(var->kind != VAR_GLOBAL)
-            return obj->llvm_ref;
-        DBG_ASSERT(obj->link_name != NULL);
-        return obj->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, var->type_loc.type), obj->link_name);
-    }
-    case OBJ_ENUM_VALUE:
-    case OBJ_BITFIELD:
-    case OBJ_ENUM:
-    case OBJ_IMPORT:
-    case OBJ_MODULE:
-    case OBJ_STRUCT:
-    case OBJ_TYPEDEF:
-    case OBJ_UNION:
-    case OBJ_INVALID:
-        break;
-    }
-    SIC_UNREACHABLE();
+static LLVMValueRef get_func_llvm_ref(CodegenContext* c, ObjFunc* func)
+{
+    Object* header = &func->header;
+    if(header->llvm_ref != NULL && LLVMGetGlobalParent(header->llvm_ref) == c->llvm_module) return header->llvm_ref;
+    DBG_ASSERT(header->link_name != NULL);
+    return header->llvm_ref = LLVMAddFunction(c->llvm_module, header->link_name, get_llvm_func_type(c, func->func_type));
 }
 
 static LLVMTargetRef get_llvm_target(const char* triple)
@@ -1662,7 +1619,6 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
         ptr->value = emit_llvm_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment);
         return;
     case TYPE_STATIC_ARRAY:
-    case TYPE_RUNTIME_ARRAY:
         return;
     case TYPE_SLICE:
         SIC_TODO();

@@ -1,5 +1,7 @@
 #include "semantics.h"
 
+static void analyze_stmt(ASTStmt* stmt);
+
 static void analyze_break(ASTStmt* stmt);
 static void analyze_continue(ASTStmt* stmt);
 static void analyze_expr_stmt(ASTStmt* stmt);
@@ -11,8 +13,14 @@ static void analyze_switch(ASTStmt* stmt);
 static void analyze_while(ASTStmt* stmt);
 static void analyze_ct_if(ASTStmt* stmt);
 
-void analyze_stmt(ASTStmt* stmt)
+static void analyze_stmt(ASTStmt* stmt)
 {
+    if(g_sema.code_is_unreachable && !g_sema.has_errored_unreachable &&
+       stmt->kind != STMT_INVALID && stmt->kind != STMT_NOP)
+    {
+        sic_diagnostic_at(DIAG_WARNING, stmt->loc, "Code is unreachable");
+        g_sema.has_errored_unreachable = true;
+    }
     switch(stmt->kind)
     {
     case STMT_INVALID:
@@ -35,7 +43,7 @@ void analyze_stmt(ASTStmt* stmt)
     case STMT_DECLARATION:
         analyze_declaration(stmt->stmt.declaration);
         push_obj(&stmt->stmt.declaration->header);
-        da_append(&g_sema->locals, stmt->stmt.declaration);
+        da_append(&g_sema.locals, stmt->stmt.declaration);
         return;
     case STMT_EXPR_STMT:
         analyze_expr_stmt(stmt);
@@ -67,6 +75,7 @@ void analyze_stmt(ASTStmt* stmt)
         return;
     case STMT_CT_UNREACHABLE:
         stmt->always_returns = true;
+        g_sema.code_is_unreachable = true;
         return;
     }
     SIC_UNREACHABLE();
@@ -89,13 +98,14 @@ static void analyze_break(ASTStmt* stmt)
     ASTStmt* target;
     if(stmt->stmt.break_cont.label.sym == NULL)
     {
-        if(g_sema->break_target == NULL)
+        if(g_sema.break_target == NULL)
             sic_error_at(stmt->loc, "'break' statement outside of loop or switch.");
-        target = g_sema->break_target;
+        target = g_sema.break_target;
     }
     else
         target = find_labeled_stmt(stmt->stmt.break_cont.label);
     stmt->stmt.break_cont.target = target;
+    g_sema.code_is_unreachable = true;
 }
 
 static void analyze_continue(ASTStmt* stmt)
@@ -103,9 +113,9 @@ static void analyze_continue(ASTStmt* stmt)
     ASTStmt* target;
     if(stmt->stmt.break_cont.label.sym == NULL)
     {
-        if(g_sema->continue_target == NULL)
+        if(g_sema.continue_target == NULL)
             sic_error_at(stmt->loc, "'continue' statement outside of loop.");
-        target = g_sema->continue_target;
+        target = g_sema.continue_target;
     }
     else
     {
@@ -118,6 +128,7 @@ static void analyze_continue(ASTStmt* stmt)
         }
     }
     stmt->stmt.break_cont.target = target;
+    g_sema.code_is_unreachable = true;
 }
 
 static void analyze_expr_stmt(ASTStmt* stmt)
@@ -134,11 +145,17 @@ static void analyze_expr_stmt(ASTStmt* stmt)
         break;
     case EXPR_FUNC_CALL: {
         ASTExpr* func_expr = expr->expr.call.func_expr;
-        if(func_expr->kind != EXPR_IDENT) return;
-        Object* func = func_expr->expr.ident; 
-        if(func->kind != OBJ_FUNC) return;
-        if(get_builtin_attribute(func, ATTR_NODISCARD) == NULL) return;
-        sic_error_at(expr->loc, "Result of function marked @nodiscard should not be discarded.");
+        Object* header = &func_expr->expr.function->header;
+        if(func_expr->kind != EXPR_FUNCTION) return;
+        if(has_builtin_attr(header, ATTR_NODISCARD))
+        {
+            sic_error_at(expr->loc, "Result of function marked @nodiscard should not be discarded.");
+        }
+        if(has_builtin_attr(header, ATTR_NORETURN))
+        {
+            stmt->always_returns = true; 
+            g_sema.code_is_unreachable = true;
+        }
         return;
     }
     case EXPR_UNARY: {
@@ -155,63 +172,73 @@ static void analyze_expr_stmt(ASTStmt* stmt)
 
 static void analyze_for(ASTStmt* stmt)
 {
+    SIC_TODO();
     ASTFor* for_stmt = &stmt->stmt.for_;
     uint32_t scope = push_scope();
     analyze_declaration(for_stmt->loop_var);
     push_obj(&for_stmt->loop_var->header);
     analyze_expr(for_stmt->collection);
 
-    ASTStmt* prev_break = g_sema->break_target;
-    ASTStmt* prev_continue = g_sema->continue_target;
-    g_sema->break_target = stmt;
-    g_sema->continue_target = stmt;
+    ASTStmt* prev_break = g_sema.break_target;
+    ASTStmt* prev_continue = g_sema.continue_target;
+    g_sema.break_target = stmt;
+    g_sema.continue_target = stmt;
     push_labeled_stmt(stmt, for_stmt->label);
 
     analyze_stmt(for_stmt->body);
     
     pop_labeled_stmt(stmt, for_stmt->label);
-    g_sema->break_target = prev_break;
-    g_sema->continue_target = prev_continue;
+    g_sema.break_target = prev_break;
+    g_sema.continue_target = prev_continue;
     pop_scope(scope);
 }
 
 static void analyze_if(ASTStmt* stmt)
 {
-    ASTIf* if_stmt = &stmt->stmt.if_;
-    implicit_cast(if_stmt->cond, g_type_bool);
-    analyze_stmt(if_stmt->then_stmt);
-    if(if_stmt->else_stmt != NULL)
+    ASTExpr* cond = stmt->stmt.if_.cond;
+    ASTStmt* then = stmt->stmt.if_.then_stmt;
+    ASTStmt* elss = stmt->stmt.if_.else_stmt;
+    bool prev_unreachable = g_sema.code_is_unreachable;
+    bool prev_errored = g_sema.has_errored_unreachable;
+    implicit_cast(cond, g_type_bool);
+    analyze_stmt(then);
+    if(elss != NULL)
     {
-        analyze_stmt(if_stmt->else_stmt);
-        stmt->always_returns = if_stmt->then_stmt->always_returns & if_stmt->else_stmt->always_returns;
+        g_sema.code_is_unreachable = prev_unreachable;
+        g_sema.has_errored_unreachable = prev_errored;
+        analyze_stmt(elss);
+        stmt->always_returns = then->always_returns & elss->always_returns;
     }
-    if(if_stmt->cond->kind == EXPR_CONSTANT)
+    if(cond->kind == EXPR_CONSTANT)
     {
-        if(if_stmt->cond->expr.constant.b)
+        if(cond->expr.constant.b)
         {
-            sic_diagnostic_at(DIAG_WARNING, if_stmt->cond->loc,
+            sic_diagnostic_at(DIAG_WARNING, cond->loc,
                               "Condition always evaluates to true, consider "
                               "changing this to a #if statement or removing it.");
-            *stmt = *if_stmt->then_stmt;
+            *stmt = *then;
         }
         else
         {
-            sic_diagnostic_at(DIAG_WARNING, if_stmt->cond->loc,
+            sic_diagnostic_at(DIAG_WARNING, cond->loc,
                               "Condition always evaluates to false, consider "
                               "changing this to a #if statement or removing it.");
-            if(if_stmt->else_stmt != NULL)
-                *stmt = *if_stmt->else_stmt;
+            if(elss != NULL)
+                *stmt = *elss;
             else
                 stmt->kind = STMT_NOP;
         }
     }
+    g_sema.code_is_unreachable = prev_unreachable;
+    g_sema.has_errored_unreachable = prev_errored;
 }
 
 static void analyze_return(ASTStmt* stmt)
 {
     ASTReturn* ret = &stmt->stmt.return_;
-    Type* ret_type = g_sema->cur_func->signature.ret_type.type;
+    Type* ret_type = g_sema.cur_func->signature.ret_type.type;
     stmt->always_returns = true;
+    g_sema.code_is_unreachable = true;
     if(ret_type->kind == TYPE_INVALID) return;
     if(ret->ret_expr != NULL)
     {
@@ -233,7 +260,10 @@ static void analyze_switch(ASTStmt* stmt)
     ASTSwitch* swi = &stmt->stmt.switch_;
     uint32_t scope;
     bool has_default = false;
-    analyze_expr(swi->expr);
+    bool prev_unreachable = g_sema.code_is_unreachable;
+    bool prev_errored = g_sema.has_errored_unreachable;
+
+    analyze_rvalue(swi->expr);
     TypeKind kind = swi->expr->type->canonical->kind;
     if(!type_kind_is_integer(kind) && !type_kind_is_char(kind) && kind != TYPE_ENUM_DISTINCT)
     {
@@ -244,8 +274,8 @@ static void analyze_switch(ASTStmt* stmt)
     if(type_size(swi->expr->type) < 4)
         implicit_cast(swi->expr, g_type_int);
 
-    ASTStmt* prev_break = g_sema->break_target;
-    g_sema->break_target = stmt;
+    ASTStmt* prev_break = g_sema.break_target;
+    g_sema.break_target = stmt;
     bool always_returns = true;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
@@ -279,11 +309,15 @@ static void analyze_switch(ASTStmt* stmt)
             has_default = true;
 
     CASE_BODY:
+        g_sema.code_is_unreachable = prev_unreachable;
+        g_sema.has_errored_unreachable = prev_errored;
         scope = push_scope();
         always_returns &= analyze_stmt_block(cas->body);
         pop_scope(scope);
     }
-    g_sema->break_target = prev_break;
+    g_sema.break_target = prev_break;
+    g_sema.code_is_unreachable = prev_unreachable;
+    g_sema.has_errored_unreachable = prev_errored;
     stmt->always_returns = always_returns & has_default;
 }
 
@@ -292,10 +326,12 @@ static void analyze_while(ASTStmt* stmt)
     ASTWhile* while_stmt = &stmt->stmt.while_;
     implicit_cast(while_stmt->cond, g_type_bool);
 
-    ASTStmt* prev_break = g_sema->break_target;
-    ASTStmt* prev_continue = g_sema->continue_target;
-    g_sema->break_target = stmt;
-    g_sema->continue_target = stmt;
+    ASTStmt* prev_break = g_sema.break_target;
+    ASTStmt* prev_continue = g_sema.continue_target;
+    bool prev_unreachable = g_sema.code_is_unreachable;
+    bool prev_errored = g_sema.has_errored_unreachable;
+    g_sema.break_target = stmt;
+    g_sema.continue_target = stmt;
     push_labeled_stmt(stmt, while_stmt->label);
     analyze_stmt(while_stmt->body);
     pop_labeled_stmt(stmt, while_stmt->label);
@@ -308,15 +344,17 @@ static void analyze_while(ASTStmt* stmt)
                           "removing this.");
         stmt->kind = STMT_NOP;
     }
-    g_sema->break_target = prev_break;
-    g_sema->continue_target = prev_continue;
+    g_sema.break_target = prev_break;
+    g_sema.continue_target = prev_continue;
+    g_sema.code_is_unreachable = prev_unreachable;
+    g_sema.has_errored_unreachable = prev_errored;
 }
 
 void analyze_ct_assert(ASTStmt* stmt)
 {
     ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
     bool valid = implicit_cast(assert_->cond, g_type_bool);
-    valid &= analyze_expr(assert_->err_msg);
+    valid &= analyze_rvalue(assert_->err_msg);
     if(!valid) return;
     if(assert_->cond->kind != EXPR_CONSTANT)
     {
@@ -383,14 +421,14 @@ bool analyze_declaration(ObjVar* decl)
                                            "be specified. Please provide at least 1.");
             goto ERR;
         } 
-        if(!analyze_expr(decl->initial_val))
+        if(!analyze_rvalue(decl->initial_val))
             goto ERR;
 
         Type* rhs_type = decl->initial_val->type;
         if(rhs_type->kind == TYPE_INIT_LIST)
         {
             sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
-                    "For array literals, please declare a type.");
+                                           "For array literals, please declare a type.");
             goto ERR;
         }
         if(rhs_type->kind == TYPE_STRING_LITERAL)
@@ -407,7 +445,6 @@ bool analyze_declaration(ObjVar* decl)
         decl->type_loc.type = decl->binding_kind == VAR_BINDING_RT_CONST ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;
     }
-
     else if(!resolve_type(&decl->type_loc.type, TYPE_RES_ALLOW_AUTO_ARRAY, 
                           decl->type_loc.loc, "Variable cannot be of type %s."))
         goto ERR;
@@ -415,21 +452,20 @@ bool analyze_declaration(ObjVar* decl)
     TypeKind kind = decl->type_loc.type->kind;
     if(decl->initial_val == NULL)
     {
-        if(kind == TYPE_UNRESOLVED_ARRAY)
+        if(kind == TYPE_INFERRED_ARRAY)
         {
             sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
                                            "inferrible array size(i.e. an array literal) to be initialized.");
             goto ERR;
         }
-
     }
-    else if(!analyze_expr(decl->initial_val))
+    else if(!analyze_rvalue(decl->initial_val))
         goto ERR;
     else
     {
         Type* rhs_type = decl->initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
-        if(kind == TYPE_UNRESOLVED_ARRAY) // Inferred Array
+        if(kind == TYPE_INFERRED_ARRAY)
         {
             if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
             {
@@ -475,7 +511,7 @@ static void analyze_swap(ASTStmt* stmt)
     ASTExpr* right = stmt->stmt.swap.right;
     analyze_lvalue(left, true);
     analyze_lvalue(right, true);
-    if(expr_is_bad(left) || expr_is_bad(right))
+    if(!analyze_rvalue_no_mutate(left) || !analyze_rvalue_no_mutate(right))
         return;
 
     if(!type_equal(left->type, right->type))
@@ -487,7 +523,7 @@ static void analyze_swap(ASTStmt* stmt)
 
     if(!type_is_trivially_copyable(left->type))
     {
-        ObjFunc* const func = g_sema->cur_func;
+        ObjFunc* const func = g_sema.cur_func;
         func->swap_stmt_size = MAX(func->swap_stmt_size, type_size(left->type));
         func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }

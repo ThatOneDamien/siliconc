@@ -96,7 +96,8 @@ void parse_source_file(FileId fileid);
 
 // Semantic analysis functions
 void  semantic_analysis();
-Attr* get_builtin_attribute(Object* obj, AttrKind kind);
+Attr* get_builtin_attr(Object* obj, AttrKind kind);
+static inline bool has_builtin_attr(Object* obj, AttrKind kind) { return get_builtin_attr(obj, kind) != NULL; }
 
 // Symbol map functions
 void   sym_map_init(void);
@@ -153,7 +154,7 @@ static inline bool type_kind_is_numeric(TypeKind kind)
 
 static inline bool type_kind_is_array(TypeKind kind)
 {
-    return kind == TYPE_STATIC_ARRAY || kind == TYPE_RUNTIME_ARRAY;
+    return kind == TYPE_STATIC_ARRAY;
 }
 
 static inline bool type_kind_is_distinct(TypeKind kind)

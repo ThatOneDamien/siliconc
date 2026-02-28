@@ -1,11 +1,15 @@
 #include "semantics.h"
 
-static bool resolve_array(Type* arr_ty, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
+static bool resolve_array(Type* arr_ty, SourceLoc error_loc);
 static bool resolve_func_ptr(Type* func_ty);
 static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
-static bool resolve_user_def(Type** type_ref, Object* type_obj, TypeResFlags flags,
-                             SourceLoc error_loc, const char* error_msg);
+static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 
+// Resolve a type based on flags. If the type is marked as STATUS_RESOLVED, this means
+// it has a known size/layout (i.e. not void, opaque struct/union, inferred array).
+// If it is marked as STATUS_RESOLVING, that means we have resolved names (like UNRESOLVED_USER),
+// but we aren't sure if it has a size. STATUS_RESOLVING should only appear if we resolve a type
+// under a pointer type, because that is allowed to be a type without a size/layout.
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
 {
     DBG_ASSERT(type_ref != NULL);
@@ -13,7 +17,7 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
 
     Type* type = *type_ref;
     if(type->status == STATUS_RESOLVED) return type->kind != TYPE_INVALID;
-    DBG_ASSERT(type->status != STATUS_RESOLVING);
+
     switch(type->kind)
     {
     case TYPE_VOID:
@@ -24,60 +28,74 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
         }
         FALLTHROUGH;
     case NUMERIC_TYPES:
-        DBG_ASSERT(type->status == STATUS_RESOLVED);
         return true;
     case TYPE_POINTER:
     case TYPE_SLICE: {
-        if(type->status == STATUS_RESOLVED) return true;
-        bool prev = g_sema->type_res_allow_unresolved;
-        g_sema->type_res_allow_unresolved = true;
+        bool prev = g_sema.type_res_allow_unresolved;
+        g_sema.type_res_allow_unresolved = true;
         if(!resolve_type(&type->pointer_base, TYPE_RES_ALLOW_VOID | TYPE_RES_ALLOW_AUTO_ARRAY, 
                          error_loc, "Pointer to %s is not allowed.")) 
             break;
-        g_sema->type_res_allow_unresolved = prev;
+        g_sema.type_res_allow_unresolved = prev;
         type->status = STATUS_RESOLVED;
         type->visibility = type->pointer_base->visibility;
         return true;
     }
     case TYPE_FUNC_PTR:
-        if(type->status == STATUS_RESOLVED) return true;
         if(!resolve_func_ptr(type)) break;
         type->status = STATUS_RESOLVED;
         return true;
     case TYPE_STATIC_ARRAY:
-    case TYPE_RUNTIME_ARRAY:
-        if(type->status == STATUS_RESOLVED) return true;
-        if(!resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s."))
+        if(!resolve_array(type, error_loc)) break;
+        return true;
+    case TYPE_INFERRED_ARRAY: {
+        TypeArray* arr = &type->array;
+        if(type->status == STATUS_UNRESOLVED)
+        {
+            if(!resolve_type(&arr->elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.")) break;
+
+            type->visibility = arr->elem_type->visibility;
+            type->status = STATUS_RESOLVING;
+        }
+
+        if(FLAG_IS_NOT_SET(flags, TYPE_RES_ALLOW_AUTO_ARRAY))
+        {
+            sic_error_at_ignore_fmt_warning(error_loc, error_msg, str_format("[*]%s", type_to_string(arr->elem_type)));
             break;
-        type->status = type->array.elem_type->status;
-        return true;
-    case TYPE_INFERRED_ARRAY:
-        SIC_TODO();
-    case TYPE_ALIAS:
-    case TYPE_ALIAS_DISTINCT:
-        if(!resolve_user_def(type_ref, &type->typedef_->header, flags, error_loc, error_msg)) break;
-        return true;
-    case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
-        if(!resolve_user_def(type_ref, &type->enum_->header, flags, error_loc, error_msg)) break;
-        return true;
-    case TYPE_STRUCT:
-    case TYPE_UNION:
-        if(!resolve_user_def(type_ref, &type->struct_->header, flags, error_loc, error_msg)) break;
-        return true;
-    case TYPE_UNRESOLVED_ARRAY:
-        if(!resolve_array(type, flags, error_loc, error_msg)) break;
-        return true;
-    case TYPE_UNRESOLVED_USER: {
-        Object* type_obj = find_obj(&type->unresolved);
-        if(type_obj == NULL) break;
-        if(!resolve_user_def(type_ref, type_obj, flags, error_loc, error_msg)) break;
+
+        }
         return true;
     }
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT: {
+        DBG_ASSERT(type->status == STATUS_RESOLVING);
+        ObjTypedef* typedef_ = type->typedef_;
+        if(!analyze_type_obj(&typedef_->header)) break;
+        Type* alias = typedef_->alias.type;
+        if(!resolve_type(&alias, flags, error_loc, error_msg)) break;
+        type->status = alias->status;
+        return true;
+    }
+    case TYPE_STRUCT:
+    case TYPE_UNION: {
+        DBG_ASSERT(type->status == STATUS_RESOLVING);
+        if(g_sema.type_res_allow_unresolved) return true;
+        ObjStruct* struct_ = type->struct_;
+        if(!analyze_type_obj(&struct_->header)) break;
+        type->status = STATUS_RESOLVED;
+        return true;
+    }
+    case TYPE_UNRESOLVED_USER:
+        DBG_ASSERT(type->status == STATUS_UNRESOLVED);
+        if(!resolve_user_def(type_ref, flags, error_loc, error_msg)) break;
+        return true;
     case TYPE_TYPEOF:
+        DBG_ASSERT(type->status == STATUS_UNRESOLVED);
         if(!resolve_typeof(type_ref, flags, error_loc, error_msg)) break;
         return true;
     case TYPE_INVALID:
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
     case TYPE_STRING_LITERAL:
     case __TYPE_COUNT:
@@ -87,31 +105,19 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     return false;
 }
 
-
-static bool resolve_array(Type* arr_ty, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
+static bool resolve_array(Type* arr_ty, SourceLoc error_loc)
 {
     TypeArray* arr = &arr_ty->array;
     if(!resolve_type(&arr->elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s."))
         return false;
 
-    arr_ty->visibility = arr->elem_type->visibility;
+    ResolveStatus prev_status = arr_ty->status;
     arr_ty->status = arr->elem_type->status;
+    if(prev_status == STATUS_RESOLVING) return true;
 
-    if(arr_ty->kind == TYPE_INFERRED_ARRAY)
-    {
-        if(FLAG_IS_SET(flags, TYPE_RES_ALLOW_AUTO_ARRAY))
-            return true;
-
-        sic_error_at_ignore_fmt_warning(error_loc, error_msg, str_format("[*]%s", type_to_string(arr->elem_type)));
-        return false;
-    }
-
-    if(!analyze_expr(arr->size_expr))
-        return false;
-
+    arr_ty->visibility = arr->elem_type->visibility;
     if(!implicit_cast(arr->size_expr, g_type_usize))
         return false;
-
 
     if(arr->size_expr->kind == EXPR_CONSTANT)
     {
@@ -122,8 +128,7 @@ static bool resolve_array(Type* arr_ty, TypeResFlags flags, SourceLoc error_loc,
         return true;
     }
 
-    arr_ty->kind = TYPE_RUNTIME_ARRAY;
-    return true;
+    SIC_TODO_MSG("Print error for non const length.");
 }
 
 static bool resolve_func_ptr(Type* func_ty)
@@ -134,16 +139,20 @@ static bool resolve_func_ptr(Type* func_ty)
 
     func_ty->visibility = sig->ret_type.type->visibility; 
 
+    bool valid = true;
+    bool prev = g_sema.type_res_allow_unresolved;
+    g_sema.type_res_allow_unresolved = true;
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         ObjVar* param = sig->params.data[i];
         if(!resolve_type(&param->type_loc.type, TYPE_RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
-            return false;
+            valid = false;
         if(param->type_loc.type->visibility < func_ty->visibility)
             func_ty->visibility = param->type_loc.type->visibility;
     }
+    g_sema.type_res_allow_unresolved = prev;
 
-    return true;
+    return valid;
 }
 
 static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
@@ -170,11 +179,11 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
     return resolve_type(type_ref, flags, error_loc, error_msg);
 }
 
-static bool resolve_user_def(Type** type_ref, Object* type_obj, TypeResFlags flags, 
-                             SourceLoc error_loc, const char* error_msg)
+static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
 {
-    DBG_ASSERT(type_obj != NULL);
     Type* user_ty = *type_ref;
+    Object* type_obj = find_obj(&user_ty->unresolved);
+    if(type_obj == NULL) return false;
     TypeQualifiers qualifiers = user_ty->qualifiers;
     switch(type_obj->kind)
     {
@@ -182,40 +191,29 @@ static bool resolve_user_def(Type** type_ref, Object* type_obj, TypeResFlags fla
         return false;
     case OBJ_BITFIELD:
         SIC_TODO();
-    case OBJ_ENUM:
+    case OBJ_ENUM: // Enums always have to be resolved
         if(!analyze_type_obj(type_obj)) return false;
         user_ty = obj_as_enum(type_obj)->type_ref;
+        user_ty->status = STATUS_RESOLVED;
         break;
     case OBJ_STRUCT:
-        if(g_sema->type_res_allow_unresolved)
-        {
-            user_ty->kind = TYPE_STRUCT;
-            user_ty->struct_ = obj_as_struct(type_obj);
-            return true;
-        }
-        if(!analyze_type_obj(type_obj)) return false;
         user_ty = obj_as_struct(type_obj)->type_ref;
+        if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
         break;
     case OBJ_TYPEDEF:
-        if(!analyze_type_obj(type_obj)) return false;
-        *type_ref = type_apply_qualifiers(obj_as_typedef(type_obj)->type_ref, qualifiers);
-        return resolve_type(type_ref, flags, error_loc, error_msg);
+        user_ty = obj_as_typedef(type_obj)->type_ref;
+        if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
+        break;
     case OBJ_UNION:
-        if(g_sema->type_res_allow_unresolved)
-        {
-            user_ty->kind = TYPE_UNION;
-            user_ty->struct_ = obj_as_struct(type_obj);
-            return true;
-        }
-        if(!analyze_type_obj(type_obj)) return false;
         user_ty = obj_as_struct(type_obj)->type_ref;
+        if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
         break;
     default:
         sic_error_at(user_ty->unresolved.data[user_ty->unresolved.size - 1].loc, "Symbol does not refer to a typename.");
         return false;
     }
+
     *type_ref = type_apply_qualifiers(user_ty, qualifiers);
-    DBG_ASSERT((*type_ref)->status == STATUS_RESOLVED);
     return true;
 }
 

@@ -181,10 +181,7 @@ def main():
         if pathlib.Path(args.test_root).is_file():
             tester.run_test_file(args.test_root)
         else:
-            tests = sorted(
-                pathlib.Path(args.test_root).rglob('*.si'),
-                key=lambda p: p.name
-            )
+            tests = sorted(pathlib.Path(args.test_root).rglob('*.si'))
             for test in tests:
                 tester.run_test_file(str(test))
 

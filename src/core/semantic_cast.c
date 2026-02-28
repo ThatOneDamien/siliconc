@@ -83,7 +83,7 @@ void perform_cast(ASTExpr* expr, Type* to)
 bool analyze_explicit_cast(ASTExpr* cast)
 {
     ASTExpr* inner = cast->expr.cast.inner;
-    if(!analyze_expr(inner) || !resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
+    if(!analyze_rvalue(inner) || !resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
         return false;
 
     CastParams params;
@@ -114,7 +114,7 @@ bool analyze_explicit_cast(ASTExpr* cast)
 bool implicit_cast(ASTExpr* expr, Type* desired)
 {
     DBG_ASSERT(desired->status == STATUS_RESOLVED);
-    if(!analyze_expr(expr) || type_is_bad(desired))
+    if(!analyze_rvalue(expr) || type_is_bad(desired))
         return false;
 
     CastParams params;
@@ -139,15 +139,8 @@ bool implicit_cast(ASTExpr* expr, Type* desired)
 
 bool implicit_cast_vararg(ASTExpr* arg)
 {
-    if(!analyze_expr(arg)) return false;
-    CastParams params;
-    params.cast = NULL;
-    params.inner = arg;
-    params.cast_loc = arg->loc;
-    params.from = arg->type;
-    params.fromc = arg->type->canonical;
-    params.explicit = false;
-    params.silent = false;
+    if(!analyze_rvalue(arg)) return false;
+    Type* to;
 
     switch(arg->type->kind)
     {
@@ -157,22 +150,22 @@ bool implicit_cast_vararg(ASTExpr* arg)
     case TYPE_UBYTE:
     case TYPE_SHORT:
     case TYPE_USHORT:
-        params.to = params.toc = g_type_int;
+        to = g_type_int;
         break;
     case TYPE_FLOAT:
-        params.to = params.toc = g_type_double;
+        to = g_type_double;
         break;
     case TYPE_INIT_LIST:
         sic_error_at(arg->loc, "Cannot pass initializer list as a variadic argument.");
         return false;
     case TYPE_STRING_LITERAL:
-        params.to = params.toc = type_pointer_to(g_type_char);
+        to = type_pointer_to(g_type_char);
         break;
     default:
         return true;
     }
 
-    perform_cast_params(&params);
+    perform_cast(arg, to);
     return true;
 }
 
@@ -280,12 +273,6 @@ static bool rule_str_to_ptr(const CastParams* const params)
 
 static bool rule_init_list_to_arr(const CastParams* const params)
 {
-    if(params->toc->kind == TYPE_RUNTIME_ARRAY)
-    {
-        // NOTE: This can be improved later on if I add some runtime checks. Don't plan on doing that
-        //       atm, but if I do, revisit this.
-        CAST_ERROR("Cannot cast to runtime array because its length is not known at compile-time.");
-    }
     uint64_t arr_size = params->toc->array.static_len; 
     Type* elem_type = params->toc->array.elem_type->canonical;
     if(params->fromc->kind == TYPE_STRING_LITERAL)
@@ -635,7 +622,6 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_POINTER]         = CAST_GROUP_PTR + 1,
     [TYPE_FUNC_PTR]        = CAST_GROUP_PTR + 1,
     [TYPE_STATIC_ARRAY]    = CAST_GROUP_ARRAY + 1,
-    [TYPE_RUNTIME_ARRAY]   = CAST_GROUP_ARRAY + 1,
     [TYPE_ALIAS_DISTINCT]  = CAST_GROUP_DISTINCT + 1,
     [TYPE_ENUM_DISTINCT]   = CAST_GROUP_DISTINCT + 1,
     [TYPE_STRUCT]          = CAST_GROUP_STRUCT + 1,

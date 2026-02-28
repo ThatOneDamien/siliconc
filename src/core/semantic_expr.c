@@ -5,7 +5,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr);
 static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate);
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
 
-static bool analyze_ident_rvalue(ASTExpr* expr);
+static bool analyze_var_rvalue(ASTExpr* expr);
 
 // Expr kind functions
 static bool analyze_array_access(ASTExpr* expr);
@@ -59,7 +59,7 @@ bool analyze_expr(ASTExpr* expr)
     DBG_ASSERT(expr != NULL);
     if(expr->is_evaluated) return !expr_is_bad(expr);
     bool success = analyze_expr_dispatch(expr);
-    DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
+    DBG_ASSERT(!success || (expr->type != NULL && expr->type->status != STATUS_UNRESOLVED));
     expr->is_evaluated = true;
     if(!success) expr->kind = EXPR_INVALID;
     return success;
@@ -133,9 +133,10 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
         return analyze_ct_type_max(expr);
     case EXPR_CT_TYPE_MIN:
         return analyze_ct_type_min(expr);
-    case EXPR_IDENT:
+    case EXPR_FUNCTION:
     case EXPR_MEMBER_ACCESS:
     case EXPR_TYPE_IDENT:
+    case EXPR_VAR:
     case EXPR_ZEROED_OUT:
         break;
     }
@@ -149,11 +150,51 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     DBG_ASSERT(expr->is_evaluated);
     switch(expr->kind)
     {
-    case EXPR_IDENT:
-        return analyze_ident_rvalue(expr);
-    default:
-        SIC_UNREACHABLE();
+    case EXPR_INVALID:
+        return false;
+    case EXPR_ARRAY_ACCESS:
+        return analyze_rvalue_dispatch(expr->expr.array_access.array_expr, mutate);
+    case EXPR_FUNC_CALL:
+        if(expr->type->canonical->kind == TYPE_VOID)
+        {
+            sic_error_at(expr->loc, "Function call does not return a value.");
+            return false;
+        }
+        return true;
+    case EXPR_FUNCTION:
+        sic_error_at(expr->loc, "Functions cannot be used directly. If you want to get the address do '&func'.");
+        return false;
+    case EXPR_MEMBER_ACCESS:
+        return analyze_rvalue_dispatch(expr->expr.member_access.parent_expr, mutate);
+    case EXPR_RANGE:
+    case EXPR_STRUCT_INIT_LIST:
+    case EXPR_TUPLE:
+        SIC_TODO();
+    case EXPR_TYPE_IDENT:
+        sic_error_at(expr->loc, "Types cannot be used as values.");
+        return false;
+    case EXPR_VAR:
+        return analyze_var_rvalue(expr);
+    case EXPR_ARRAY_INIT_LIST:
+    case EXPR_BINARY:
+    case EXPR_CAST:
+    case EXPR_CONSTANT:
+    case EXPR_POSTFIX:
+    case EXPR_TERNARY:
+    case EXPR_UNARY:
+    case EXPR_ZEROED_OUT:
+        return true;
+    case EXPR_UNRESOLVED_ARROW:
+    case EXPR_UNRESOLVED_DOT:
+    case EXPR_UNRESOLVED_IDENT:
+    case EXPR_CT_ALIGNOF:
+    case EXPR_CT_OFFSETOF:
+    case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_MAX:
+    case EXPR_CT_TYPE_MIN:
+        break;
     }
+    SIC_UNREACHABLE();
 }
 
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
@@ -170,29 +211,13 @@ RETRY:
         expr->is_const_eval = access.array_expr->is_const_eval && access.index_expr->is_const_eval;
         break;
     }
-    case EXPR_IDENT: {
-        Object* ident = expr->expr.ident;
-        switch(ident->kind)
+    case EXPR_FUNCTION:
+        if(will_write)
         {
-        case OBJ_VAR: {
-            ObjVar* var = obj_as_var(ident);
-            if(var->kind == VAR_GLOBAL)
-                expr->is_const_eval = true;
-            var->written = true;
-            break;
-        }
-        case OBJ_FUNC:
-            if(will_write)
-            {
-                sic_error_at(expr->loc, "Function identifiers are not mutable.");
-                return false;
-            }
-            break;
-        default:
-            goto ERR;
+            sic_error_at(expr->loc, "Function identifiers are not mutable.");
+            return false;
         }
         break;
-    }
     case EXPR_MEMBER_ACCESS:
         if(!analyze_lvalue_dispatch(expr->expr.member_access.parent_expr, will_write)) return false;
         expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
@@ -201,6 +226,18 @@ RETRY:
         if(!analyze_expr(expr)) return false;
         if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
         break;
+    case EXPR_VAR: {
+        ObjVar* var = expr->expr.var;
+        if(var->binding_kind == VAR_BINDING_CT_CONST)
+        {
+            sic_error_at(expr->loc, "Variables declared with #const %s.", will_write ? "have no storage" : "cannot be modified");
+            return false;
+        }
+        if(var->kind == VAR_GLOBAL)
+            expr->is_const_eval = true;
+        var->written = true;
+        break;
+    }
     case EXPR_UNRESOLVED_ARROW:
     case EXPR_UNRESOLVED_DOT:
         if(!analyze_expr(expr)) return false;
@@ -225,44 +262,33 @@ ERR:
     return false;
 }
 
-static bool analyze_ident_rvalue(ASTExpr* expr)
+static bool analyze_var_rvalue(ASTExpr* expr)
 {
-    Object* ident = expr->expr.ident;
-    switch(ident->kind)
+    ObjVar* var = expr->expr.var;
+    var->read = true;
+    switch(var->kind)
     {
-    case OBJ_FUNC:
-        sic_error_at(expr->loc, "Functions cannot be used directly. If you want to get the address do '&func'.");
-        return false;
-    case OBJ_VAR: {
-        ObjVar* var = obj_as_var(ident);
-        switch(var->kind)
+    case VAR_GLOBAL:
+        if(var->binding_kind == VAR_BINDING_CT_CONST || g_sema.in_global_init)
         {
-        case VAR_GLOBAL:
-            if(var->binding_kind == VAR_BINDING_CT_CONST || g_sema->in_global_init)
-            {
-                if(!analyze_global_var(var)) return false;
-                // FIXME: This might need to be a deep copy. For now I am shallow copying
-                // becuase I don't see a case where deep copying is strictly necessary.
-                if(var->initial_val)
-                    expr_copy(expr, var->initial_val);
-                else
-                    convert_to_const_zero(expr, var->type_loc.type);
-            }
-            return true;
-        case VAR_LOCAL:
-            if(var->binding_kind == VAR_BINDING_CT_CONST)
-            {
-                DBG_ASSERT(var->initial_val != NULL);
+            if(!analyze_global_var(var)) return false;
+            // FIXME: This might need to be a deep copy. For now I am shallow copying
+            // becuase I don't see a case where deep copying is strictly necessary.
+            if(var->initial_val)
                 expr_copy(expr, var->initial_val);
-            }
-            return true;
-        default:
-            return true;
+            else
+                convert_to_const_zero(expr, var->type_loc.type);
         }
-    }
+        return true;
+    case VAR_LOCAL:
+        if(var->binding_kind == VAR_BINDING_CT_CONST)
+        {
+            DBG_ASSERT(var->initial_val != NULL);
+            expr_copy(expr, var->initial_val);
+        }
+        return true;
     default:
-        sic_error_at(expr->loc, "Identifier is not an rvalue.");
-        return false;
+        return true;
     }
 }
 
@@ -270,9 +296,10 @@ static bool analyze_ident_rvalue(ASTExpr* expr)
 static bool analyze_array_access(ASTExpr* expr)
 {
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
-    bool valid = true;
-    valid &= analyze_expr(arr_expr);
-    valid &= analyze_rvalue(expr->expr.array_access.index_expr);
+    ASTExpr* index_expr = expr->expr.array_access.index_expr;
+    bool valid;
+    valid = analyze_expr(arr_expr);
+    valid &= implicit_cast(index_expr, g_type_usize);
     if(!valid) return false;
     Type* arr_t = type_reduce(arr_expr->type);
     Type* elem_type;
@@ -280,7 +307,14 @@ static bool analyze_array_access(ASTExpr* expr)
     switch(arr_t->kind)
     {
     case TYPE_POINTER:
-
+        elem_type = arr_t->pointer_base;
+        // TODO: Change this to have *[*]T and *[N]T be allowed, but *T not allowed (*T will mean pointer to SINGLE T).
+        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
+        if(!analyze_rvalue(arr_expr)) return false;
+        break;
+    case TYPE_STATIC_ARRAY:
+        elem_type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
+        break;
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
                      "Cannot access element of array literal. Please first assign the array to a const "
@@ -291,22 +325,7 @@ static bool analyze_array_access(ASTExpr* expr)
                      type_to_string(arr_expr->type));
         return false;
     }
-    if(arr_t->kind == TYPE_POINTER)
-    {
-        elem_type = arr_t->pointer_base;
-        if(!analyze_rvalue(arr_expr)) return false;
-        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type")) return false;
-    }
-    else if(type_is_array(arr_t))
-        elem_type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
-    else
-    {
-    }
 
-    if(!implicit_cast(expr->expr.array_access.index_expr, g_type_usize))
-        return false;
-
-    ASTExpr* index_expr = expr->expr.array_access.index_expr;
 
     if(index_expr->kind == EXPR_CONSTANT)
     {
@@ -388,7 +407,7 @@ static bool analyze_array_init_list(ASTExpr* expr)
                 max = entry->const_index;
         }
 
-        if(!analyze_expr(entry->init_value))
+        if(!analyze_rvalue(entry->init_value))
             valid = false;
         else if(!entry->init_value->is_const_eval)
             is_constant = false;
@@ -463,6 +482,7 @@ static bool analyze_call(ASTExpr* expr)
 {
     ASTExprCall* call = &expr->expr.call;
     if(!analyze_expr(call->func_expr)) return false;
+    if(call->func_expr->kind != EXPR_FUNCTION && !analyze_rvalue(call->func_expr)) return false;
     
     Type* func_type = call->func_expr->type->canonical;
     if(func_type->kind != TYPE_FUNC_PTR)
@@ -512,20 +532,23 @@ static bool analyze_call(ASTExpr* expr)
 
 static bool analyze_ident(ASTExpr* expr)
 {
-    Object* ident = find_obj(&expr->expr.pre_sema_ident);
+    Object* ident = find_obj(&expr->expr.unresolved_ident);
     if(ident == NULL) return false;
 
     switch(ident->kind)
     {
-    case OBJ_ENUM_VALUE:
-        convert_to_const_int(expr, obj_as_enum_value(ident)->const_value);
+    case OBJ_ENUM_VALUE: {
+        ObjEnumValue* value = obj_as_enum_value(ident);
+        expr->type = value->enum_type;
+        convert_to_const_int(expr, value->const_value);
         return true;
+    }
     case OBJ_FUNC: {
         ObjFunc* func = obj_as_func(ident);
-        if(!analyze_function(func)) return false;
+        if(!analyze_function_signature(func)) return false;
         expr->type = func->func_type;
-        expr->kind = EXPR_IDENT;
-        expr->expr.ident = ident;
+        expr->kind = EXPR_FUNCTION;
+        expr->expr.function = func;
         expr->is_const_eval = true;
         func->used = true;
         return true;
@@ -537,13 +560,13 @@ static bool analyze_ident(ASTExpr* expr)
     case OBJ_UNION:
         expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
-        expr->expr.ident = ident;
+        expr->expr.type_ident = ident;
         return true;
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
         expr->type = var->type_loc.type;
-        expr->kind = EXPR_IDENT;
-        expr->expr.ident = &var->header;
+        expr->kind = EXPR_VAR;
+        expr->expr.var = var;
         return true;
     }
     case OBJ_INVALID:
@@ -585,12 +608,12 @@ static bool analyze_ternary(ASTExpr* expr)
 {
     ASTExprTernary* tern = &expr->expr.ternary;
     bool valid = true;
-    valid &= analyze_expr(tern->cond_expr);
+    valid &= analyze_rvalue(tern->cond_expr);
     if(tern->then_expr != NULL)
-        valid &= analyze_expr(tern->then_expr);
+        valid &= analyze_rvalue(tern->then_expr);
     else
         tern->then_expr = tern->cond_expr;
-    valid &= analyze_expr(tern->else_expr);
+    valid &= analyze_rvalue(tern->else_expr);
     if(!valid) return false;
 
     SIC_TODO();
@@ -643,7 +666,6 @@ static bool resolve_member(ASTExpr* expr)
             return true;
         }
         break;
-    case TYPE_RUNTIME_ARRAY:
     case TYPE_SLICE:
         SIC_TODO();
     case TYPE_STRUCT:
@@ -674,7 +696,6 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_INFERRED_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ENUM:
-    case TYPE_UNRESOLVED_ARRAY:
     case TYPE_UNRESOLVED_USER:
     case TYPE_TYPEOF:
     case __TYPE_COUNT:
@@ -707,7 +728,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
-        ObjEnum* enum_ = obj_as_enum(parent->expr.ident);
+        ObjEnum* enum_ = obj_as_enum(parent->expr.type_ident);
         const ObjEnumValueDA values = enum_->values;
         for(uint32_t i = 0; i < values.size; ++i)
             if(values.data[i]->header.symbol == uaccess->member.sym)
@@ -717,7 +738,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
                 return true;
             }
         sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
-                     parent->expr.ident->symbol, uaccess->member.sym);
+                     enum_->header.symbol, uaccess->member.sym);
         return false;
     }
 
@@ -888,7 +909,8 @@ RETRY:
 
 static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* rhs)
 {
-    DBG_ASSERT(pointer->type->kind == TYPE_POINTER);
+    Type* lct = pointer->type->canonical;
+    DBG_ASSERT(lct->kind == TYPE_POINTER);
     Type* rt = rhs->type->canonical;
     if(!type_is_integer(rt))
     {
@@ -897,7 +919,8 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* rhs)
         return false;
     }
     // Make sure pointer's inner type is resolved so we can get its size.
-    if(!resolve_type(&pointer->type->pointer_base, TYPE_RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to %s.")) 
+    Type* inner_ty = lct->pointer_base;
+    if(!resolve_type(&inner_ty, TYPE_RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to %s.")) 
         return false;
 
     expr->type = pointer->type;
@@ -917,8 +940,8 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* rhs)
 static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = lhs->type->canonical;
@@ -972,8 +995,8 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
     // Type* lt = lhs->type;
@@ -1014,8 +1037,8 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
@@ -1036,8 +1059,8 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
@@ -1074,8 +1097,8 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
     if(!type_is_integer(lhs->type->canonical) || !type_is_integer(rhs->type->canonical))
@@ -1107,8 +1130,8 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
     if(!implicit_cast(lhs, g_type_bool) || !implicit_cast(rhs, g_type_bool))
@@ -1188,8 +1211,8 @@ ERR:
 static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, true)) return false;
 
@@ -1213,8 +1236,8 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
@@ -1238,8 +1261,8 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
@@ -1263,8 +1286,8 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
     Type* lhs_ctype = lhs->type->canonical;
@@ -1331,8 +1354,8 @@ static bool analyze_bit_op(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
@@ -1349,8 +1372,8 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
@@ -1366,8 +1389,8 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_expr(lhs);
-    valid &= analyze_expr(rhs);
+    valid &= analyze_rvalue(lhs);
+    valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
@@ -1420,7 +1443,7 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     if(!analyze_lvalue(inner, false)) return false;
     expr->is_const_eval = inner->is_const_eval;
 
-    if(inner->kind == EXPR_IDENT && inner->expr.ident->kind == OBJ_FUNC)
+    if(inner->kind == EXPR_FUNCTION)
     {
         expr->type = inner->type;
         return true;
@@ -1432,7 +1455,7 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
 
 static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
 {
-    if(!analyze_expr(*inner)) return false;
+    if(!analyze_rvalue(*inner)) return false;
     Type* type = (*inner)->type;
     if(!type_is_integer(type->canonical))
     {
@@ -1458,7 +1481,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
 
 static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!analyze_expr(inner)) return false;
+    if(!analyze_rvalue(inner)) return false;
     Type* ctype = inner->type->canonical;
     if(ctype->kind != TYPE_POINTER)
     {
@@ -1468,12 +1491,14 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
     }
 
     expr->type = ctype->pointer_base;
-    return resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s.");
+    if(!resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s."))
+        return false;
+    return true;
 }
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!analyze_lvalue(inner, true))
+    if(!analyze_lvalue(inner, true) || !analyze_rvalue_no_mutate(inner))
         return false;
 
     Type* ty = inner->type;
@@ -1510,7 +1535,7 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref)
 static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
 {
     ASTExpr* inner = *inner_ref;
-    if(!analyze_expr(inner)) return false;
+    if(!analyze_rvalue(inner)) return false;
     Type* type = inner->type;
     Type* ctype = type->canonical;
     if(!type_is_numeric(ctype))
@@ -1643,7 +1668,6 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
         SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_RUNTIME_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM:

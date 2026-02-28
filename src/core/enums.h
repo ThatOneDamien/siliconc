@@ -134,7 +134,7 @@ typedef enum : uint8_t
     EXPR_CAST,
     EXPR_CONSTANT,
     EXPR_FUNC_CALL,
-    EXPR_IDENT,
+    EXPR_FUNCTION,
     EXPR_MEMBER_ACCESS,
     EXPR_POSTFIX,
     EXPR_RANGE,
@@ -143,6 +143,7 @@ typedef enum : uint8_t
     EXPR_TUPLE,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
+    EXPR_VAR,
     EXPR_ZEROED_OUT,
 
     EXPR_UNRESOLVED_ARROW,
@@ -442,7 +443,6 @@ typedef enum : uint8_t
     TYPE_POINTER,
     TYPE_FUNC_PTR,
     TYPE_STATIC_ARRAY,
-    TYPE_RUNTIME_ARRAY,
     TYPE_INFERRED_ARRAY,
     TYPE_SLICE,
 
@@ -457,7 +457,6 @@ typedef enum : uint8_t
     TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
     TYPE_STRING_LITERAL,
     TYPE_TYPEOF,
-    TYPE_UNRESOLVED_ARRAY,
     TYPE_UNRESOLVED_USER,
     __TYPE_COUNT,
 } TypeKind;
@@ -541,7 +540,6 @@ typedef enum : uint8_t
             case TYPE_INIT_LIST:        \
             case TYPE_STRING_LITERAL:   \
             case TYPE_TYPEOF:           \
-            case TYPE_UNRESOLVED_ARRAY: \
             case TYPE_UNRESOLVED_USER:  \
             case __TYPE_COUNT
 
