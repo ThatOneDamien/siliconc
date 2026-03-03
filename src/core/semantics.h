@@ -30,7 +30,6 @@ bool analyze_global_var(ObjVar* var);
 bool analyze_function_signature(ObjFunc* function);
 bool analyze_type_obj(Object* type_obj);
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
-void resolve_int_lit_type(ASTExpr* lit);
 bool resolve_import(ObjModule* module, ObjImport* import);
 
 // Statements
@@ -126,7 +125,7 @@ static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
 
 static inline void convert_to_const_bool(ASTExpr* expr, bool value)
 {
-    DBG_ASSERT(expr->type->canonical->kind == TYPE_BOOL);
+    DBG_ASSERT(expr->type == g_type_bool);
     convert_to_constant(expr, CONSTANT_BOOL);
     expr->expr.constant.b = value;
 }

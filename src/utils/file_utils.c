@@ -129,7 +129,6 @@ ERR:
 
 FileId find_and_open_module_path(ObjModule* module)
 {
-    // FIXME: Check overflow of buffer.
     const char* base_path = file_from_id(g_compiler.input_file)->rel_path;
     char path_one[PATH_MAX];
     char path_two[PATH_MAX];
@@ -149,6 +148,11 @@ FileId find_and_open_module_path(ObjModule* module)
     for(uint32_t i = stack.size - 1; i < stack.size; --i)
     {
         size_t next_len = strlen(stack.data[i]->header.symbol);
+        if(next_len + len + sizeof("/mod.si") > PATH_MAX) // Check to make sure the path can fit in the buffer.
+        {
+            path_one[len] = '\0';
+            sic_fatal_error("Length of search path exceeds maximum: \'%s\'", path_one);
+        }
         memcpy(path_one + len, stack.data[i]->header.symbol, next_len);
         len += next_len;
         path_one[len++] = '/';

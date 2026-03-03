@@ -73,7 +73,7 @@ static Type s_void = {
     .canonical = &s_void,
     .cache = &s_voidptr,
 };
-TYPE_DEF(s_voidptr    , TYPE_POINTER, .pointer_base = &s_void);
+TYPE_DEF(s_voidptr    , TYPE_POINTER_SINGLE, .pointer.base = &s_void);
 TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
 TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
 
@@ -181,14 +181,14 @@ Type* type_apply_qualifiers(Type* base, TypeQualifiers qualifiers)
     return res;
 }
 
-Type* type_pointer_to(Type* base)
+Type* type_pointer_to_single(Type* base)
 {
     DBG_ASSERT(base != NULL);
     if(base->cache == NULL)
     {
         base->cache = CALLOC_STRUCT(Type);
-        base->cache->kind = TYPE_POINTER;
-        base->cache->pointer_base = base;
+        base->cache->kind = TYPE_POINTER_SINGLE;
+        base->cache->pointer.base = base;
         base->cache->canonical = base->cache;
         if(base->status == STATUS_RESOLVED)
         {
@@ -197,6 +197,22 @@ Type* type_pointer_to(Type* base)
         }
     }
     return base->cache;
+}
+
+Type* type_pointer_to_multi(Type* base, ASTExpr* size_expr)
+{
+    DBG_ASSERT(base != NULL);
+    Type* new_type = CALLOC_STRUCT(Type);
+    new_type->kind = TYPE_POINTER_MULTI;
+    new_type->pointer.base = base;
+    new_type->pointer.size_expr = size_expr;
+    new_type->canonical = new_type;
+    if(size_expr == NULL && base->status == STATUS_RESOLVED)
+    {
+        new_type->status = STATUS_RESOLVED;
+        new_type->visibility = base->visibility;
+    }
+    return new_type;
 }
 
 Type* type_func_ptr(FuncSignature* signature)
@@ -209,15 +225,25 @@ Type* type_func_ptr(FuncSignature* signature)
     return new_type;
 }
 
-Type* type_array_of(Type* elem_ty, ASTExpr* size_expr)
+Type* type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind)
 {
     DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_STATIC_ARRAY;
+    new_type->kind = kind;
     new_type->qualifiers = elem_ty->qualifiers;
     new_type->array.elem_type = elem_ty;
     new_type->array.size_expr = size_expr;
     new_type->canonical = new_type;
+    return new_type;
+}
+
+Type* type_slice_of(Type* elem_ty)
+{
+    DBG_ASSERT(elem_ty != NULL);
+    Type* new_type = CALLOC_STRUCT(Type);
+    new_type->kind = TYPE_SLICE;
+    new_type->canonical = new_type;
+    new_type->slice.base = elem_ty;
     return new_type;
 }
 
@@ -259,10 +285,13 @@ bool type_equal(const Type* t1, const Type* t2)
     case INT_TYPES:
     case FLOAT_TYPES:
         return true;
-    case TYPE_POINTER:
+    case TYPE_POINTER_MULTI:
+        if(t1->pointer.static_len != t2->pointer.static_len) return false;
+        FALLTHROUGH;
+    case TYPE_POINTER_SINGLE:
     case TYPE_SLICE:
-        return type_equal(t1->pointer_base, t2->pointer_base) && 
-               t1->pointer_base->qualifiers == t2->pointer_base->qualifiers;
+        return type_equal(t1->pointer.base, t2->pointer.base) && 
+               t1->pointer.base->qualifiers == t2->pointer.base->qualifiers;
     case TYPE_FUNC_PTR: {
         FuncSignature* s1 = t1->func_ptr;
         FuncSignature* s2 = t2->func_ptr;
@@ -307,13 +336,15 @@ ByteSize type_size(const Type* ty)
     case INT_TYPES:
     case FLOAT_TYPES:
         return ty->builtin.byte_size;
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.static_len;
     case TYPE_SLICE:
-        return g_compiler.target.ptr_size + type_size(g_type_usize);
+        // TODO: Make this simpler, or better yet, cache the size/alignment of types somewhere else.
+        return ALIGN_UP(g_compiler.target.ptr_size + type_size(g_type_usize), type_alignment(ty));
     case TYPE_ALIAS_DISTINCT:
         return type_size(ty->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
@@ -344,7 +375,8 @@ ByteSize type_alignment(const Type* ty)
         return 0;
     case NUMERIC_TYPES:
         return ty->builtin.byte_size;
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
@@ -382,8 +414,14 @@ const char* type_to_string(const Type* type)
         static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
         res = tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
         break;
-    case TYPE_POINTER:
-        res = str_format("*%s", type_to_string(type->pointer_base));
+    case TYPE_POINTER_SINGLE:
+        res = str_format("*%s", type_to_string(type->pointer.base));
+        break;
+    case TYPE_POINTER_MULTI:
+        if(type->pointer.static_len == 0)
+            res = str_format("*[*]%s", type_to_string(type->pointer.base));
+        else
+            res = str_format("*[%lu]%s", type->pointer.static_len, type_to_string(type->pointer.base));
         break;
     case TYPE_FUNC_PTR: {
         FuncSignature* sig = type->func_ptr;
@@ -403,11 +441,11 @@ const char* type_to_string(const Type* type)
         break;
     }
     case TYPE_SLICE:
-        res = str_format("[]%s", type_to_string(type->pointer_base));
+        res = str_format("[]%s", type_to_string(type->pointer.base));
         break;
     case TYPE_STATIC_ARRAY:
-        res = str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
-        break;
+        // Dont print qualifiers for array, they shouldn't have any
+        return str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
     case TYPE_ALIAS:
         // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
         // somehow express that it is an alias and not a distinct type.

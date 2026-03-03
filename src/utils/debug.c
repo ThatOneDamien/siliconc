@@ -199,6 +199,9 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     printf("[ ");
     switch(expr->kind)
     {
+    case EXPR_INVALID:
+        printf(HL_BLUE "Invalid" HL_STOP " ]\n");
+        return;
     case EXPR_ARRAY_ACCESS:
         printf("Array Access ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.array_access.array_expr, depth + 1, NULL, allow_unresolved);
@@ -229,13 +232,12 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     case EXPR_FUNCTION:
         printf("Function \'%s\' ]\n", expr->expr.function->header.symbol);
         return;
-    case EXPR_INVALID:
-        printf(HL_BLUE "Invalid" HL_STOP " ]\n");
-        return;
     case EXPR_MEMBER_ACCESS:
         printf("Member Access ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.member_access.parent_expr, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_POINTER_OFFSET:
+        SIC_TODO();
     case EXPR_POSTFIX:
         printf("Postfix \'%s\' ] (Type: %s)\n", 
                s_unary_op_strs[expr->expr.unary.kind], 
@@ -370,11 +372,10 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
         break;
     }
 
-    if(status == STATUS_RESOLVED)
-        return str_format(HL_GREEN "%s" HL_STOP, type_string);
+    if(status == STATUS_UNRESOLVED)
+        return str_format(allow_unresolved ? (HL_YELLOW "%s" HL_STOP) : (HL_RED "%s" HL_STOP), type_string);
 
-    return str_format(allow_unresolved ? (HL_YELLOW "%s" HL_STOP) : (HL_RED "%s" HL_STOP), type_string);
-
+    return str_format(HL_GREEN "%s" HL_STOP, type_string);
 }
 
 static const char* s_stmt_type_strs[] = {

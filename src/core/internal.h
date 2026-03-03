@@ -117,9 +117,11 @@ void        builtin_type_init();
 Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(const Type* other);
 Type*       type_apply_qualifiers(Type* base, TypeQualifiers qualifiers);
-Type*       type_pointer_to(Type* base);
+Type*       type_pointer_to_single(Type* base);
+Type*       type_pointer_to_multi(Type* base, ASTExpr* size_expr);
 Type*       type_func_ptr(FuncSignature* signature);
-Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr);
+Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind);
+Type*       type_slice_of(Type* elem_ty);
 Type*       type_reduce(Type* t);
 bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_size(const Type* ty);
@@ -162,6 +164,11 @@ static inline bool type_kind_is_distinct(TypeKind kind)
     return kind == TYPE_ENUM_DISTINCT || kind == TYPE_ALIAS_DISTINCT;
 }
 
+static inline bool type_kind_is_pointer(TypeKind kind)
+{
+    return kind == TYPE_POINTER_SINGLE || kind == TYPE_POINTER_MULTI;
+}
+
 static inline bool type_is_int_literal(Type* ty) { return ty == g_type_neg_int_lit || ty == g_type_pos_int_lit; }
 static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->kind); }
 static inline bool type_is_signed(const Type* ty) { return type_kind_is_signed(ty->kind); }
@@ -169,14 +176,12 @@ static inline bool type_is_unsigned(const Type* ty) { return type_kind_is_unsign
 static inline bool type_is_char(const Type* ty) { return type_kind_is_char(ty->kind); }
 static inline bool type_is_float(const Type* ty) { return type_kind_is_float(ty->kind); }
 static inline bool type_is_numeric(const Type* ty) { return type_kind_is_numeric(ty->kind); }
-static inline bool type_is_array(const Type* ty) { return type_kind_is_array(ty->kind); }
 static inline bool type_is_distinct(const Type* ty) { return type_kind_is_distinct(ty->kind); }
+static inline bool type_is_pointer(const Type* ty) { return type_kind_is_pointer(ty->kind); }
 static inline bool type_is_trivially_copyable(const Type* ty)
 {
-    return !type_is_array(ty) && type_size(ty) <= 16;
+    return ty->kind != TYPE_STATIC_ARRAY && type_size(ty) <= 16;
 }
-
-
 
 static inline Type* type_to_unsigned(Type* ty)
 {

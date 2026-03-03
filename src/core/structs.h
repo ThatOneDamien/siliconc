@@ -14,6 +14,7 @@ typedef const char* Symbol;
 typedef uint16_t    FileId;
 typedef uint32_t    BitSize;
 typedef uint32_t    ByteSize;
+typedef uint64_t    ArrayLength;
 
 // Compiler-Wide Data Structures
 typedef struct Int128           Int128;
@@ -35,6 +36,8 @@ typedef struct ModulePath       ModulePath;
 // Type Structs
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
+typedef struct TypePointer      TypePointer;
+typedef struct TypeSlice        TypeSlice;
 typedef struct Type             Type;
 typedef struct TypeLoc          TypeLoc;
 
@@ -63,6 +66,7 @@ typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
 typedef struct StructInitList   StructInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprPtrOff    ASTExprPtrOff;
 typedef struct ASTExprRange     ASTExprRange;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
 typedef struct ASTExprTernary   ASTExprTernary;
@@ -207,8 +211,8 @@ struct TypeArray
     Type* elem_type;
     union
     {
-        ASTExpr* size_expr;
-        uint64_t static_len;
+        ASTExpr*    size_expr;
+        ArrayLength static_len;
     };
 };
 
@@ -216,6 +220,21 @@ struct TypeBuiltin
 {
     BitSize  bit_size;
     ByteSize byte_size;
+};
+
+struct TypePointer
+{
+    Type* base;
+    union
+    {
+        ASTExpr*    size_expr;
+        ArrayLength static_len;
+    };
+};
+
+struct TypeSlice
+{
+    Type* base;
 };
 
 struct Type
@@ -233,7 +252,8 @@ struct Type
         TypeArray       array;
         TypeBuiltin     builtin;
         FuncSignature*  func_ptr;
-        Type*           pointer_base; // Used for both pointers and slices
+        TypePointer     pointer;
+        TypeSlice       slice;
         ASTExpr*        type_of;
         ModulePath      unresolved;
         ObjEnum*        enum_;
@@ -398,6 +418,7 @@ struct StructInitList
 struct ASTExprConstant
 {
     ConstantKind  kind;
+    bool          is_bit_int; // For integer. I put it here to conserve space. This is true for binary, octal, and hex literals
     union
     {
         Int128        i; // Integer
@@ -412,6 +433,12 @@ struct ASTExprMAccess
     ASTExpr* parent_expr;
     ObjVar*  member;
     uint32_t member_idx;
+};
+
+struct ASTExprPtrOff
+{
+    ASTExpr* pointer;
+    ASTExpr* offset;
 };
 
 struct ASTExprRange
@@ -464,14 +491,15 @@ struct ASTExpr
         ASTExprConstant constant;
         ObjFunc*        function;
         ASTExprMAccess  member_access;
+        ASTExprPtrOff   pointer_offset;
         ASTExprRange    range;
-        ModulePath      unresolved_ident;
         StructInitList  struct_init;
         ASTExprTernary  ternary;
         ASTExprDA       tuple;
         Object*         type_ident;
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
+        ModulePath      unresolved_ident;
         ObjVar*         var;
 
         TypeLoc         ct_typearg;

@@ -66,6 +66,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or);
 static void     emit_ternary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -634,6 +635,9 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
         break;
+    case EXPR_POINTER_OFFSET:
+        emit_pointer_offset(c, expr, &result);
+        break;
     case EXPR_POSTFIX: {
         GenValue inner = emit_expr(c, expr->expr.unary.inner);
         emit_incdec(c, expr, &inner, &result, true);
@@ -696,7 +700,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
 
     DBG_ASSERT(lhs->type->kind == TYPE_STATIC_ARRAY);
     ArrInitList* list = &right->expr.array_init;
-    for(uint64_t i = 0; i < lhs->type->array.static_len; ++i)
+    for(ArrayLength i = 0; i < lhs->type->array.static_len; ++i)
     {
         LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usize), i, false);
         GenValue index;
@@ -1086,7 +1090,7 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     {
         values[list->data[i].const_index] = emit_const_initializer(c, list->data[i].init_value);
     }
-    for(uint32_t i = 0; i < arr_type->array.static_len; ++i)
+    for(ArrayLength i = 0; i < arr_type->array.static_len; ++i)
     {
         if(values[i] == NULL)
             values[i] = LLVMConstNull(get_llvm_type(c, arr_type->array.elem_type));
@@ -1131,6 +1135,16 @@ static void emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* resul
                                         parent_val.value, 
                                         maccess->member_idx, 
                                         "");
+}
+
+static void emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* result)
+{
+    GenValue pointer = emit_expr(c, expr->expr.pointer_offset.pointer);
+    load_rvalue(c, &pointer);
+    GenValue offset = emit_expr(c, expr->expr.pointer_offset.offset);
+    load_rvalue(c, &offset);
+
+    result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, pointer.type->pointer.base), pointer.value, &offset.value, 1, "");
 }
 
 static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or)
@@ -1265,9 +1279,7 @@ static void emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result)
 
 static void emit_add(CodegenContext* c, GenValue* lhs, GenValue* rhs, GenValue* result)
 {
-    if(lhs->type->kind == TYPE_POINTER)
-        result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, lhs->type->pointer_base), lhs->value, &rhs->value, 1, "");
-    else if(type_is_float(lhs->type))
+    if(type_is_float(lhs->type))
         result->value = LLVMBuildFAdd(c->builder, lhs->value, rhs->value, "");
     else
         result->value = LLVMBuildAdd(c->builder, lhs->value, rhs->value, "");
@@ -1298,12 +1310,7 @@ static void emit_br(CodegenContext* c, LLVMBasicBlockRef block)
 
 static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result)
 {
-    if(left->type->kind == TYPE_POINTER)
-    {
-        right->value = LLVMBuildNeg(c->builder, right->value, "");
-        result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, left->type->pointer_base), left->value, &right->value, 1, "");
-    }
-    else if(type_is_float(left->type))
+    if(type_is_float(left->type))
         result->value = LLVMBuildFSub(c->builder, left->value, right->value, "");
     else
         result->value = LLVMBuildSub(c->builder, left->value, right->value, "");
@@ -1311,14 +1318,15 @@ static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValu
 
 static void store_default(CodegenContext* c, GenValue* ptr)
 {
-    // FIXME: I am temporarily setting most of the types to zero.
-    //        I still need to add the ability for structs/unions/enums 
-    //        to have default values.
+    // TODO: I am temporarily setting most of the types to zero.
+    //       I still need to add the ability for structs/unions/enums 
+    //       to have default values.
     LLVMTypeRef ty_ref = get_llvm_type(c, ptr->type);
     switch(ptr->type->kind)
     {
     case NUMERIC_TYPES:
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
         emit_llvm_store(c, LLVMConstNull(ty_ref), ptr->value, ptr->alignment);
         break;
@@ -1500,11 +1508,12 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMFloatType();
     case TYPE_DOUBLE:
         return type->llvm_ref = LLVMDoubleType();
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
         return type->llvm_ref = c->ptr_type;
     case TYPE_STATIC_ARRAY:
-        return type->llvm_ref = LLVMArrayType(get_llvm_type(c, type->array.elem_type), type->array.static_len);
+        return type->llvm_ref = LLVMArrayType2(get_llvm_type(c, type->array.elem_type), type->array.static_len);
     case TYPE_SLICE:
         SIC_TODO();
     case TYPE_ALIAS_DISTINCT:
@@ -1610,7 +1619,8 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     case TYPE_UINT128:
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:

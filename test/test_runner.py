@@ -32,11 +32,11 @@ class TestResult:
 
 
 class TestMeta:
-    path: str
+    name: str
     expected: list[ExpectedDiag]
 
-    def __init__(self, path: str):
-        self.path = path
+    def __init__(self, name: str):
+        self.name = name
         self.expected = []
 
     def find_diag(self, is_error: bool, message: str, line_nr: int):
@@ -71,7 +71,7 @@ class TestMeta:
         has_more_expected = len(self.expected) > 0
         has_unexpected = len(unexpected) > 0
         if not has_more_expected and not has_unexpected:
-            print(color_str(f'[PASS] {self.path}', StatusColor.PASS))
+            print(color_str(f'[PASS] {self.name}', StatusColor.PASS))
             return True
 
         self.print_fail('Mismatched diagnostics')
@@ -87,17 +87,19 @@ class TestMeta:
         return False 
 
     def print_fail(self, msg: str):
-        print(color_str(f'[FAIL] {self.path}: {msg}', StatusColor.FAIL))
+        print(color_str(f'[FAIL] {self.name}: {msg}', StatusColor.FAIL))
 
 class TestRunner:
     tests_passed: int
     test_count: int
     compiler_path: str
+    test_root: str
     tmpdir: str
-    def __init__(self, compiler_path: str, tmpdir: str):
+    def __init__(self, compiler_path: str, test_root: str, tmpdir: str):
         self.tests_passed = 0
         self.test_count = 0
         self.compiler_path = compiler_path
+        self.test_root = test_root
         self.tmpdir = tmpdir
 
 
@@ -116,9 +118,9 @@ class TestRunner:
 
 
     def run_test_file(self, test_path: str):
-        test = parse_test_file(test_path)
+        test = parse_test_file(test_path, self.test_root)
         self.test_count += 1
-        cmd = [self.compiler_path, test_path, '--emit', 'ir', '--out-dir', self.tmpdir]
+        cmd = [self.compiler_path, test_path, '--out-name', 'test', '--emit', 'ir', '--out-dir', self.tmpdir]
         try:
             proc_res = subprocess.run(cmd, check=False, stdout=subprocess.PIPE,
                                       stderr=subprocess.PIPE, timeout=20, text=True)
@@ -142,8 +144,8 @@ class TestRunner:
 
 
 
-def parse_test_file(test_path: str):
-    test = TestMeta(test_path)
+def parse_test_file(test_path: str, test_root: str):
+    test = TestMeta(test_path.removeprefix(test_root + '/'))
     with open(test_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
         i = 0
@@ -176,7 +178,7 @@ def main():
 
     print('******** Tests **********')
     tmpdir = tempfile.mkdtemp()
-    tester = TestRunner(compiler_path=args.compiler_path, tmpdir=tmpdir)
+    tester = TestRunner(compiler_path=args.compiler_path, test_root=args.test_root, tmpdir=tmpdir)
     try:
         if pathlib.Path(args.test_root).is_file():
             tester.run_test_file(args.test_root)

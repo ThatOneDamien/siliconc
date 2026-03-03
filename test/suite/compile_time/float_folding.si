@@ -11,4 +11,4 @@
 #assert(1.0f < 2.0f, "Fail");
 #assert(1.0f > 0.0f, "Fail");
 
-const a: float = 1.0f / 0.0f; // #error: evaluates to 0
+const a: float = 1.0f / 0.0f;

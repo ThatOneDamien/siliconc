@@ -32,10 +32,10 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne);
-static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
+static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
+static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
+static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
+static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
 static bool analyze_bit_op(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
@@ -134,6 +134,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_CT_TYPE_MIN:
         return analyze_ct_type_min(expr);
     case EXPR_FUNCTION:
+    case EXPR_POINTER_OFFSET:
     case EXPR_MEMBER_ACCESS:
     case EXPR_TYPE_IDENT:
     case EXPR_VAR:
@@ -145,7 +146,6 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
 
 static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
 {
-    (void)mutate;
     // The expressions must always be evaluated prior to calling this function.
     DBG_ASSERT(expr->is_evaluated);
     switch(expr->kind)
@@ -179,6 +179,7 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_BINARY:
     case EXPR_CAST:
     case EXPR_CONSTANT:
+    case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
     case EXPR_TERNARY:
     case EXPR_UNARY:
@@ -205,10 +206,10 @@ RETRY:
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS: {
-        ASTExprAAccess access = expr->expr.array_access;
+        ASTExprAAccess* access = &expr->expr.array_access;
         if(!analyze_expr(expr)) return false;
-        if(!analyze_lvalue_dispatch(access.array_expr, will_write)) return false;
-        expr->is_const_eval = access.array_expr->is_const_eval && access.index_expr->is_const_eval;
+        if(!analyze_lvalue_dispatch(access->array_expr, will_write)) return false;
+        expr->is_const_eval = access->array_expr->is_const_eval && access->index_expr->is_const_eval;
         break;
     }
     case EXPR_FUNCTION:
@@ -230,7 +231,8 @@ RETRY:
         ObjVar* var = expr->expr.var;
         if(var->binding_kind == VAR_BINDING_CT_CONST)
         {
-            sic_error_at(expr->loc, "Variables declared with #const %s.", will_write ? "have no storage" : "cannot be modified");
+            sic_error_at(expr->loc, "Variables declared with #const %s.", 
+                         will_write ? "cannot be modified" : "have no storage");
             return false;
         }
         if(var->kind == VAR_GLOBAL)
@@ -301,19 +303,24 @@ static bool analyze_array_access(ASTExpr* expr)
     valid = analyze_expr(arr_expr);
     valid &= implicit_cast(index_expr, g_type_usize);
     if(!valid) return false;
-    Type* arr_t = type_reduce(arr_expr->type);
+    Type* arr_type = type_reduce(arr_expr->type);
     Type* elem_type;
+    ArrayLength bounds_check;
 
-    switch(arr_t->kind)
+    switch(arr_type->kind)
     {
-    case TYPE_POINTER:
-        elem_type = arr_t->pointer_base;
-        // TODO: Change this to have *[*]T and *[N]T be allowed, but *T not allowed (*T will mean pointer to SINGLE T).
+    case TYPE_POINTER_SINGLE:
+        sic_error_at(expr->loc, "Array access syntax is not allowed for pointer to single element. Use *[N]T for pointer to multiple elements.");
+        return false;
+    case TYPE_POINTER_MULTI:
+        elem_type = arr_type->pointer.base;
         if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
         if(!analyze_rvalue(arr_expr)) return false;
+        bounds_check = arr_type->pointer.static_len;
         break;
     case TYPE_STATIC_ARRAY:
-        elem_type = type_apply_qualifiers(arr_t->array.elem_type, arr_expr->type->qualifiers);
+        elem_type = type_apply_qualifiers(arr_type->array.elem_type, arr_expr->type->qualifiers);
+        bounds_check = arr_type->array.static_len;
         break;
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
@@ -329,16 +336,13 @@ static bool analyze_array_access(ASTExpr* expr)
 
     if(index_expr->kind == EXPR_CONSTANT)
     {
-        uint64_t idx = index_expr->expr.constant.i.lo;
-        if(arr_t->kind == TYPE_STATIC_ARRAY && idx >= arr_t->array.static_len)
+        ArrayLength idx = index_expr->expr.constant.i.lo;
+        if(bounds_check != 0 && idx >= bounds_check)
         {
-            sic_diagnostic_at(DIAG_WARNING, expr->loc,
-                              "Index of access(%lu) will overflow the length of the array(%lu).",
-                              idx, arr_t->array.static_len);
-            return true;
+            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Index of access (%lu) will overflow the length of the %s (%lu).",
+                              idx, arr_type->kind == TYPE_STATIC_ARRAY ? "array" : "pointer", bounds_check);
         }
-
-        if(arr_expr->kind == EXPR_ARRAY_INIT_LIST)
+        else if(arr_expr->kind == EXPR_ARRAY_INIT_LIST)
         {
             ArrInitList* list = &arr_expr->expr.array_init;
             for(uint32_t i = 0; i < list->size; ++i)
@@ -424,7 +428,8 @@ static inline bool analyze_binary(ASTExpr* expr)
     ASTExpr* lhs = expr->expr.binary.lhs;
     ASTExpr* rhs = expr->expr.binary.rhs;
 
-    switch(expr->expr.binary.kind)
+    BinaryOpKind kind = expr->expr.binary.kind;
+    switch(kind)
     {
     case BINARY_ADD:
         return analyze_add(expr, lhs, rhs);
@@ -441,17 +446,17 @@ static inline bool analyze_binary(ASTExpr* expr)
         return analyze_logical(expr, lhs, rhs);
     case BINARY_EQ:
     case BINARY_NE:
-        return analyze_eq_ne(expr, lhs, rhs);
+        return analyze_eq_ne(expr, lhs, rhs, kind);
     case BINARY_LT:
     case BINARY_GE:
-        return analyze_lt_ge(expr, lhs, rhs);
+        return analyze_lt_ge(expr, lhs, rhs, kind);
     case BINARY_LE:
     case BINARY_GT:
-        return analyze_le_gt(expr, lhs, rhs);
+        return analyze_le_gt(expr, lhs, rhs, kind);
     case BINARY_SHL:
     case BINARY_LSHR:
     case BINARY_ASHR:
-        return analyze_shift(expr, lhs, rhs);
+        return analyze_shift(expr, lhs, rhs, kind);
     case BINARY_BIT_OR:
         return analyze_bit_or(expr, lhs, rhs);
     case BINARY_BIT_XOR:
@@ -666,6 +671,14 @@ static bool resolve_member(ASTExpr* expr)
             return true;
         }
         break;
+    case TYPE_POINTER_MULTI:
+        if(member.sym == g_sym_len && t->pointer.static_len != 0)
+        {
+            expr->type = g_type_usize;
+            convert_to_const_int(expr, i128_from_u64(t->pointer.static_len));
+            return true;
+        }
+        break;
     case TYPE_SLICE:
         SIC_TODO();
     case TYPE_STRUCT:
@@ -685,7 +698,7 @@ static bool resolve_member(ASTExpr* expr)
     }
     case TYPE_VOID:
     case NUMERIC_TYPES:
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
     case TYPE_FUNC_PTR:
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
@@ -742,7 +755,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
         return false;
     }
 
-    if(parent->type->canonical->kind == TYPE_POINTER)
+    if(parent->type->canonical->kind == TYPE_POINTER_SINGLE)
     {
         ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
         deref->loc = expr->loc;
@@ -907,34 +920,65 @@ RETRY:
     }
 }
 
-static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* rhs)
+static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offset, BinaryOpKind kind)
 {
-    Type* lct = pointer->type->canonical;
-    DBG_ASSERT(lct->kind == TYPE_POINTER);
-    Type* rt = rhs->type->canonical;
-    if(!type_is_integer(rt))
+    Type* ptr_type = pointer->type->canonical;
+    Type* offset_type = offset->type->canonical;
+    DBG_ASSERT(type_is_pointer(ptr_type));
+    if(!type_is_integer(offset_type))
     {
         sic_error_at(expr->loc, "Invalid operand types %s and %s.",
-                     type_to_string(pointer->type), type_to_string(rhs->type));
+                     type_to_string(pointer->type), type_to_string(offset->type));
+        return false;
+    }
+    if(ptr_type->kind == TYPE_POINTER_MULTI)
+    {
+        sic_error_at(expr->loc, "Cannot perform pointer-arithmetic on multi-pointer. If you want the "
+                                "address of a specific element do something like '&ptr[elem]'.");
         return false;
     }
     // Make sure pointer's inner type is resolved so we can get its size.
-    Type* inner_ty = lct->pointer_base;
-    if(!resolve_type(&inner_ty, TYPE_RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to %s.")) 
+    Type* inner_type = ptr_type->pointer.base;
+    if(!resolve_type(&inner_type, TYPE_RES_NORMAL, expr->loc, "Cannot perform pointer-arithmetic on pointer to %s.")) 
         return false;
 
+    if(!implicit_cast(offset, type_is_unsigned(offset_type) ? g_type_uptr : g_type_iptr)) return false;
+
     expr->type = pointer->type;
-    // if(pointer->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     Int128 actual_val_to_add = i128_mult64(rhs->expr.constant.i, type_size(pointer->type->pointer_base));
-    //     DBG_ASSERT(expr->kind == EXPR_BINARY);
-    //     if(expr->expr.binary.kind == BINARY_SUB)
-    //         actual_val_to_add = i128_neg(actual_val_to_add);
-    //     convert_to_const_pointer(expr, i128_add(pointer->expr.constant.i, actual_val_to_add));
-    //     return true;
-    // }
-    //
-    return implicit_cast(rhs, type_is_unsigned(rt) ? g_type_uptr : g_type_iptr);
+    if(pointer->kind == EXPR_CONSTANT && offset->kind == EXPR_CONSTANT)
+    {
+        Int128 actual_val_to_add = i128_mult64(offset->expr.constant.i, type_size(inner_type));
+        DBG_ASSERT(expr->kind == EXPR_BINARY);
+        if(kind == BINARY_SUB)
+            actual_val_to_add = i128_neg(actual_val_to_add);
+        convert_to_const_pointer(expr, i128_add(pointer->expr.constant.i, actual_val_to_add));
+        return true;
+    }
+
+    if(pointer->kind == EXPR_POINTER_OFFSET)
+    {
+        expr_copy(expr, pointer);
+        *pointer = (ASTExpr) {
+            .kind = EXPR_BINARY,
+            .loc = expr->loc,
+            .expr.binary = {
+                .lhs = expr->expr.pointer_offset.offset,
+                .rhs = offset,
+                .kind = kind,
+            }
+        };
+        if(!analyze_rvalue(pointer)) return false;
+        expr->expr.pointer_offset.offset = pointer;
+    }
+    else
+    {
+        expr->kind = EXPR_POINTER_OFFSET;
+        expr->expr.pointer_offset.pointer = pointer;
+        expr->expr.pointer_offset.offset = offset;
+    }
+
+    expr->is_const_eval = pointer->is_const_eval & offset->is_const_eval;
+    return true;
 }
 
 static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
@@ -944,51 +988,72 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
     Type* lt = lhs->type->canonical;
-    Type* rt = lhs->type->canonical;
-    bool lhs_is_pointer = lt->kind == TYPE_POINTER;
-    bool rhs_is_pointer = rt->kind == TYPE_POINTER;
+    Type* rt = rhs->type->canonical;
 
-    // if(type_is_int_literal(lt) && type_is_int_literal(rt))
-    // {
-    //     Int128 l = lhs->expr.constant.i;
-    //     Int128 r = rhs->expr.constant.i;
-    //     if(lt == rt) expr->type = lt;
-    //     else 
-    //     {
-    //         if(lt == g_type_neg_int_lit)
-    //             expr->type = i128_ucmp(i128_neg(l), r) > 0 ? lt : rt;
-    //         else
-    //             expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
-    //     }
-    //     convert_to_const_int(expr, i128_add(l, r));
-    //     return true;
-    // }
-    //
-    if(rhs_is_pointer)
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
     {
-        lhs_is_pointer = true;
-        expr->expr.binary.lhs = rhs;
-        expr->expr.binary.rhs = lhs;
-        lhs = rhs;
-        rhs = expr->expr.binary.lhs;
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        Int128 value = i128_add(l, r);
+        bool is_bit_int = false;
+        if(lhs->expr.constant.is_bit_int || rhs->expr.constant.is_bit_int)
+        {
+            expr->type = g_type_pos_int_lit;
+            is_bit_int = true;
+        }
+        else if(lt == rt)
+        {
+            expr->type = lt;
+            if(lt == g_type_neg_int_lit)
+            {
+                if(i128_scmp(value, l) > 0)
+                {
+                    sic_diagnostic_at(DIAG_WARNING, expr->loc, "Addition between int literals underflows.");
+                    expr->type = g_type_uint128;
+                }
+            }
+            else
+            {
+                if(i128_ucmp(value, l) < 0)
+                {
+                    sic_diagnostic_at(DIAG_WARNING, expr->loc, "Addition between int literals overflows.");
+                    expr->type = g_type_uint128;
+                }
+            }
+        }
+        else 
+        {
+            if(lt == g_type_neg_int_lit)
+                expr->type = i128_ucmp(i128_neg(l), r) > 0 ? lt : rt;
+            else
+                expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
+        }
+        convert_to_const_int(expr, value);
+        expr->expr.constant.is_bit_int = is_bit_int;
+        return true;
     }
 
-    if(lhs_is_pointer)
-        return analyze_pointer_arith(expr, lhs, rhs);
+    if(type_is_pointer(lt))
+        return analyze_pointer_arith(expr, lhs, rhs, BINARY_ADD);
+
+    if(type_is_pointer(rt))
+        return analyze_pointer_arith(expr, rhs, lhs, BINARY_ADD);
+
 
     if(!basic_arith_type_conv(lhs, rhs, expr->loc))
         return false;
 
     expr->type = lhs->type;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-    //         convert_to_const_float(expr, lhs->expr.constant.f + rhs->expr.constant.f);
-    //     else
-    //         convert_to_const_int(expr, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+            convert_to_const_float(expr, lhs->expr.constant.f + rhs->expr.constant.f);
+        else
+            convert_to_const_int(expr, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -999,38 +1064,67 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
-    // Type* lt = lhs->type;
-    // Type* rt = rhs->type;
-    // if(type_is_int_literal(lt) && type_is_int_literal(rt))
-    // {
-    //     Int128 l = lhs->expr.constant.i;
-    //     Int128 r = rhs->expr.constant.i;
-    //     if(lt != rt) expr->type = lt;
-    //     else 
-    //     {
-    //         if(lt == g_type_neg_int_lit)
-    //             expr->type = i128_scmp(l, r) >= 0 ? g_type_pos_int_lit : lt;
-    //         else
-    //             expr->type = i128_ucmp(l, r) >= 0 ? lt : g_type_neg_int_lit;
-    //     }
-    //     convert_to_const_int(expr, i128_sub(l, r));
-    //     return true;
-    // }
-    if(lhs->type->canonical->kind == TYPE_POINTER)
-        return analyze_pointer_arith(expr, lhs, rhs);
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        Int128 value = i128_sub(l, r);
+        bool is_bit_int = false;
+        if(lhs->expr.constant.is_bit_int)
+        {
+            expr->type = g_type_pos_int_lit;
+            is_bit_int = true;
+        }
+        else if(lt != rt)
+        {
+            expr->type = lt;
+            if(lt == g_type_neg_int_lit)
+            {
+                if(i128_scmp(value, l) > 0)
+                {
+                    sic_diagnostic_at(DIAG_WARNING, expr->loc, "Subtraction between int literals underflows.");
+                    expr->type = g_type_uint128;
+                }
+            }
+            else
+            {
+                if(i128_ucmp(value, l) < 0)
+                {
+                    sic_diagnostic_at(DIAG_WARNING, expr->loc, "Subtraction between int literals overflows.");
+                    expr->type = g_type_uint128;
+                }
+            }
+        }
+        else 
+        {
+            if(lt == g_type_neg_int_lit)
+                expr->type = i128_scmp(l, r) < 0 ? lt : rt;
+            else
+                expr->type = i128_ucmp(l, r) >= 0 ? lt : rt;
+        }
+        convert_to_const_int(expr, value);
+        expr->expr.constant.is_bit_int = is_bit_int;
+        return true;
+    }
+
+    if(type_is_pointer(lt))
+        return analyze_pointer_arith(expr, lhs, rhs, BINARY_SUB);
 
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-    //         convert_to_const_float(expr, lhs->expr.constant.f - rhs->expr.constant.f);
-    //     else
-    //         convert_to_const_int(expr, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+            convert_to_const_float(expr, lhs->expr.constant.f - rhs->expr.constant.f);
+        else
+            convert_to_const_int(expr, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1040,19 +1134,63 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        if(i128_is_zero(l) || i128_is_zero(r))
+            expr->type = g_type_pos_int_lit;
+        else if(lt != rt)
+        {
+            expr->type = g_type_neg_int_lit;
+            bool underflows;
+            if(lt == g_type_neg_int_lit)
+                underflows = i128_ucmp(r, i128_sdiv(INT128_MIN, l)) > 0;
+            else
+                underflows = i128_ucmp(l, i128_sdiv(INT128_MIN, r)) > 0;
+
+            if(underflows)
+            {
+                sic_diagnostic_at(DIAG_WARNING, expr->loc, "Multiplication between int literals underflows.");
+                expr->type = g_type_uint128;
+            }
+
+        }
+        else 
+        {
+            expr->type = g_type_pos_int_lit;
+            bool overflows;
+            if(lt == g_type_neg_int_lit)
+                overflows = i128_ucmp(i128_neg(l), i128_udiv(UINT128_MAX, i128_neg(r))) > 0;
+            else
+                overflows = i128_ucmp(l, i128_udiv(UINT128_MAX, r)) > 0;
+
+            if(overflows)
+            {
+                sic_diagnostic_at(DIAG_WARNING, expr->loc, "Multiplication between int literals overflows.");
+                expr->type = g_type_uint128;
+            }
+        }
+        convert_to_const_int(expr, i128_mult(l, r));
+        return true;
+    }
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-    //         convert_to_const_float(expr, lhs->expr.constant.f * rhs->expr.constant.f);
-    //     else
-    //         convert_to_const_int(expr, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+            convert_to_const_float(expr, lhs->expr.constant.f * rhs->expr.constant.f);
+        else
+            convert_to_const_int(expr, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1061,36 +1199,66 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        Int128 value;
+        if(i128_is_zero(r))
+        {
+            sic_error_at(expr->loc, "Right side of integer division evaluates to 0.");
+            return false;
+        }
+
+        if(i128_is_zero(l))
+        {
+            expr->type = g_type_pos_int_lit;
+            value = UINT128_MIN;
+        }
+        else if(lt != rt)
+        {
+            expr->type = g_type_neg_int_lit;
+            if(lt == g_type_neg_int_lit)
+                value = i128_udiv(i128_neg(l), r);
+            else
+                value = i128_udiv(l, i128_neg(r));
+            value = i128_neg(value);
+        }
+        else 
+        {
+            expr->type = g_type_pos_int_lit;
+            if(lt == g_type_neg_int_lit)
+                value = i128_sdiv(l, r);
+            else
+                value = i128_udiv(l, r);
+        }
+        convert_to_const_int(expr, value);
+        return true;
+    }
     if(!valid) return false;
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-    //     {
-    //         double rval = rhs->expr.constant.f;
-    //         if(rval == 0.0)
-    //         {
-    //             sic_error_at(expr->loc, "Right side of division evaluates to 0.");
-    //             return false;
-    //         }
-    //         convert_to_const_float(expr, lhs->expr.constant.f / rval);
-    //     }
-    //     else
-    //     {
-    //         Int128 rval = rhs->expr.constant.i;
-    //         if(rval.hi == 0 && rval.lo == 0)
-    //         {
-    //             sic_error_at(expr->loc, "Right side of division evaluates to 0.");
-    //             return false;
-    //         }
-    //         convert_to_const_int(expr, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
-    //     }
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        if(lhs->expr.constant.kind == CONSTANT_FLOAT)
+            convert_to_const_float(expr, lhs->expr.constant.f / rhs->expr.constant.f);
+        else
+        {
+            Int128 rval = rhs->expr.constant.i;
+            if(i128_is_zero(rval))
+            {
+                sic_error_at(expr->loc, "Right side of integer division evaluates to 0.");
+                return false;
+            }
+            convert_to_const_int(expr, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
+        }
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1100,8 +1268,35 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        if(rt == g_type_neg_int_lit) r = i128_neg(r);
+        Int128 value;
+        if(i128_is_zero(r))
+        {
+            sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
+            return false;
+        }
 
-    if(!type_is_integer(lhs->type->canonical) || !type_is_integer(rhs->type->canonical))
+        if(lt == g_type_pos_int_lit)
+        {
+            expr->type = g_type_pos_int_lit;
+            value = i128_urem(l, r);
+        }
+        else 
+        {
+            expr->type = g_type_neg_int_lit;
+            value = i128_srem(l, r);
+        }
+        convert_to_const_int(expr, value);
+        return true;
+    }
+
+    if(!type_is_integer(lt) || !type_is_integer(rt))
     {
         sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                      type_to_string(lhs->type), type_to_string(rhs->type));
@@ -1111,56 +1306,55 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
     expr->type = lhs->type;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     Int128 rval = rhs->expr.constant.i;
-    //     if(rval.hi == 0 && rval.lo == 0)
-    //     {
-    //         sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
-    //         return false;
-    //     }
-    //     convert_to_const_int(expr, i128_rem(lhs->expr.constant.i, rval, rhs->type->kind));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        Int128 rval = rhs->expr.constant.i;
+        if(i128_is_zero(rval))
+        {
+            sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
+            return false;
+        }
+        convert_to_const_int(expr, i128_rem(lhs->expr.constant.i, rval, expr->type->canonical->kind));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
 static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 {
     bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
+    valid &= implicit_cast(lhs, g_type_bool);
+    valid &= implicit_cast(rhs, g_type_bool);
     if(!valid) return false;
-
-    if(!implicit_cast(lhs, g_type_bool) || !implicit_cast(rhs, g_type_bool))
-        return false;
 
     expr->type = g_type_bool;
 
-    // if(lhs->kind == EXPR_CONSTANT)
-    // {
-    //     DBG_ASSERT(lhs->expr.constant.kind == CONSTANT_BOOL);
-    //     expr_copy(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
-    //     return true;
-    // }
-    //
-    // if(rhs->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ rhs->expr.constant.b))
-    // {
-    //     DBG_ASSERT(rhs->expr.constant.kind == CONSTANT_BOOL);
-    //     expr_copy(expr, lhs);
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT)
+    {
+        DBG_ASSERT(lhs->expr.constant.kind == CONSTANT_BOOL);
+        expr_copy(expr, (expr->expr.binary.kind == BINARY_LOG_OR) ^ lhs->expr.constant.b ? rhs : lhs);
+        return true;
+    }
+
+    if(rhs->kind == EXPR_CONSTANT && ((expr->expr.binary.kind == BINARY_LOG_OR) ^ rhs->expr.constant.b))
+    {
+        DBG_ASSERT(rhs->expr.constant.kind == CONSTANT_BOOL);
+        expr_copy(expr, lhs);
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
 static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne)
 {
-    TypeKind lkind = lhs->type->canonical->kind;
-    TypeKind rkind = rhs->type->canonical->kind;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    TypeKind lkind = lt->kind;
+    TypeKind rkind = rt->kind;
     expr->type = g_type_bool;
     if(lkind == TYPE_STRING_LITERAL || rkind == TYPE_STRING_LITERAL)
     {
@@ -1175,162 +1369,228 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool i
     switch(lkind)
     {
     case TYPE_BOOL:
-        if(rkind != TYPE_BOOL || !is_eq_ne) goto ERR;
+        if(rkind != TYPE_BOOL || !is_eq_ne) break;
         return true;
     case TYPE_CHAR:
     case TYPE_CHAR16:
     case TYPE_CHAR32:
-        if(rkind != lkind) goto ERR;
+        if(rkind != lkind) break;
         return true;
     case INT_TYPES:
-        if(!type_kind_is_integer(rkind)) goto ERR;
+        if(!type_kind_is_integer(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
     case FLOAT_TYPES:
-        if(!type_kind_is_float(rkind)) goto ERR;
+        if(!type_kind_is_float(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
+        if(lt->pointer.base->canonical->kind == TYPE_VOID) return true;
+        if(!type_kind_is_pointer(rkind)) break;
+        if(rt->pointer.base->canonical->kind == TYPE_VOID || type_equal(lt->pointer.base, rt->pointer.base)) return true;
+        break;
     case TYPE_FUNC_PTR:
-        if(rkind != TYPE_POINTER && rkind != TYPE_FUNC_PTR) goto ERR;
-        if(!can_cast(rhs, lhs->type, true)) goto ERR;
-        perform_cast(rhs, lhs->type);
-        return true;
+        if(type_kind_is_pointer(rkind) && rt->pointer.base->canonical->kind == TYPE_VOID) return true;
+        return type_equal(lt, rt);
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
-        if(!type_equal(lhs->type, rhs->type)) goto ERR;
+        if(!type_equal(lt, rt)) break;
         return true;
     default:
-        goto ERR;
+        break;
     }
 
-ERR:
     sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                  type_to_string(lhs->type), type_to_string(rhs->type));
     return false;
 }
 
-static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        bool value = lt == rt && i128_ucmp(l, r) == 0;
+        expr->type = g_type_bool;
+        convert_to_const_bool(expr, value ^ (kind == BINARY_NE));
+        return true;
+    }
     if(!analyze_comparison(expr, lhs, rhs, true)) return false;
 
-    // Type* ty = lhs->type->canonical;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     bool value;
-    //     if(type_is_float(ty))
-    //         value = lhs->expr.constant.f == rhs->expr.constant.f;
-    //     else
-    //         value = i128_ucmp(lhs->expr.constant.i, rhs->expr.constant.i) == 0;
-    //
-    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_NE));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    lt = lhs->type->canonical;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        bool value;
+        if(type_is_float(lt))
+            value = lhs->expr.constant.f == rhs->expr.constant.f;
+        else
+            value = i128_ucmp(lhs->expr.constant.i, rhs->expr.constant.i) == 0;
+
+        convert_to_const_bool(expr, value ^ (kind == BINARY_NE));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
-static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        bool value;
+        expr->type = g_type_bool;
+        if(lt == g_type_neg_int_lit)
+            value = rt == g_type_pos_int_lit || i128_ucmp(l, r) < 0;
+        else
+            value = rt == g_type_pos_int_lit && i128_ucmp(l, r) < 0;
+        convert_to_const_bool(expr, value ^ (kind == BINARY_GE));
+        return true;
+    }
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    // Type* ty = lhs->type->canonical;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     bool value;
-    //     if(type_is_float(ty))
-    //         value = lhs->expr.constant.f < rhs->expr.constant.f;
-    //     else
-    //         value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) < 0;
-    //
-    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GE));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    lt = lhs->type->canonical;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        bool value;
+        if(type_is_float(lt))
+            value = lhs->expr.constant.f < rhs->expr.constant.f;
+        else
+            value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, lt->kind) < 0;
+
+        convert_to_const_bool(expr, value ^ (kind == BINARY_GE));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
-static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        Int128 l = lhs->expr.constant.i;
+        Int128 r = rhs->expr.constant.i;
+        bool value;
+        expr->type = g_type_bool;
+        if(lt == g_type_neg_int_lit)
+            value = rt == g_type_pos_int_lit || i128_ucmp(l, r) <= 0;
+        else
+            value = rt == g_type_pos_int_lit && i128_ucmp(l, r) <= 0;
+        convert_to_const_bool(expr, value ^ (kind == BINARY_GT));
+        return true;
+    }
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    // Type* ty = lhs->type->canonical;
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     bool value;
-    //     if(type_is_float(ty))
-    //         value = lhs->expr.constant.f <= rhs->expr.constant.f;
-    //     else
-    //         value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, ty->kind) <= 0;
-    //
-    //     convert_to_const_bool(expr, value ^ (expr->expr.binary.kind == BINARY_GT));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    lt = lhs->type->canonical;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        bool value;
+        if(type_is_float(lt))
+            value = lhs->expr.constant.f <= rhs->expr.constant.f;
+        else
+            value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, lt->kind) <= 0;
+
+        convert_to_const_bool(expr, value ^ (kind == BINARY_GT));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
-static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
-    Type* lhs_ctype = lhs->type->canonical;
-    Type* rhs_ctype = rhs->type->canonical;
-
-    if(!type_is_integer(lhs_ctype) || !type_is_integer(rhs_ctype))
+    expr->type = lhs->type;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    if(!type_is_integer(lt) || !type_is_integer(rt))
     {
         sic_error_at(expr->loc, "Invalid operand types %s and %s.",
                      type_to_string(lhs->type), type_to_string(rhs->type));
         return false;
     }
 
-    if(type_is_int_literal(rhs_ctype) || lhs_ctype->builtin.byte_size != rhs_ctype->builtin.byte_size)
-        perform_cast(rhs, lhs_ctype);
+    if(type_is_int_literal(lt) && kind == BINARY_ASHR)
+    {
+        sic_error_at(expr->loc, "You cannot perform an arithmetic shift right on an "
+                                "untyped int literal. Please assign a type first.");
+        return false;
+    }
 
+    if(rhs->kind == EXPR_CONSTANT)
+    {
+        Int128 r = rhs->expr.constant.i;
+        if(type_is_signed(rt) && i128_is_neg(r))
+        {
+            sic_error_at(expr->loc, "Shift amount should not be negative.");
+            return false;
+        }
+        if(i128_ucmp64(rhs->expr.constant.i, lt->builtin.bit_size) >= 0)
+            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount >= integer width.");
+
+        if(lhs->kind == EXPR_CONSTANT)
+        {
+            if(i128_is_zero(r)) 
+            {
+                expr_copy(expr, lhs);
+                return true;
+            }
+            Int128 new_val;
+            if(kind == BINARY_SHL)
+                new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
+            else if(kind == BINARY_LSHR)
+                new_val = i128_lshr(lhs->expr.constant.i, rhs->expr.constant.i);
+            else
+            {
+                BitSize shift = 128 - lt->builtin.bit_size;
+                new_val = i128_shl64(lhs->expr.constant.i, shift);
+                new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
+            }
+            convert_to_const_int(expr, new_val);
+            if(type_is_int_literal(lt))
+            {
+                expr->type = g_type_pos_int_lit;
+                expr->expr.constant.is_bit_int = true;
+            }
+            return true;
+        }
+    }
+
+    if(!implicit_cast(rhs, type_to_unsigned(lt))) return false;
     
-    expr->type = lhs->type;
-    // if(rhs->kind == EXPR_CONSTANT)
-    // {
-    //     if(i128_ucmp(rhs->expr.constant.i, i128_from_u64(lhs_ctype->builtin.bit_size)) >= 0)
-    //         sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount exceeds integer width (%u).",
-    //                           lhs_ctype->builtin.bit_size);
-    //
-    //     if(lhs->kind == EXPR_CONSTANT)
-    //     {
-    //         Int128 new_val;
-    //         BinaryOpKind kind = expr->expr.binary.kind;
-    //         if(kind == BINARY_SHL)
-    //             new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
-    //         else if(kind == BINARY_LSHR)
-    //             new_val = i128_lshr(lhs->expr.constant.i, rhs->expr.constant.i);
-    //         else
-    //         {
-    //             BitSize shift = 128 - lhs_ctype->builtin.bit_size;
-    //             new_val = i128_shl64(lhs->expr.constant.i, shift);
-    //             new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
-    //         }
-    //         convert_to_const_int(expr, new_val);
-    //         return true;
-    //     }
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1357,15 +1617,25 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        expr->type = g_type_pos_int_lit;
+        convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
+        expr->expr.constant.is_bit_int = true;
+        return true;
+    }
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1375,15 +1645,25 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        expr->type = g_type_pos_int_lit;
+        convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
+        expr->expr.constant.is_bit_int = true;
+        return true;
+    }
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    //
-    // expr->is_const_eval = lhs->is_const_eval && rhs->is_const_eval;
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
@@ -1392,14 +1672,25 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    // Untyped int literal case
+    if(type_is_int_literal(lt) && type_is_int_literal(rt))
+    {
+        expr->type = g_type_pos_int_lit;
+        convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+        expr->expr.constant.is_bit_int = true;
+        return true;
+    }
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
-    // if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
-    // {
-    //     convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
-    //     return true;
-    // }
-    //
+    if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
+    {
+        convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+        return true;
+    }
+
+    expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
 
@@ -1426,11 +1717,11 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
         [BINARY_ASHR_ASSIGN    - BINARY_OP_ASSIGN_START] = BINARY_ASHR,
     };
 
+    // FIXME: Not sure if this works. We might need to make a deep copy of lhs here
     ASTExpr* new_rhs = CALLOC_STRUCT(ASTExpr);
     new_rhs->kind = EXPR_BINARY;
     new_rhs->loc = expr->loc;
     new_rhs->expr.binary.kind = conversion[expr->expr.binary.kind - BINARY_OP_ASSIGN_START];
-    // FIXME: Not sure if this works. We might need to make a deep copy of lhs here
     new_rhs->expr.binary.lhs = lhs;
     new_rhs->expr.binary.rhs = rhs;
     expr->expr.binary.kind = BINARY_ASSIGN;
@@ -1443,13 +1734,23 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     if(!analyze_lvalue(inner, false)) return false;
     expr->is_const_eval = inner->is_const_eval;
 
+    Type* inner_type = inner->type;
     if(inner->kind == EXPR_FUNCTION)
     {
-        expr->type = inner->type;
+        expr->type = inner_type;
         return true;
     }
 
-    expr->type = type_pointer_to(type_is_array(inner->type) ? inner->type->array.elem_type : inner->type);
+    inner_type = inner_type->canonical;
+    if(inner_type->kind == TYPE_STATIC_ARRAY)
+    {
+        expr->type = type_pointer_to_multi(inner_type->array.elem_type, NULL);
+        expr->type->pointer.static_len = inner_type->array.static_len;
+    }
+    else
+    {
+        expr->type = inner->type;
+    }
     return true;
 }
 
@@ -1483,17 +1784,22 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 {
     if(!analyze_rvalue(inner)) return false;
     Type* ctype = inner->type->canonical;
-    if(ctype->kind != TYPE_POINTER)
+    if(ctype->kind == TYPE_POINTER_MULTI)
+    {
+        sic_error_at(expr->loc, "Dereferencing not allowed for pointer to multiple elements. "
+                                "Use array access syntax (e.g. ptr[0]).");
+        return false;
+
+    }
+    else if(ctype->kind != TYPE_POINTER_SINGLE)
     {
         sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
                      type_to_string(inner->type));
         return false;
     }
 
-    expr->type = ctype->pointer_base;
-    if(!resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s."))
-        return false;
-    return true;
+    expr->type = ctype->pointer.base;
+    return resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s.");
 }
 
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
@@ -1606,38 +1912,6 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
     return true;
 }
 
-void resolve_int_lit_type(ASTExpr* lit)
-{
-    DBG_ASSERT(lit->kind == EXPR_CONSTANT && lit->expr.constant.kind == CONSTANT_INTEGER);
-    DBG_ASSERT(type_is_int_literal(lit->type));
-    Int128 val = lit->expr.constant.i;
-    if(lit->type == g_type_neg_int_lit)
-    {
-        DBG_ASSERT(i128_is_neg(val));
-        if(i128_scmp(val, i128_from_s64(INT64_MIN)) < 0)
-        {
-            lit->type = g_type_int128;
-            return;
-        }
-        lit->type = i128_scmp(val, i128_from_s64(INT32_MIN)) < 0 ? g_type_long : g_type_int;
-        return;
-    }
-
-    if(i128_is_neg(val))
-    {
-        lit->type = g_type_uint128;
-        return;
-    }
-
-    if(val.hi > 0 || val.lo > (uint64_t)INT64_MAX)
-    {
-        lit->type = g_type_int128;
-        return;
-    }
-
-    lit->type = val.lo > (uint64_t)INT32_MAX ? g_type_long : g_type_int;
-}
-
 static void convert_to_const_zero(ASTExpr* expr, Type* type)
 {
     expr->type = type;
@@ -1654,7 +1928,8 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
     case FLOAT_TYPES:
         convert_to_const_float(expr, 0.0);
         return;
-    case TYPE_POINTER:
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
         convert_to_const_pointer(expr, UINT128_MIN);
         return;

@@ -159,7 +159,7 @@ bool implicit_cast_vararg(ASTExpr* arg)
         sic_error_at(arg->loc, "Cannot pass initializer list as a variadic argument.");
         return false;
     case TYPE_STRING_LITERAL:
-        to = type_pointer_to(g_type_char);
+        to = type_pointer_to_multi(g_type_char, NULL);
         break;
     default:
         return true;
@@ -185,7 +185,13 @@ static bool rule_int_to_int(const CastParams* const params)
     if(params->explicit) return true;
     if(type_is_int_literal(params->fromc))
     {
-        if(!i128_fits(params->inner->expr.constant.i, params->fromc, params->toc->kind))
+        Int128 i = params->inner->expr.constant.i;
+        if(params->inner->expr.constant.is_bit_int)
+        {
+            uint32_t min_bits = 128 - i128_clz(i);
+            return params->toc->builtin.bit_size >= min_bits;
+        }
+        if(!i128_fits(i, params->fromc, params->toc->kind))
         {
             CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
         }
@@ -216,12 +222,23 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
 {
     if(params->explicit) return true;
 
-    Type* from_base = params->fromc->pointer_base;
-    Type* to_base   = params->toc->pointer_base;
+    TypeKind from_kind = params->fromc->kind;
+    TypeKind to_kind = params->toc->kind;
+    Type* from_base = params->fromc->pointer.base;
+    Type* to_base   = params->toc->pointer.base;
+
+    if((from_kind == TYPE_POINTER_SINGLE && from_base->canonical->kind == TYPE_VOID) || 
+       (to_kind == TYPE_POINTER_SINGLE && to_base->canonical->kind == TYPE_VOID))
+        return true;
+
+    if(from_kind == TYPE_FUNC_PTR && to_kind == TYPE_FUNC_PTR)
+        goto ERR;
+
+    DBG_ASSERT(type_kind_is_pointer(from_kind) && type_kind_is_pointer(to_kind));
 
     // Going from *const T to *T is illegal.
-    if((from_base->qualifiers & TYPE_QUAL_CONST) && 
-       (to_base->qualifiers & TYPE_QUAL_CONST) == 0)
+    if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && 
+       FLAG_IS_NOT_SET(to_base->qualifiers, TYPE_QUAL_CONST))
     {
         CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
@@ -229,13 +246,9 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
 
     from_base = from_base->canonical;
     to_base = to_base->canonical;
-    if((params->fromc->kind == TYPE_POINTER && from_base->kind == TYPE_VOID) || 
-       (params->toc->kind == TYPE_POINTER && to_base->kind == TYPE_VOID))
-       return true;
 
-
-    bool from_is_arr = type_is_array(from_base);
-    if(type_is_array(to_base))
+    bool from_is_arr = from_base->kind == TYPE_STATIC_ARRAY;
+    if(to_base->kind == TYPE_STATIC_ARRAY)
     {
         if(from_is_arr)
             goto ERR;
@@ -256,7 +269,7 @@ ERR:
 
 static bool rule_str_to_ptr(const CastParams* const params)
 {
-    TypeKind kind = params->toc->pointer_base->canonical->kind;
+    TypeKind kind = params->toc->pointer.base->canonical->kind;
 
     if(params->fromc->kind != TYPE_STRING_LITERAL)
     {
@@ -273,7 +286,7 @@ static bool rule_str_to_ptr(const CastParams* const params)
 
 static bool rule_init_list_to_arr(const CastParams* const params)
 {
-    uint64_t arr_size = params->toc->array.static_len; 
+    ArrayLength arr_size = params->toc->array.static_len; 
     Type* elem_type = params->toc->array.elem_type->canonical;
     if(params->fromc->kind == TYPE_STRING_LITERAL)
     {
@@ -619,7 +632,8 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_UINT128]         = CAST_GROUP_INT + 1,
     [TYPE_FLOAT]           = CAST_GROUP_FLOAT + 1,
     [TYPE_DOUBLE]          = CAST_GROUP_FLOAT + 1,
-    [TYPE_POINTER]         = CAST_GROUP_PTR + 1,
+    [TYPE_POINTER_SINGLE]  = CAST_GROUP_PTR + 1,
+    [TYPE_POINTER_MULTI]   = CAST_GROUP_PTR + 1,
     [TYPE_FUNC_PTR]        = CAST_GROUP_PTR + 1,
     [TYPE_STATIC_ARRAY]    = CAST_GROUP_ARRAY + 1,
     [TYPE_ALIAS_DISTINCT]  = CAST_GROUP_DISTINCT + 1,

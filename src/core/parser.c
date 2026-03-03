@@ -646,28 +646,60 @@ RETRY:
     {
     case TOKEN_ASTERISK:
         advance(l);
+        if(peek(l)->kind == TOKEN_LBRACKET)
+        {
+            ASTExpr* size_expr;
+            advance(l);
+            if(peek(l)->kind == TOKEN_ASTERISK && peek_next(l)->kind == TOKEN_RBRACKET)
+            {
+
+                // We have an unsized multi-ptr
+                advance(l);
+                advance(l);
+                size_expr = NULL;
+            }
+            else
+            {
+                ASSIGN_EXPR_OR_RET(size_expr, false);
+                CONSUME_OR_RET(TOKEN_RBRACKET, false);
+            }
+            ty = parse_type_internal(l);
+            ty = type_pointer_to_multi(ty, size_expr);
+            break;
+
+        }
         ty = parse_type_internal(l);
-        ty = type_pointer_to(ty);
+        ty = type_pointer_to_single(ty);
         break;
     case TOKEN_LBRACKET: {
         advance(l);
-        if(peek(l)->kind == TOKEN_ASTERISK &&
-           peek_next(l)->kind == TOKEN_RBRACKET)
+        if(try_consume(l, TOKEN_RBRACKET)) // Slice
         {
-            // We have an array whose size is to be determined.
+            ty = type_slice_of(ty);
+            break;
+        }
+
+        SourceLoc err_loc = peek_prev(l)->loc;
+        if(peek(l)->kind == TOKEN_ASTERISK && peek_next(l)->kind == TOKEN_RBRACKET) // Inferred Array
+        {
             advance(l);
             advance(l);
             ty = parse_type_internal(l);
-            ty = type_array_of(ty, NULL);
-            ty->kind = TYPE_INFERRED_ARRAY;
+            ty = type_array_of(ty, NULL, TYPE_INFERRED_ARRAY);
         }
-        else
+        else // Static Array
         {
             ASTExpr* size_expr;
             ASSIGN_EXPR_OR_RET(size_expr, false);
             CONSUME_OR_RET(TOKEN_RBRACKET, false);
             ty = parse_type_internal(l);
-            ty = type_array_of(ty, size_expr);
+            ty = type_array_of(ty, size_expr, TYPE_STATIC_ARRAY);
+        }
+        if(quals != TYPE_QUAL_NONE)
+        {
+            err_loc = extend_loc(err_loc, peek_prev(l)->loc);
+            sic_error_at(err_loc, "Type qualifiers should not be applied to arrays directly. "
+                                  "Apply them to the inner type (e.g. 'const [...]T' -> '[...]const T').");
         }
         break;
     }
@@ -706,8 +738,7 @@ RETRY:
         advance(l);
         CONSUME_OR_RET(TOKEN_LPAREN, false);
         FuncSignature* sig = CALLOC_STRUCT(FuncSignature);
-        if(!parse_func_signature(l, sig, true))
-            return false;
+        if(!parse_func_signature(l, sig, true)) return false;
         ty = type_func_ptr(sig);
         break;
     case TOKEN_CT_TYPEOF:
@@ -1431,6 +1462,7 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
     }
 
     expr->expr.constant.i = val;
+    expr->expr.constant.is_bit_int = true;
     expr->type = g_type_pos_int_lit;
 
     advance(l);

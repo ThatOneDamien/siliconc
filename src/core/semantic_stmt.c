@@ -435,12 +435,11 @@ bool analyze_declaration(ObjVar* decl)
         {
             DBG_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
             // TODO: Replace this with actual string type. Most likely a char slice.
-            rhs_type = type_pointer_to(g_type_char);
+            rhs_type = type_pointer_to_multi(g_type_char, NULL);
         }
         else if(type_is_int_literal(rhs_type))
         {
-            resolve_int_lit_type(decl->initial_val);
-            rhs_type = decl->initial_val->type;
+            SIC_TODO();
         }
         decl->type_loc.type = decl->binding_kind == VAR_BINDING_RT_CONST ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;

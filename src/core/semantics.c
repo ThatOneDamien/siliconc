@@ -385,6 +385,38 @@ Attr* get_builtin_attr(Object* obj, AttrKind kind)
     return NULL;
 }
 
+static void check_var_usage(ObjVar* var)
+{
+    if(var->header.symbol == NULL || var->header.symbol[0] == '_') return;
+    const char* kind;
+    switch(var->binding_kind)
+    {
+    case VAR_BINDING_MUTABLE:
+        if(!var->read)
+        {
+            if(var->written)
+                sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is written to, but its value is never read.");
+            else
+                sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is unused.");
+        }
+        else if(!var->written)
+            sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
+        return;
+    case VAR_BINDING_RT_CONST:
+        kind = "const";
+        break;
+    case VAR_BINDING_CT_CONST:
+        kind = "#const";
+        break;
+    default:
+        SIC_UNREACHABLE();
+    }
+    if(!var->read)
+    {
+        sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable marked %s is never read.", kind);
+    }
+}
+
 static void analyze_function(ObjFunc* func)
 {
     if(!analyze_function_signature(func)) return;
@@ -415,22 +447,7 @@ static void analyze_function(ObjFunc* func)
         }
 
         for(uint32_t i = 0; i < g_sema.locals.size; ++i)
-        {
-            ObjVar* var = g_sema.locals.data[i];
-            // Skip underscore and names that start with underscore.
-            if(var->header.symbol == NULL || var->header.symbol[0] == '_') continue;
-            if(!var->read)
-            {
-                if(var->written)
-                    sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is written to, but its value is never read.");
-                else
-                    sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is unused.");
-            }
-            else if(var->binding_kind == VAR_BINDING_MUTABLE && !var->written)
-            {
-                sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
-            }
-        }
+            check_var_usage(g_sema.locals.data[i]);
         g_sema.cur_func = NULL;
     }
 
@@ -569,12 +586,12 @@ static inline void analyze_main()
     if(params.size >= 2)
     {
         second = params.data[1]->type_loc.type;
-        if(second->kind != TYPE_POINTER)
+        if(second->kind != TYPE_POINTER_MULTI)
             goto BAD_SIG;
-        second = second->pointer_base;
-        if(second->kind != TYPE_POINTER)
+        second = second->pointer.base;
+        if(second->kind != TYPE_POINTER_MULTI)
             goto BAD_SIG;
-        second = second->pointer_base;
+        second = second->pointer.base;
         if(second->kind != TYPE_CHAR)
             goto BAD_SIG;
     }
@@ -583,9 +600,12 @@ static inline void analyze_main()
     return;
 
 BAD_SIG:
+    // TODO: Fix the look of main. Obviously I know it is disgusting to have *[*]*[*]const char
+    // but I haven't added slices/strings quite yet, and I want to distinguish between single 
+    // and multi pointers.
     sic_error_at(main->loc, "The signature of the main function is invalid. "
                             "The return type should be 'int' or 'void', with "
-                            "optional parameters 'int, char**'.");
+                            "optional parameters 'int, *[*]*[*]const char'.");
     return;
 }
 

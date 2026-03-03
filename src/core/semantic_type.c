@@ -2,6 +2,8 @@
 
 static bool resolve_array(Type* arr_ty, SourceLoc error_loc);
 static bool resolve_func_ptr(Type* func_ty);
+static bool resolve_multi_pointer(Type* pointer, SourceLoc error_loc);
+static bool resolve_single_pointer(Type* pointer, SourceLoc error_loc);
 static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 
@@ -29,21 +31,16 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
         FALLTHROUGH;
     case NUMERIC_TYPES:
         return true;
-    case TYPE_POINTER:
-    case TYPE_SLICE: {
-        bool prev = g_sema.type_res_allow_unresolved;
-        g_sema.type_res_allow_unresolved = true;
-        if(!resolve_type(&type->pointer_base, TYPE_RES_ALLOW_VOID | TYPE_RES_ALLOW_AUTO_ARRAY, 
-                         error_loc, "Pointer to %s is not allowed.")) 
-            break;
-        g_sema.type_res_allow_unresolved = prev;
-        type->status = STATUS_RESOLVED;
-        type->visibility = type->pointer_base->visibility;
+    case TYPE_POINTER_SINGLE:
+        if(!resolve_single_pointer(type, error_loc)) break;
         return true;
-    }
+    case TYPE_POINTER_MULTI:
+        if(!resolve_multi_pointer(type, error_loc)) break;
+        return true;
+    case TYPE_SLICE:
+        SIC_TODO();
     case TYPE_FUNC_PTR:
         if(!resolve_func_ptr(type)) break;
-        type->status = STATUS_RESOLVED;
         return true;
     case TYPE_STATIC_ARRAY:
         if(!resolve_array(type, error_loc)) break;
@@ -105,39 +102,43 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     return false;
 }
 
-static bool resolve_array(Type* arr_ty, SourceLoc error_loc)
+static bool resolve_array(Type* type, SourceLoc error_loc)
 {
-    TypeArray* arr = &arr_ty->array;
-    if(!resolve_type(&arr->elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s."))
+    bool valid = resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.");
+
+    ResolveStatus prev_status = type->status;
+    type->status = type->array.elem_type->status;
+    if(prev_status == STATUS_RESOLVING) return valid;
+
+    type->visibility = type->array.elem_type->visibility;
+    ASTExpr* size_expr = type->array.size_expr;
+    if(!implicit_cast(size_expr, g_type_usize))
         return false;
 
-    ResolveStatus prev_status = arr_ty->status;
-    arr_ty->status = arr->elem_type->status;
-    if(prev_status == STATUS_RESOLVING) return true;
-
-    arr_ty->visibility = arr->elem_type->visibility;
-    if(!implicit_cast(arr->size_expr, g_type_usize))
-        return false;
-
-    if(arr->size_expr->kind == EXPR_CONSTANT)
+    if(size_expr->kind != EXPR_CONSTANT)
     {
-        DBG_ASSERT(arr->size_expr->expr.constant.kind == CONSTANT_INTEGER);
-        uint64_t length = arr->size_expr->expr.constant.i.lo;
-        arr_ty->kind = TYPE_STATIC_ARRAY;
-        arr->static_len = length;
-        return true;
+        sic_error_at(error_loc, "Length of array type must be constant.");
+        return false;
     }
 
-    SIC_TODO_MSG("Print error for non const length.");
+    DBG_ASSERT(size_expr->expr.constant.kind == CONSTANT_INTEGER);
+    ArrayLength length = size_expr->expr.constant.i.lo;
+    if(length == 0)
+    {
+        sic_error_at(error_loc, "Length of array type must be greater than 0.");
+        return false;
+    }
+    type->array.static_len = length;
+    return true;
 }
 
-static bool resolve_func_ptr(Type* func_ty)
+static bool resolve_func_ptr(Type* type)
 {
-    FuncSignature* sig = func_ty->func_ptr;
+    FuncSignature* sig = type->func_ptr;
     if(!resolve_type(&sig->ret_type.type, TYPE_RES_ALLOW_VOID, sig->ret_type.loc, "Function pointer type cannot have return type"))
         return false;
 
-    func_ty->visibility = sig->ret_type.type->visibility; 
+    type->visibility = sig->ret_type.type->visibility; 
 
     bool valid = true;
     bool prev = g_sema.type_res_allow_unresolved;
@@ -147,12 +148,69 @@ static bool resolve_func_ptr(Type* func_ty)
         ObjVar* param = sig->params.data[i];
         if(!resolve_type(&param->type_loc.type, TYPE_RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
             valid = false;
-        if(param->type_loc.type->visibility < func_ty->visibility)
-            func_ty->visibility = param->type_loc.type->visibility;
+        if(param->type_loc.type->visibility < type->visibility)
+            type->visibility = param->type_loc.type->visibility;
     }
     g_sema.type_res_allow_unresolved = prev;
 
     return valid;
+}
+
+static bool resolve_multi_pointer(Type* pointer, SourceLoc error_loc)
+{
+    bool valid;
+    bool prev = g_sema.type_res_allow_unresolved;
+    g_sema.type_res_allow_unresolved = true;
+    valid = resolve_type(&pointer->pointer.base, TYPE_RES_NORMAL, error_loc, 
+                         "Pointer to multiple elements of type %s is not allowed.");
+    g_sema.type_res_allow_unresolved = prev;
+
+    ASTExpr* size_expr = pointer->pointer.size_expr;
+
+    if(size_expr != NULL)
+    {
+        if(implicit_cast(size_expr, g_type_usize))
+        {
+            if(size_expr->kind == EXPR_CONSTANT)
+            {
+                DBG_ASSERT(size_expr->expr.constant.kind == CONSTANT_INTEGER);
+                ArrayLength length = size_expr->expr.constant.i.lo;
+                pointer->pointer.static_len = length;
+                if(length == 0)
+                {
+                    sic_error_at(error_loc, "Length of multi-pointer must be greater than 0.");
+                    valid = false;
+                }
+            }
+            else
+            {
+                sic_error_at(error_loc, "Length of multi-pointer must be constant if supplied. Use *[*]T for pointer to any number of elements.");
+                valid = false;
+            }
+        }
+        else 
+            valid = false;
+    }
+
+    pointer->status = STATUS_RESOLVED;
+    pointer->visibility = pointer->pointer.base->visibility;
+    return valid;
+
+}
+
+static bool resolve_single_pointer(Type* type, SourceLoc error_loc)
+{
+    bool valid;
+    bool prev = g_sema.type_res_allow_unresolved;
+    g_sema.type_res_allow_unresolved = true;
+    valid = resolve_type(&type->pointer.base, TYPE_RES_ALLOW_VOID, error_loc, 
+            "Pointer to %s is not allowed.");
+    g_sema.type_res_allow_unresolved = prev;
+
+    type->status = STATUS_RESOLVED;
+    type->visibility = type->pointer.base->visibility;
+    return valid;
+
 }
 
 static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
@@ -172,7 +230,7 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
     if(inner_ty->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(inner->expr.constant.kind == CONSTANT_STRING);
-        *type_ref = type_apply_qualifiers(type_pointer_to(g_type_char), qualifiers);
+        *type_ref = type_apply_qualifiers(type_pointer_to_multi(g_type_char, NULL), qualifiers);
         return true;
     }
     *type_ref = type_apply_qualifiers(inner_ty, qualifiers);
