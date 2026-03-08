@@ -53,7 +53,8 @@ bool implicit_cast_vararg(ASTExpr* arg);
 // Misc
 void       push_obj(Object* obj);
 ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
-Object*    find_obj(ModulePath* path);
+Object*    find_obj(const ModulePath* path);
+Object*    find_struct_member(ObjStruct* struct_, Symbol sym);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
 void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
@@ -85,8 +86,7 @@ static inline void set_cyclic_def(Object* obj)
 {
     sic_error_at(obj->loc, "Cyclic definition.");
     g_sema.cyclic_def = obj;
-    obj->kind = OBJ_INVALID;
-    obj->status = STATUS_RESOLVED;
+    invalidate_obj(obj);
 }
 
 static inline void check_cyclic_def(Object* other, SourceLoc loc)
@@ -95,8 +95,7 @@ static inline void check_cyclic_def(Object* other, SourceLoc loc)
         g_sema.cyclic_def = NULL;
     else if(g_sema.cyclic_def != NULL)
         sic_diagnostic_at(DIAG_NOTE, loc, "From declaration here.");
-    other->kind = OBJ_INVALID;
-    other->status = STATUS_RESOLVED;
+    invalidate_obj(other);
 }
 
 static inline Type* flatten_type(Type* type)
@@ -107,7 +106,7 @@ static inline Type* flatten_type(Type* type)
         switch(type->kind)
         {
         case TYPE_ALIAS_DISTINCT:
-            type = type->typedef_->alias.type;
+            type = obj_as_typedef(type->user_def)->alias.type;
             continue;
         case TYPE_ENUM_DISTINCT:
         default:

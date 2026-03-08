@@ -12,8 +12,7 @@
 #define da_init(da, initial_cap)                                        \
     do                                                                  \
     {                                                                   \
-        (da)->capacity = (initial_cap) > DA_MIN_CAPACITY?               \
-                         (initial_cap) : DA_MIN_CAPACITY;               \
+        (da)->capacity = MAX((initial_cap), DA_MIN_CAPACITY);           \
         (da)->size = 0;                                                 \
         (da)->data = MALLOC((da)->capacity * sizeof(*((da)->data)), 8); \
     } while(0)

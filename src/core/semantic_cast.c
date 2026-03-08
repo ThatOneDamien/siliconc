@@ -49,6 +49,31 @@ static inline void perform_cast_params(const CastParams* const params)
 {
     CastRule rule = get_cast_rule(params->fromc->kind, params->toc->kind);
     rule.conversion(params);
+    if(params->cast)
+        params->cast->type = params->to;
+    else
+        params->inner->type = params->to;
+}
+
+static inline bool cast_params(const CastParams* const params)
+{
+    if(type_equal(params->fromc, params->toc))
+    {
+        ASTExpr* to_set;
+        if(params->cast)
+        {
+            // Essentially delete the cast expression if it does nothing.
+            expr_copy(params->cast, params->inner);
+            to_set = params->cast;
+        }
+        else
+            to_set = params->inner;
+        to_set->type = params->to;
+        return true;
+    }
+    if(!can_cast_params(params)) return false;
+    perform_cast_params(params);
+    return true;
 }
 
 bool can_cast(ASTExpr* expr, Type* to, bool silent)
@@ -97,18 +122,7 @@ bool analyze_explicit_cast(ASTExpr* cast)
     params.explicit  = true;
     params.silent    = false;
 
-    if(type_equal(params.fromc, params.toc))
-    {
-        // Essentially delete the cast expression if it does nothing.
-        expr_copy(cast, inner);
-        cast->type = params.to;
-        return true;
-    }
-
-    if(!can_cast_params(&params)) return false;
-    perform_cast_params(&params);
-    cast->type = params.to;
-    return true;
+    return cast_params(&params);
 }
 
 bool implicit_cast(ASTExpr* expr, Type* desired)
@@ -128,13 +142,7 @@ bool implicit_cast(ASTExpr* expr, Type* desired)
     params.explicit  = false;
     params.silent    = false;
 
-    if(type_equal(params.fromc, params.toc))
-        return true;
-
-    if(!can_cast_params(&params)) return false;
-    perform_cast_params(&params);
-    expr->type = desired;
-    return true;
+    return cast_params(&params);
 }
 
 bool implicit_cast_vararg(ASTExpr* arg)
@@ -189,7 +197,9 @@ static bool rule_int_to_int(const CastParams* const params)
         if(params->inner->expr.constant.is_bit_int)
         {
             uint32_t min_bits = 128 - i128_clz(i);
-            return params->toc->builtin.bit_size >= min_bits;
+            if(params->toc->builtin.bit_size < min_bits)
+                CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
+            return true;
         }
         if(!i128_fits(i, params->fromc, params->toc->kind))
         {
@@ -226,15 +236,16 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
     TypeKind to_kind = params->toc->kind;
     Type* from_base = params->fromc->pointer.base;
     Type* to_base   = params->toc->pointer.base;
+    bool to_voidptr = to_kind == TYPE_POINTER_SINGLE && to_base->canonical->kind == TYPE_VOID;
 
-    if((from_kind == TYPE_POINTER_SINGLE && from_base->canonical->kind == TYPE_VOID) || 
-       (to_kind == TYPE_POINTER_SINGLE && to_base->canonical->kind == TYPE_VOID))
-        return true;
-
-    if(from_kind == TYPE_FUNC_PTR && to_kind == TYPE_FUNC_PTR)
+    if(from_kind == TYPE_FUNC_PTR)
+    {
+        if(to_voidptr && FLAG_IS_SET(to_base->qualifiers, TYPE_QUAL_CONST))
+            return true;
+        CAST_ERROR("Function pointers can only be implicitly cast to *const void.");
+    }
+    if(to_kind == TYPE_FUNC_PTR)
         goto ERR;
-
-    DBG_ASSERT(type_kind_is_pointer(from_kind) && type_kind_is_pointer(to_kind));
 
     // Going from *const T to *T is illegal.
     if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && 
@@ -243,22 +254,7 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
         CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
     }
-
-    from_base = from_base->canonical;
-    to_base = to_base->canonical;
-
-    bool from_is_arr = from_base->kind == TYPE_STATIC_ARRAY;
-    if(to_base->kind == TYPE_STATIC_ARRAY)
-    {
-        if(from_is_arr)
-            goto ERR;
-        from_is_arr = true;
-        Type* temp = from_base;
-        from_base = to_base;
-        to_base = temp;
-    }
-
-    if(from_is_arr && !type_equal(from_base->array.elem_type, to_base))
+    if(!to_voidptr && !type_equal(from_base, to_base))
         goto ERR;
 
     return true;
@@ -336,9 +332,7 @@ static bool rule_init_list_to_arr(const CastParams* const params)
         sub_params.cast_loc = elem->init_value->loc;
         sub_params.from = elem->init_value->type;
         sub_params.fromc = sub_params.from->canonical;
-        
-        if(!can_cast_params(&sub_params)) return false;
-        perform_cast_params(&sub_params);
+        if(!cast_params(&sub_params)) return false;
     }
 
     return true;
@@ -352,24 +346,7 @@ static bool rule_init_list_to_struct(const CastParams* const params)
                    type_to_string(params->from), type_to_string(params->to));
     }
 
-    // ObjStruct* struct_ = params->to->canonical->struct_;
-    StructInitList* list = &params->inner->expr.struct_init;
-    for(uint32_t i = 0; i < list->size; ++i)
-    {
-        StructInitEntry* entry = list->data + i;
-        for(uint32_t j = 0; j < i; ++j)
-        {
-            if(list->data[j].unresolved_member.sym == entry->unresolved_member.sym)
-            {
-                sic_error_at(list->data[j].unresolved_member.loc, 
-                             "Duplicate assignment of member \'%s\'.", 
-                             entry->unresolved_member.sym);
-                sic_diagnostic_at(DIAG_NOTE, entry->unresolved_member.loc, "Previous assignment here.");
-                return false;
-            }
-        }
-        // if(entry-)
-    }
+    SIC_TODO();
 
     return true;
 }

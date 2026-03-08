@@ -71,7 +71,6 @@ void print_module(const ObjModule* module, bool allow_unresolved)
 void print_type_obj(const Object* obj)
 {
     DBG_ASSERT(obj_is_type(obj));
-
 }
 
 void print_func(const ObjFunc* func, bool allow_unresolved)
@@ -79,14 +78,14 @@ void print_func(const ObjFunc* func, bool allow_unresolved)
     const FuncSignature* sig = &func->signature;
     printf("%s Function \'%s\' (returns %s):\n", 
            s_vis_strs[func->header.visibility],
-           func->header.symbol,
+           func->header.sym,
            debug_type_to_str(sig->ret_type.type, allow_unresolved));
     printf("  Params (count: %u):\n", sig->params.size);
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         ObjVar* param = sig->params.data[i];
         printf("    %s (type %s)\n", 
-               param->header.symbol,
+               param->header.sym,
                debug_type_to_str(param->type_loc.type, allow_unresolved));
     }
 
@@ -104,7 +103,7 @@ void print_global_var(const ObjVar* var, bool allow_unresolved)
 {
     printf("%s Global Var \'%s\' (Type: %s)\n",
            s_vis_strs[var->header.visibility],
-           var->header.symbol,
+           var->header.sym,
            debug_type_to_str(var->type_loc.type, allow_unresolved));
 
     if(var->initial_val != NULL)
@@ -208,7 +207,12 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.array_access.index_expr, depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_ARRAY_INIT_LIST:
-        printf("Array init list ]\n");
+        printf("Array init list ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        for(uint32_t i = 0; i < expr->expr.array_init.size; ++i)
+        {
+            ArrInitEntry e = expr->expr.array_init.data[i];
+            print_expr_at_depth(e.init_value, depth + 1, expr->is_evaluated ? str_format("%lu", e.const_index) : NULL, allow_unresolved);
+        }
         return;
     case EXPR_BINARY:
         printf("Binary \'%s\' ] (Type: %s)\n", s_binary_op_strs[expr->expr.binary.kind], 
@@ -220,6 +224,12 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.cast.inner, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_CONDITIONAL:
+        printf("Conditional ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.conditional.cond_expr, depth + 1, "cond", allow_unresolved);
+        print_expr_at_depth(expr->expr.conditional.then_expr, depth + 1, "then", allow_unresolved);
+        print_expr_at_depth(expr->expr.conditional.else_expr, depth + 1, "else", allow_unresolved);
+        return;
     case EXPR_CONSTANT:
         print_constant(expr, allow_unresolved);
         return;
@@ -230,12 +240,21 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
             print_expr_at_depth(expr->expr.call.args.data[i], depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_FUNCTION:
-        printf("Function \'%s\' ]\n", expr->expr.function->header.symbol);
+        printf("Function \'%s\' ]\n", expr->expr.function->header.sym);
         return;
     case EXPR_MEMBER_ACCESS:
-        printf("Member Access ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        printf("Member Access \'%s\'] (Type: %s)\n", 
+               expr->expr.member_access.member->header.sym, 
+               debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.member_access.parent_expr, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_METHOD:
+        printf("Method Access \'%s\'] (Type: %s)\n", 
+               expr->expr.method_access.method->header.sym, 
+               debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.method_access.parent_expr, depth + 1, NULL, allow_unresolved);
+        return;
+
     case EXPR_POINTER_OFFSET:
         SIC_TODO();
     case EXPR_POSTFIX:
@@ -246,12 +265,6 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     case EXPR_RANGE:
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
-    case EXPR_TERNARY:
-        printf("Ternary ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
-        print_expr_at_depth(expr->expr.ternary.cond_expr, depth + 1, "cond", allow_unresolved);
-        print_expr_at_depth(expr->expr.ternary.then_expr, depth + 1, "then", allow_unresolved);
-        print_expr_at_depth(expr->expr.ternary.else_expr, depth + 1, "else", allow_unresolved);
-        return;
     case EXPR_TUPLE:
     case EXPR_TYPE_IDENT:
         SIC_TODO();
@@ -261,7 +274,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.unary.inner, depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_VAR:
-        printf("Variable \'%s\' ] (Type: %s)\n", expr->expr.var->header.symbol,
+        printf("Variable \'%s\' ] (Type: %s)\n", expr->expr.var->header.sym,
                 debug_type_to_str(expr->type, allow_unresolved));
         return;
     case EXPR_UNRESOLVED_DOT:
@@ -300,11 +313,11 @@ UNRESOLVED_ARROW:
 static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolved)
 {
     if(decl->initial_val != NULL)
-        print_expr_at_depth(decl->initial_val, depth + 1, decl->header.symbol, allow_unresolved);
+        print_expr_at_depth(decl->initial_val, depth + 1, decl->header.sym, allow_unresolved);
     else
     {
         PRINT_DEPTH(depth + 1);
-        printf("%s: ( %s )\n", decl->header.symbol, decl->uninitialized ? "Uninitialized" : "Default initialized");
+        printf("%s: ( %s )\n", decl->header.sym, decl->uninitialized ? "Uninitialized" : "Default initialized");
     }
 }
 

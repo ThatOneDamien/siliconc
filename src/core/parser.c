@@ -19,21 +19,21 @@ struct ExprParseRule
 static bool parse_top_level(Lexer* l);
 static bool parse_attributes(Lexer* l, AttrDA* attrs);
 static bool parse_expr_arguments(Lexer* l, ASTExprDA* args);
-static bool parse_module_path(Lexer* l, ModulePath* out);
 static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 static bool parse_import(Lexer* l, Visibility vis);
+static bool parse_module_path(Lexer* l, ModulePath* out);
 static bool parse_module_decl(Lexer* l, Visibility vis);
 static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unnamed);
-static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 
 // Types
-static Visibility  parse_visibility(Lexer* l);
-static Object*     parse_bitfield_decl(Lexer* l, Visibility vis, AttrDA attrs);
-static Object*     parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs);
-static Object*     parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested);
-static Object*     parse_typedef(Lexer* l, Visibility vis, AttrDA attrs);
-static bool        parse_type(Lexer* l, TypeLoc* type_loc);
-static ObjVar*     parse_var_declaration(Lexer* l, VarKind kind, Visibility vis);
+static Visibility parse_visibility(Lexer* l);
+static bool       parse_bitfield_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static bool       parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs);
+static bool       parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested);
+static bool       parse_typedef(Lexer* l, Visibility vis, AttrDA attrs);
+static bool       parse_type(Lexer* l, TypeLoc* type_loc);
+static ObjVar*    parse_var_declaration(Lexer* l, VarKind kind, Visibility vis);
 
 // Statements
 static ASTStmt* parse_stmt(Lexer* l);
@@ -59,7 +59,7 @@ static inline ASTExpr* parse_expr(Lexer* l)
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
 static ASTExpr* parse_cast(Lexer* l);
-static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond);
+static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond);
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
 static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
@@ -139,23 +139,20 @@ static bool parse_top_level(Lexer* l)
     bool is_extern = try_consume(l, TOKEN_EXTERN);
     Visibility vis = parse_visibility(l);
     ObjKind kind = OBJ_UNION;
-    Object* type;
     switch(peek(l)->kind)
     {
     case TOKEN_BITFIELD:
         if(is_extern) goto BAD_EXTERN;
-        type = parse_bitfield_decl(l, vis, attrs);
-        break;
+        return parse_bitfield_decl(l, vis, attrs);
+    case TOKEN_ENUM:
+        if(is_extern) goto BAD_EXTERN;
+        return parse_enum_decl(l, vis, attrs);
+    case TOKEN_FN:
+        return parse_function_decl(l, vis, attrs, is_extern);
     case TOKEN_CONST:
     case TOKEN_CT_CONST:
     case TOKEN_VAR:
         return parse_global_var_decl(l, vis, attrs, is_extern);
-    case TOKEN_ENUM:
-        if(is_extern) goto BAD_EXTERN;
-        type = parse_enum_decl(l, vis, attrs);
-        break;
-    case TOKEN_FN:
-        return parse_function_decl(l, vis, attrs, is_extern);
     case TOKEN_IMPORT:
         if(is_extern) goto BAD_EXTERN;
         return parse_import(l, vis);
@@ -168,12 +165,10 @@ static bool parse_top_level(Lexer* l)
         FALLTHROUGH;
     case TOKEN_UNION:
         if(is_extern) goto BAD_EXTERN;
-        type = parse_struct_decl(l, kind, vis, attrs, false);
-        break;
+        return parse_struct_decl(l, kind, vis, attrs, false);
     case TOKEN_TYPEDEF:
         if(is_extern) goto BAD_EXTERN;
-        type = parse_typedef(l, vis, attrs);
-        break;
+        return parse_typedef(l, vis, attrs);
     case TOKEN_CT_ASSERT: {
         if(is_extern) goto BAD_EXTERN;
         ASTStmt* res = parse_ct_assert(l);
@@ -185,12 +180,6 @@ static bool parse_top_level(Lexer* l)
     default:
         ERROR_AND_RET(false, "Bad top level statement.");
     }
-
-    if(type == NULL)
-        return false;
-    da_append(&l->module->types, type);
-    declare_obj(l, type);
-    return true;
 
 BAD_EXTERN:
     ERROR_AND_RET(false, "'extern' is not applicable here. Please use extern for global variables and functions only.");
@@ -215,6 +204,7 @@ static bool parse_attributes(Lexer* l, AttrDA* attrs)
 
         attr.kind = ATTR_CUSTOM;
         sic_error_at(attr.loc, "Unknown attribute.");
+        continue;
         // TODO: Implement custom attributes
 FOUND:
         if(tok_equal(l, TOKEN_LPAREN) && !parse_expr_arguments(l, &attr.args))
@@ -249,27 +239,30 @@ static bool parse_expr_arguments(Lexer* l, ASTExprDA* args)
     return consume(l, TOKEN_RPAREN);
 }
 
-static bool parse_module_path(Lexer* l, ModulePath* out)
-{
-    do
-    {
-        EXPECT_IDENT_OR_RET(false);
-        da_reserve(out, out->size + 1);
-        out->data[out->size++] = (SymbolLoc){ .sym = peek(l)->sym, .loc = peek(l)->loc };
-        advance(l);
-    } while(try_consume(l, TOKEN_NAMESPACE));
-
-    da_compact(out);
-    return true;
-}
-
 static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
 {
     advance(l);
     EXPECT_IDENT_OR_RET(false);
     ObjFunc* func = CALLOC_STRUCT(ObjFunc);
-    func->header.symbol = peek(l)->sym;
-    func->header.loc = peek(l)->loc;
+    if(peek_next(l)->kind == TOKEN_DOT)
+    {
+        func->method_parent.sym = peek(l)->sym;
+        func->method_parent.loc = peek(l)->loc;
+        func->is_method = true;
+        advance(l);
+        advance(l);
+        EXPECT_IDENT_OR_RET(false);
+        func->header.sym = peek(l)->sym;
+        func->header.loc = peek(l)->loc;
+        da_append(&l->module->methods, func);
+    }
+    else
+    {
+        func->header.sym = peek(l)->sym;
+        func->header.loc = peek(l)->loc;
+        da_append(&l->module->funcs, func);
+        declare_obj(l, &func->header);
+    }
     func->header.kind = OBJ_FUNC;
     func->header.visibility = vis;
     func->header.attrs = attrs;
@@ -277,22 +270,37 @@ static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_
     func->is_extern = is_extern;
     advance(l);
 
-    CONSUME_OR_RET(TOKEN_LPAREN, false);
-    if(!parse_func_signature(l, &func->signature, false))
-        return false;
+
+    if(!consume(l, TOKEN_LPAREN) || !parse_func_signature(l, &func->signature, false))
+        goto BAD_PARSE;
 
     func->func_type = type_func_ptr(&func->signature);
-    func->func_type->visibility = vis;
-    da_append(&l->module->funcs, func);
-    declare_obj(l, &func->header);
 
     if(try_consume(l, TOKEN_SEMI))
         return true;
 
-    EXPECT_OR_RET(TOKEN_LBRACE, false);
+    if(!expect(l, TOKEN_LBRACE))
+        goto BAD_PARSE;
     func->body = parse_stmt_block(l);
-    return !stmt_is_bad(func->body);
+    if(!stmt_is_bad(func->body))
+        return true;
+
+BAD_PARSE:
+    invalidate_obj(&func->header);
+    return false;
 }
+
+static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
+{
+    ObjVar* var = parse_var_declaration(l, VAR_GLOBAL, vis);
+    if(var == NULL) return false;
+    var->header.attrs = attrs;
+    var->is_extern = is_extern;
+    da_append(&l->module->vars, var);
+    declare_obj(l, &var->header);
+    return !obj_is_bad(&var->header);
+}
+
 
 static bool parse_import(Lexer* l, Visibility vis)
 {
@@ -336,7 +344,7 @@ static bool parse_import(Lexer* l, Visibility vis)
 
         da_compact(&path);
         ObjImport* import = CALLOC_STRUCT(ObjImport);
-        import->header.symbol = peek_prev(l)->sym;
+        import->header.sym = peek_prev(l)->sym;
         import->header.loc = peek_prev(l)->loc;
         import->header.kind = OBJ_IMPORT;
         import->header.visibility = vis;
@@ -350,6 +358,21 @@ static bool parse_import(Lexer* l, Visibility vis)
     CONSUME_OR_RET(TOKEN_SEMI, false);
     return true;
 }
+
+static bool parse_module_path(Lexer* l, ModulePath* out)
+{
+    do
+    {
+        EXPECT_IDENT_OR_RET(false);
+        da_reserve(out, out->size + 1);
+        out->data[out->size++] = (SymbolLoc){ .sym = peek(l)->sym, .loc = peek(l)->loc };
+        advance(l);
+    } while(try_consume(l, TOKEN_NAMESPACE));
+
+    da_compact(out);
+    return true;
+}
+
 
 static bool parse_module_decl(Lexer* l, Visibility vis)
 {
@@ -369,7 +392,7 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
     }
 
     ObjModule* new_mod = CALLOC_STRUCT(ObjModule);
-    new_mod->header.symbol = mod_name;
+    new_mod->header.sym = mod_name;
     new_mod->header.loc = mod_loc;
     new_mod->header.kind = OBJ_MODULE;
     new_mod->header.visibility = vis;
@@ -446,7 +469,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
         else if(peek(l)->kind == TOKEN_IDENT && peek_next(l)->kind == TOKEN_COLON)
         {
             p->header.loc = peek(l)->loc;
-            p->header.symbol = peek(l)->sym;
+            p->header.sym = peek(l)->sym;
             advance(l);
             advance(l);
         }
@@ -466,17 +489,6 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
     return parse_type(l, &sig->ret_type);
 }
 
-static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern)
-{
-    ObjVar* var = parse_var_declaration(l, VAR_GLOBAL, vis);
-    if(var == NULL) return false;
-    var->header.attrs = attrs;
-    var->is_extern = is_extern;
-    da_append(&l->module->vars, var);
-    declare_obj(l, &var->header);
-    return true;
-}
-
 static Visibility parse_visibility(Lexer* l)
 {
     switch(peek(l)->kind)
@@ -492,32 +504,36 @@ static Visibility parse_visibility(Lexer* l)
     }
 }
 
-static Object* parse_bitfield_decl(UNUSED Lexer* l, UNUSED Visibility vis, UNUSED AttrDA attrs)
+static bool parse_bitfield_decl(UNUSED Lexer* l, UNUSED Visibility vis, UNUSED AttrDA attrs)
 {
     SIC_TODO();
 }
 
-static Object* parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
+static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
 {
     advance(l);
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
-    EXPECT_IDENT_OR_RET(NULL);
+    EXPECT_IDENT_OR_RET(false);
     ObjEnum* enum_ = CALLOC_STRUCT(ObjEnum);
-    enum_->header.symbol = peek(l)->sym;
+    enum_->header.sym = peek(l)->sym;
     enum_->header.loc = peek(l)->loc;
     enum_->header.visibility = vis;
     enum_->header.kind = OBJ_ENUM;
     enum_->header.attrs = attrs;
     enum_->header.module = l->module;
+
     Type* type = enum_->type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ENUM_DISTINCT : TYPE_ENUM;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
-    type->enum_ = enum_;
+    type->user_def = &enum_->header;
     advance(l);
 
+    da_append(&l->module->types, &enum_->header);
+    declare_obj(l, &enum_->header);
+
     if(try_consume(l, TOKEN_COLON) && !parse_type(l, &enum_->underlying))
-        return NULL;
+        goto BAD_PARSE;
 
     CONSUME_OR_RET(TOKEN_LBRACE, NULL);
     if(tok_equal(l, TOKEN_RBRACE))
@@ -528,64 +544,43 @@ static Object* parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
 
     while(!try_consume(l, TOKEN_RBRACE))
     {
-        EXPECT_IDENT_OR_RET(NULL);
+        if(!expect_ident(l))
+            goto BAD_PARSE;
         ObjEnumValue* value = CALLOC_STRUCT(ObjEnumValue);
-        value->header.symbol = peek(l)->sym;
+        value->header.sym = peek(l)->sym;
         value->header.loc = peek(l)->loc;
         value->header.visibility = vis;
         value->header.kind = OBJ_ENUM_VALUE;
         value->enum_type = type;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
-            ASSIGN_EXPR_OR_RET(value->raw_value, NULL);
+        {
+            value->raw_value = parse_expr(l);
+            if(expr_is_bad(value->raw_value))
+                goto BAD_PARSE;
+        }
         da_append(&enum_->values, value);
-        if(!try_consume(l, TOKEN_COMMA))
-            EXPECT_OR_RET(TOKEN_RBRACE, NULL);
+        if(!try_consume(l, TOKEN_COMMA) && !expect(l, TOKEN_RBRACE))
+            goto BAD_PARSE;
     }
 
     da_compact(&enum_->values);
-    return &enum_->header;
+    return true;
+BAD_PARSE:
+    invalidate_obj(&enum_->header);
+    return false;
 }
 
-static bool parse_struct_members(Lexer* l, ObjKind kind, ObjStruct* struct_)
-{
-    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
-    if(tok_equal(l, TOKEN_RBRACE))
-    {
-        sic_error_at(struct_->header.loc, "%s declaration is empty.", kind == OBJ_STRUCT ? "Struct" : "Union");
-        return false;
-    }
-    while(!tok_equal(l, TOKEN_RBRACE))
-    {
-        // TODO: Allow anonymous members with _. This will be used for padding.
-        EXPECT_IDENT_OR_RET(false);
-        ObjVar* member = CALLOC_STRUCT(ObjVar);
-        member->header.symbol = peek(l)->sym;
-        member->header.loc = peek(l)->loc;
-        member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
-        member->header.kind = OBJ_VAR;
-        member->kind = VAR_MEMBER;
-        da_append(&struct_->members, member);
-        advance(l);
-        CONSUME_OR_RET(TOKEN_COLON, false);
-        if(!parse_type(l, &member->type_loc)) return false;
-
-
-        if(!try_consume(l, TOKEN_COMMA)) break;
-    }
-    return consume(l, TOKEN_RBRACE);
-}
-
-static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool nested)
+static bool parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA attrs, bool anon)
 {
     advance(l);
-    if(!nested)
+    ObjStruct* struct_ = CALLOC_STRUCT(ObjStruct);
+    if(!anon)
     {
         EXPECT_IDENT_OR_RET(NULL);
+        struct_->header.sym = peek(l)->sym;
         advance(l);
     }
-    ObjStruct* struct_ = CALLOC_STRUCT(ObjStruct);
-    struct_->header.symbol = peek_prev(l)->sym;
     struct_->header.loc = peek_prev(l)->loc;
     struct_->header.visibility = vis;
     struct_->header.kind = kind;
@@ -595,44 +590,79 @@ static Object* parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA 
     type->kind = kind == OBJ_STRUCT ? TYPE_STRUCT : TYPE_UNION;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
-    type->struct_ = struct_;
+    type->user_def = &struct_->header;
     type->canonical = type;
 
+    da_append(&l->module->types, &struct_->header);
+    declare_obj(l, &struct_->header);
 
-    if(!parse_struct_members(l, kind, struct_)) return NULL;
+    if(!consume(l, TOKEN_LBRACE))
+        goto BAD_PARSE;
+    if(try_consume(l, TOKEN_RBRACE))
+    {
+        if(kind == OBJ_UNION)
+        {
+            sic_error_at(struct_->header.loc, "Union declaration cannot be empty.");
+            invalidate_obj(&struct_->header);
+        }
+        return true;
+    }
 
+    while(!tok_equal(l, TOKEN_RBRACE))
+    {
+        // TODO: Allow anonymous members with _. This will be used for padding.
+        if(!expect_ident(l)) goto BAD_PARSE;
+        ObjVar* member = CALLOC_STRUCT(ObjVar);
+        member->header.sym = peek(l)->sym;
+        member->header.loc = peek(l)->loc;
+        member->header.visibility = VIS_PUBLIC; // TODO: Add member visibility, should be easy.
+        member->header.kind = OBJ_VAR;
+        member->kind = VAR_MEMBER;
+        da_append(&struct_->members, member);
+        advance(l);
+        if(!consume(l, TOKEN_COLON)) goto BAD_PARSE;
+        if(!parse_type(l, &member->type_loc)) goto BAD_PARSE;
+        if(!try_consume(l, TOKEN_COMMA)) break;
+    }
     da_compact(&struct_->members);
-    return &struct_->header;
+    if(consume(l, TOKEN_RBRACE))
+        return true;
+BAD_PARSE:
+    invalidate_obj(&struct_->header);
+    return false;
 }
 
 
-static Object* parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
+static bool parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
 {
     advance(l);
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
-    EXPECT_IDENT_OR_RET(NULL);
+    EXPECT_IDENT_OR_RET(false);
     ObjTypedef* typedef_ = CALLOC_STRUCT(ObjTypedef);
-    typedef_->header.symbol = peek(l)->sym;
+    typedef_->header.sym = peek(l)->sym;
     typedef_->header.loc = peek(l)->loc;
     typedef_->header.visibility = vis;
     typedef_->header.kind = OBJ_TYPEDEF;
     typedef_->header.attrs = attrs;
     typedef_->header.module = l->module;
-    advance(l);
 
     Type* type = typedef_->type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ALIAS_DISTINCT : TYPE_ALIAS;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
-    type->typedef_ = typedef_;
+    type->user_def = &typedef_->header;
+    advance(l);
+
+    da_append(&l->module->types, &typedef_->header);
+    declare_obj(l, &typedef_->header);
 
     if(!consume(l, TOKEN_ASSIGN) || !parse_type(l, &typedef_->alias) ||
        !consume(l, TOKEN_SEMI))
     {
-        typedef_->header.kind = OBJ_INVALID;
-        return &typedef_->header;
+        invalidate_obj(&typedef_->header);
+        return false;
     }
-    return &typedef_->header;
+    return true;
 }
 
 static Type* parse_type_internal(Lexer* l)
@@ -675,6 +705,7 @@ RETRY:
         advance(l);
         if(try_consume(l, TOKEN_RBRACKET)) // Slice
         {
+            ty = parse_type_internal(l);
             ty = type_slice_of(ty);
             break;
         }
@@ -781,7 +812,7 @@ static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
     advance(l);
     EXPECT_IDENT_OR_RET(NULL);
     ObjVar* var = CALLOC_STRUCT(ObjVar);
-    var->header.symbol = peek(l)->sym;
+    var->header.sym = peek(l)->sym;
     var->header.loc = peek(l)->loc;
     var->header.kind = OBJ_VAR;
     var->header.visibility = vis;
@@ -802,7 +833,7 @@ static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
     }
     advance(l);
     if(try_consume(l, TOKEN_COLON) && !parse_type(l, &var->type_loc))
-        return NULL;
+        goto BAD_PARSE;
     if(try_consume(l, TOKEN_ASSIGN))
     {
         if(peek(l)->kind == TOKEN_VOID && peek_next(l)->kind == TOKEN_SEMI)
@@ -811,10 +842,17 @@ static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
             var->uninitialized = true;
         }
         else
-            ASSIGN_EXPR_OR_RET(var->initial_val, NULL);
+        {
+            var->initial_val = parse_expr(l);
+            if(expr_is_bad(var->initial_val))
+                goto BAD_PARSE;
+        }
     }
 
-    CONSUME_OR_RET(TOKEN_SEMI, NULL);
+    if(consume(l, TOKEN_SEMI))
+        return var;
+BAD_PARSE:
+    invalidate_obj(&var->header);
     return var;
 }
 
@@ -934,7 +972,7 @@ static ASTStmt* parse_for(Lexer* l)
     EXPECT_IDENT_OR_RET(BAD_STMT);
 
     ObjVar* var = for_stmt->loop_var = CALLOC_STRUCT(ObjVar);
-    var->header.symbol = peek(l)->sym;
+    var->header.sym = peek(l)->sym;
     var->header.loc = peek(l)->loc;
     var->header.visibility = VIS_PUBLIC;
     var->header.kind = OBJ_VAR;
@@ -1225,22 +1263,19 @@ static ASTExpr* parse_cast(Lexer* l)
     return cast;
 }
 
-static ASTExpr* parse_ternary(Lexer* l, ASTExpr* cond)
+static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond)
 {
-    ASTExpr* tern = new_expr(EXPR_TERNARY);
+    ASTExpr* tern = new_expr(EXPR_CONDITIONAL);
     advance(l);
-    if(tok_equal(l, TOKEN_COLON))
-        advance(l);
-    else if(expr_is_bad(tern->expr.ternary.then_expr = parse_expr(l)) ||
-            !consume(l, TOKEN_COLON))
-        return BAD_EXPR;
-    
-    tern->expr.ternary.else_expr = parse_expr_with_prec(l, PREC_TERNARY, NULL);
-    if(expr_is_bad(tern->expr.ternary.else_expr))
+    ASSIGN_EXPR_OR_RET(tern->expr.conditional.then_expr, BAD_EXPR);
+    CONSUME_OR_RET(TOKEN_COLON, BAD_EXPR);
+
+    tern->expr.conditional.else_expr = parse_expr_with_prec(l, PREC_CONDITIONAL + 1, NULL);
+    if(expr_is_bad(tern->expr.conditional.else_expr))
         return BAD_EXPR;
 
-    tern->loc = extend_loc(cond->loc, tern->expr.ternary.else_expr->loc);
-    tern->expr.ternary.cond_expr = cond;
+    tern->loc = extend_loc(cond->loc, tern->expr.conditional.else_expr->loc);
+    tern->expr.conditional.cond_expr = cond;
     return tern;
 }
 
@@ -1332,7 +1367,7 @@ static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
     range->from = from;
     advance(l);
     range->inclusive = try_consume(l, TOKEN_ASSIGN);
-    range->to = parse_expr_with_prec(l, PREC_TERNARY, NULL);
+    range->to = parse_expr_with_prec(l, PREC_CONDITIONAL, NULL);
     if(expr_is_bad(range->to)) return BAD_EXPR;
     expr->loc = extend_loc(from->loc, range->to->loc);
     return expr;
@@ -1772,6 +1807,7 @@ static inline void recover_top_level(Lexer* l, uint32_t prev_col)
         {
         case TOKEN_EOF:
             return;
+        case TOKEN_ATTRIBUTE_IDENT:
         case TOKEN_BITFIELD:
         case TOKEN_CONST:
         case TOKEN_CT_CONST:
@@ -1822,13 +1858,14 @@ static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
 
 static inline void declare_obj(Lexer* l, Object* global)
 {
+    DBG_ASSERT(global != NULL);
     HashMap* map = &l->module->symbol_ns;
-    Object* other = hashmap_get(map, global->symbol);
+    Object* other = hashmap_get(map, global->sym);
 
     if(other != NULL)
-        sic_error_redef(global, other);
+        sic_error_redef(global, other, "global symbol");
 
-    hashmap_put(map, global->symbol, global);
+    hashmap_put(map, global->sym, global);
 }
 
 
@@ -1859,7 +1896,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_negation, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_QUESTION]        = { NULL, parse_ternary, PREC_TERNARY },
+    [TOKEN_QUESTION]        = { NULL, parse_conditional, PREC_CONDITIONAL },
     [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },

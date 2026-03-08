@@ -180,7 +180,7 @@ static inline bool type_is_distinct(const Type* ty) { return type_kind_is_distin
 static inline bool type_is_pointer(const Type* ty) { return type_kind_is_pointer(ty->kind); }
 static inline bool type_is_trivially_copyable(const Type* ty)
 {
-    return ty->kind != TYPE_STATIC_ARRAY && type_size(ty) <= 16;
+    return type_size(ty) <= 16;
 }
 
 static inline Type* type_to_unsigned(Type* ty)
@@ -242,6 +242,17 @@ static inline bool stmt_is_bad(const ASTStmt* stmt)
 static inline bool type_is_bad(const Type* type)
 {
     return type->kind == TYPE_INVALID;
+}
+
+static inline bool obj_is_bad(const Object* o)
+{
+    return o->kind == OBJ_INVALID;
+}
+
+static inline void invalidate_obj(Object* o)
+{
+    o->kind = OBJ_INVALID;
+    o->status = STATUS_RESOLVED;
 }
 
 static inline ObjEnum* obj_as_enum(Object* o)

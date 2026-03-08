@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler = { .top_module = { .header = { .symbol = "root" }}};
+CompilerContext g_compiler = { .top_module = { .header = { .sym = "root" }}};
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
 #ifdef SI_DEBUG

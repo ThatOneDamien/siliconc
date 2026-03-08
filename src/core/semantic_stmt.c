@@ -499,8 +499,7 @@ bool analyze_declaration(ObjVar* decl)
         decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);
     return true;
 ERR:
-    decl->header.kind = OBJ_INVALID;
-    decl->header.status = STATUS_RESOLVED;
+    invalidate_obj(&decl->header);
     return false;
 }
 

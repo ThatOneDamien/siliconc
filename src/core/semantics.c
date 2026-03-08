@@ -3,11 +3,12 @@
 
 static void analyze_module(ObjModule* module);
 static void analyze_function(ObjFunc* function);
+static void analyze_method(ObjFunc* method);
 static bool analyze_attributes(Object* obj);
 static bool analyze_enum(ObjEnum* enum_);
 static bool analyze_struct(ObjStruct* struct_);
-static bool analyze_union(ObjStruct* union_);
 static bool analyze_typedef(ObjTypedef* typedef_);
+static bool analyze_union(ObjStruct* union_);
 static inline void analyze_main();
 
 
@@ -35,6 +36,12 @@ static void analyze_module(ObjModule* module)
     if(module == &g_compiler.top_module && g_compiler.emit_link)
         analyze_main();
 
+    // We do methods first because they have not been added to their types yet.
+    // If we ecounter a method call without analyzing them first the compiler will
+    // throw an error saying it isn't a member.
+    for(uint32_t i = 0; i < module->methods.size; ++i)
+        analyze_method(module->methods.data[i]);
+
     for(uint32_t i = 0; i < module->types.size; ++i)
         analyze_type_obj(module->types.data[i]);
 
@@ -60,7 +67,7 @@ static void analyze_module(ObjModule* module)
 
 bool analyze_function_signature(ObjFunc* func)
 {
-    if(func->header.status == STATUS_RESOLVED) return func->header.kind != OBJ_INVALID;
+    if(func->header.status == STATUS_RESOLVED) return !obj_is_bad(&func->header);
     if(func->header.status == STATUS_RESOLVING)
     {
         set_cyclic_def(&func->header);
@@ -78,7 +85,7 @@ bool analyze_function_signature(ObjFunc* func)
     if(func->is_extern)
     {
         if(func->header.link_name == NULL)
-            func->header.link_name = func->header.symbol;
+            func->header.link_name = func->header.sym;
         if(func->body != NULL)
             sic_error_at(func->header.loc, "Function marked 'extern' cannot have a body.");
     }
@@ -140,7 +147,7 @@ bool analyze_function_signature(ObjFunc* func)
 
 bool resolve_import(ObjModule* module, ObjImport* import)
 {
-    if(import->header.status == STATUS_RESOLVED) return import->header.kind != OBJ_INVALID;
+    if(import->header.status == STATUS_RESOLVED) return !obj_is_bad(&import->header);
     if(import->header.status == STATUS_RESOLVING)
     {
         set_cyclic_def(&import->header);
@@ -160,7 +167,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         for(uint32_t j = 0; j < mod->imports.size; ++j)
         {
             ObjImport* other_import = mod->imports.data[j];
-            if((other_import->header.symbol == NULL || other_import->header.symbol == path.data[i].sym) &&
+            if((other_import->header.sym == NULL || other_import->header.sym == path.data[i].sym) &&
                !resolve_import(mod, other_import))
             {
                 check_cyclic_def(&import->header, import->header.loc);
@@ -172,7 +179,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
             return false;
     }
 
-    if(import->header.symbol == NULL)
+    if(import->header.sym == NULL)
     {
         for(uint32_t i = 0; i < mod->imports.size; ++i)
         {
@@ -192,13 +199,13 @@ bool resolve_import(ObjModule* module, ObjImport* import)
                 Object* old = hashmap_get(&module->symbol_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_error_redef(&import->header, old);
+                    sic_error_redef(&import->header, old, "global symbol");
                     import->header.kind = OBJ_INVALID;
                     return false;
                 }
 
                 ObjImport* new = CALLOC_STRUCT(ObjImport);
-                new->header.symbol = entry->key;
+                new->header.sym = entry->key;
                 new->header.loc = import->header.loc;
                 new->header.kind = OBJ_IMPORT;
                 new->header.visibility = import->header.visibility;
@@ -216,14 +223,12 @@ bool resolve_import(ObjModule* module, ObjImport* import)
                 Object* old = hashmap_get(&module->module_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_diagnostic_at(DIAG_ERROR, import->header.loc, "Module with name \'%s\' already exists.", entry->key);
-                    sic_diagnostic_at(DIAG_NOTE, old->loc, "Previous definition here.");
-                    import->header.kind = OBJ_INVALID;
+                    sic_error_redef(&import->header, old, "module with name");
                     return false;
                 }
 
                 ObjImport* new = CALLOC_STRUCT(ObjImport);
-                new->header.symbol = entry->key;
+                new->header.sym = entry->key;
                 new->header.loc = import->header.loc;
                 new->header.kind = OBJ_IMPORT;
                 new->header.visibility = import->header.visibility;
@@ -240,7 +245,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     for(uint32_t i = 0; i < mod->imports.size; ++i)
     {
         ObjImport* other_import = mod->imports.data[i];
-        if((other_import->header.symbol == NULL || other_import->header.symbol == actual) &&
+        if((other_import->header.sym == NULL || other_import->header.sym == actual) &&
            !resolve_import(mod, other_import))
         {
             check_cyclic_def(&import->header, import->header.loc);
@@ -254,25 +259,25 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     Object* o = hashmap_get(&mod->module_ns, actual);
     if(o != NULL)
     {
-        Object* old = hashmap_get(&module->module_ns, import->header.symbol);
+        Object* old = hashmap_get(&module->module_ns, import->header.sym);
         if(old != NULL)
         {
-            sic_error_redef(&import->header, old);
+            sic_error_redef(&import->header, old, "module with name");
             import->header.kind = OBJ_INVALID;
             return false;
         }
         import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
         used = true;
-        hashmap_put(&module->module_ns, import->header.symbol, &import->header);
+        hashmap_put(&module->module_ns, import->header.sym, &import->header);
     }
 
     o = hashmap_get(&mod->symbol_ns, actual);
     if(o != NULL)
     {
-        Object* prev = hashmap_get(&module->symbol_ns, import->header.symbol);
+        Object* prev = hashmap_get(&module->symbol_ns, import->header.sym);
         if(prev != NULL)
         {
-            sic_error_redef(&import->header, prev);
+            sic_error_redef(&import->header, prev, "global symbol");
             if(!used)
                 import->header.kind = OBJ_INVALID;
             return false;
@@ -284,7 +289,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
             *import = *prev_import;
         }
         import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
-        hashmap_put(&module->symbol_ns, import->header.symbol, &import->header);
+        hashmap_put(&module->symbol_ns, import->header.sym, &import->header);
     }
 
     return true;
@@ -292,7 +297,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
 
 bool analyze_global_var(ObjVar* var)
 {
-    if(var->header.status == STATUS_RESOLVED) return var->header.kind != OBJ_INVALID;
+    if(var->header.status == STATUS_RESOLVED) return !obj_is_bad(&var->header);
     if(var->header.status == STATUS_RESOLVING)
     {
         set_cyclic_def(&var->header);
@@ -308,7 +313,7 @@ bool analyze_global_var(ObjVar* var)
     if(var->is_extern)
     {
         if(var->header.link_name == NULL)
-            var->header.link_name = var->header.symbol;
+            var->header.link_name = var->header.sym;
         if(var->initial_val != NULL)
             sic_error_at(var->header.loc, "Global variable marked 'extern' cannot have an initial value.");
     }
@@ -344,7 +349,7 @@ bool analyze_global_var(ObjVar* var)
 bool analyze_type_obj(Object* type_obj)
 {
     DBG_ASSERT(type_obj != NULL);
-    if(type_obj->status == STATUS_RESOLVED) return type_obj->kind != OBJ_INVALID;
+    if(type_obj->status == STATUS_RESOLVED) return !obj_is_bad(type_obj);
     if(type_obj->status == STATUS_RESOLVING)
     {
         set_cyclic_def(type_obj);
@@ -387,7 +392,7 @@ Attr* get_builtin_attr(Object* obj, AttrKind kind)
 
 static void check_var_usage(ObjVar* var)
 {
-    if(var->header.symbol == NULL || var->header.symbol[0] == '_') return;
+    if(var->header.sym == NULL || var->header.sym[0] == '_') return;
     const char* kind;
     switch(var->binding_kind)
     {
@@ -428,7 +433,7 @@ static void analyze_function(ObjFunc* func)
     for(uint32_t i = 0; i < params.size; ++i)
     {
         ObjVar* param = params.data[i];
-        if(param->header.symbol != NULL)
+        if(param->header.sym != NULL)
         {
             push_obj(&params.data[i]->header);
             da_append(&g_sema.locals, param);
@@ -453,6 +458,69 @@ static void analyze_function(ObjFunc* func)
 
     g_sema.locals.size = 0; // Clear locals
     pop_scope(scope);
+}
+
+static void analyze_method(ObjFunc* method)
+{
+    if(method->header.status == STATUS_RESOLVED) return;
+    DBG_ASSERT(method->is_method);
+    const ModulePath path = {.size = 1, .capacity = 1, .data = &method->method_parent};
+    Object* o = find_obj(&path);
+    if(o == NULL) goto ERR;
+    if(o->kind != OBJ_STRUCT)
+    {
+        // TODO: Allow enums and unions(maybe) to have methods.
+        sic_error_at(method->method_parent.loc, "Method's parent type does not refer to a struct.");
+        goto ERR;
+    }
+    // Make sure we are only declaring methods in the module that the type is declared.
+    if(o->module != method->header.module)
+    {
+        sic_error_at(method->method_parent.loc, "Method's parent type is not declared in this module. "
+                                                "You are only allowed to put member functions in the same "
+                                                "module as the parent type.");
+        goto ERR;
+    }
+    if(!analyze_type_obj(o)) goto ERR;
+    if(!analyze_function_signature(method)) return;
+    ObjStruct* struct_ = obj_as_struct(o);
+    for(uint32_t i = 0; i < struct_->members.size; ++i)
+    {
+        Object* other = &struct_->members.data[i]->header;
+        if(other->sym == method->header.sym)
+        {
+            sic_error_redef(&method->header, other, "member/method");
+            goto ERR;
+        }
+    }
+    for(uint32_t i = 0; i < struct_->methods.size; ++i)
+    {
+        Object* other = &struct_->methods.data[i]->header;
+        if(other->sym == method->header.sym)
+        {
+            sic_error_redef(&method->header, other, "member/method");
+            goto ERR;
+        }
+    }
+
+    const ObjVarDA params = method->signature.params;
+    if(params.size == 0)
+        method->is_static = true;
+    else
+    {
+        Type* first_param = params.data[0]->type_loc.type->canonical;
+        if(first_param->kind == TYPE_POINTER_SINGLE)
+            first_param = first_param->pointer.base->canonical;
+        if(!type_equal(first_param, struct_->type_ref))
+            method->is_static = true;
+    }
+
+    da_append(&struct_->methods, method);
+
+    analyze_function(method);
+    return;
+ERR:
+    invalidate_obj(&method->header);
 }
 
 static bool check_attribute_args(Attr* attr, uint32_t expected)
@@ -596,7 +664,7 @@ static inline void analyze_main()
             goto BAD_SIG;
     }
 
-    main->link_name = main->symbol;
+    main->link_name = main->sym;
     return;
 
 BAD_SIG:
@@ -672,7 +740,6 @@ ERR:
 
 static bool analyze_struct(ObjStruct* struct_)
 {
-
     struct_->header.status = STATUS_RESOLVING;
     analyze_attributes(&struct_->header);
     bool packed = has_builtin_attr(&struct_->header, ATTR_PACKED);
@@ -686,24 +753,48 @@ static bool analyze_struct(ObjStruct* struct_)
             check_cyclic_def(&struct_->header, struct_->header.loc);
             return false;
         }
-        if(member->type_loc.type->kind == TYPE_INFERRED_ARRAY) SIC_TODO();
-        if(member->type_loc.type->visibility < struct_->header.visibility)
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            Object* other = &struct_->members.data[j]->header;
+            if(member->header.sym == other->sym)
+                sic_error_redef(&member->header, other, "member");
+        }
+        Type* type = member->type_loc.type;
+
+        if(type->visibility < struct_->header.visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
-            struct_->header.status = STATUS_RESOLVED;
-            struct_->header.kind = OBJ_INVALID;
-            return false;
+            goto ERR;
         }
-        if(packed)
+
+        ByteSize size;
+        ByteSize align;
+        if(type->kind == TYPE_INFERRED_ARRAY)
         {
-            struct_->size += type_size(member->type_loc.type);
+            if(i != struct_->members.size - 1)
+            {
+                sic_error_at(member->header.loc, "Inferred array is only allowed as the last member of a struct.");
+                goto ERR;
+            }
+            size = 0;
+            align = type_alignment(type->array.elem_type);
+            SIC_TODO_MSG("Inferred array members not working properly.");
         }
         else
         {
-            uint32_t align = type_alignment(member->type_loc.type);
+            size = type_size(type);
+            align = type_alignment(type);
+        }
+
+        if(packed)
+        {
+            struct_->size += size;
+        }
+        else
+        {
             DBG_ASSERT(is_pow_of_2(align));
-            struct_->size = ALIGN_UP(struct_->size, align) + type_size(member->type_loc.type);
+            struct_->size = ALIGN_UP(struct_->size, align) + size;
             struct_->align = MAX(struct_->align, align);
         }
     }
@@ -711,8 +802,11 @@ static bool analyze_struct(ObjStruct* struct_)
     struct_->size = ALIGN_UP(struct_->size, struct_->align);
     struct_->header.status = STATUS_RESOLVED;
     struct_->type_ref->status = STATUS_RESOLVED;
-
     return true;
+
+ERR:
+    invalidate_obj(&struct_->header);
+    return false;
 }
 
 static bool analyze_typedef(ObjTypedef* typedef_)
@@ -731,8 +825,8 @@ static bool analyze_typedef(ObjTypedef* typedef_)
     typedef_->header.status = STATUS_RESOLVED;
     typedef_->type_ref->status = STATUS_RESOLVED;
     typedef_->type_ref->canonical = typedef_->type_ref->kind == TYPE_ALIAS ?
-        typedef_->alias.type->canonical :
-        typedef_->type_ref;
+                                        typedef_->alias.type->canonical :
+                                        typedef_->type_ref;
     typedef_->alias.type = type_reduce(typedef_->alias.type);
     return true;
 }
@@ -751,12 +845,17 @@ static bool analyze_union(ObjStruct* union_)
             check_cyclic_def(&union_->header, union_->header.loc);
             return false;
         }
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            Object* other = &union_->members.data[j]->header;
+            if(member->header.sym == other->sym)
+                sic_error_redef(&member->header, other, "member");
+        }
         if(member->type_loc.type->visibility < union_->header.visibility)
         {
             // TODO: Make this error print the actual visibility of both.
             sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
-            union_->header.status = STATUS_RESOLVED;
-            union_->header.kind = OBJ_INVALID;
+            invalidate_obj(&union_->header);
             return false;
         }
         uint32_t next_size = type_size(member->type_loc.type);

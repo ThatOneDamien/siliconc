@@ -34,13 +34,13 @@ static LabelStack s_label_stack = {
 
 void push_obj(Object* obj)
 {
-    if(obj->symbol == NULL) return;
+    if(obj->sym == NULL) return;
     for(uint32_t i = s_obj_stack.bottom; i < s_obj_stack.top; ++i)
     {
         Object* other = s_obj_stack.data[i];
-        if(other->symbol == obj->symbol)
+        if(other->sym == obj->sym)
         {
-            sic_error_redef(obj, other);
+            sic_error_redef(obj, other, "local symbol");
             return;
         }
     }
@@ -93,7 +93,7 @@ ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private)
     return obj_as_module(o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o);
 }
 
-Object* find_obj(ModulePath* path)
+Object* find_obj(const ModulePath* path)
 {
     ObjModule* mod = g_sema.module;
     Object* o;
@@ -107,7 +107,7 @@ Object* find_obj(ModulePath* path)
             for(uint32_t i = s_obj_stack.bottom; i < OBJ_STACK_SIZE; ++i)
             {
                 o = s_obj_stack.data[i];
-                if(o->symbol == last.sym)
+                if(o->sym == last.sym)
                     return o;
             }
         }
@@ -138,6 +138,23 @@ Object* find_obj(ModulePath* path)
     }
 
     return o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
+}
+
+Object* find_struct_member(ObjStruct* struct_, Symbol sym)
+{
+    for(uint32_t i = 0; i < struct_->members.size; ++i)
+    {
+        Object* member = &struct_->members.data[i]->header;
+        if(member->sym == sym)
+            return member;
+    }
+    for(uint32_t i = 0; i < struct_->methods.size; ++i)
+    {
+        Object* method = &struct_->methods.data[i]->header;
+        if(method->sym == sym)
+            return method;
+    }
+    return NULL;
 }
 
 uint32_t push_scope()

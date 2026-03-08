@@ -17,14 +17,15 @@ My goal is to make a functioning compiler that will allow me to create
 programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Future Feature Plans (sorted from highest to lowest priority)
-- Defer statements
 - More test cases
-- Add proper dead-code checking and only add function declarations as needed to the codegen
-- Methods for structs
+- Ranges/For loops
+- Slice arithmetic
+- Defer statements
 - Generics
 - Macros/constant-eval functions
-- Self hosting
-- Build system
-- Update README with current information about the language
+- Interfaces?
 - Add support for float80/float128 (refactoring)
+- Build system
+- Self hosting
 - Optimization of compiler memory usage
+- Update README

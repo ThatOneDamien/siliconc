@@ -40,7 +40,7 @@ static Type name =                      \
     .kind = TYPE_ALIAS,                 \
     .status = STATUS_RESOLVED,          \
     .visibility = VIS_PUBLIC,           \
-    .typedef_ = &obj_name,              \
+    .user_def = &obj_name.header,       \
 }
 
 static Type s_voidptr;
@@ -141,19 +141,19 @@ void builtin_type_init()
     // TODO: Make this platform dependent, as that is the whole point of these types.
     //       For right now I am not doing proper platform detection, so they will always
     //       be the same size.
-    s_iptr_obj.header.symbol  = tok_kind_to_str(TOKEN_IPTR);
+    s_iptr_obj.header.sym  = tok_kind_to_str(TOKEN_IPTR);
     s_iptr_obj.alias.type     = &s_long;
     s_iptr.canonical          = &s_long;
 
-    s_uptr_obj.header.symbol  = tok_kind_to_str(TOKEN_UPTR);
+    s_uptr_obj.header.sym  = tok_kind_to_str(TOKEN_UPTR);
     s_uptr_obj.alias.type     = &s_ulong;
     s_uptr.canonical          = &s_ulong;
 
-    s_isize_obj.header.symbol = tok_kind_to_str(TOKEN_ISIZE);
+    s_isize_obj.header.sym = tok_kind_to_str(TOKEN_ISIZE);
     s_isize_obj.alias.type    = &s_long;
     s_isize.canonical         = &s_long;
 
-    s_usize_obj.header.symbol = tok_kind_to_str(TOKEN_USIZE);
+    s_usize_obj.header.sym = tok_kind_to_str(TOKEN_USIZE);
     s_usize_obj.alias.type    = &s_ulong;
     s_usize.canonical         = &s_ulong;
 }
@@ -252,14 +252,17 @@ Type* type_reduce(Type* t)
     DBG_ASSERT(t != NULL);
     while(true)
     {
-        t = t->canonical;
         switch(t->kind)
         {
+        case TYPE_ALIAS:
+        case TYPE_ENUM:
+            t = t->canonical;
+            continue;
         case TYPE_ALIAS_DISTINCT:
-            t = t->typedef_->alias.type;
+            t = obj_as_typedef(t->user_def)->alias.type;
             continue;
         case TYPE_ENUM_DISTINCT:
-            t = t->enum_->underlying.type;
+            t = obj_as_enum(t->user_def)->underlying.type;
             continue;
         default:
             return t;
@@ -308,12 +311,10 @@ bool type_equal(const Type* t1, const Type* t2)
         return t1->array.static_len == t2->array.static_len &&
                type_equal(t1->array.elem_type, t2->array.elem_type);
     case TYPE_ALIAS_DISTINCT:
-        return t1->typedef_ == t2->typedef_;
     case TYPE_ENUM_DISTINCT:
-        return t1->enum_ == t2->enum_;
     case TYPE_STRUCT:
     case TYPE_UNION:
-        return t1->struct_ == t2->struct_;
+        return t1->user_def == t2->user_def;
     case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
@@ -326,9 +327,8 @@ bool type_equal(const Type* t1, const Type* t2)
 ByteSize type_size(const Type* ty)
 {
     DBG_ASSERT(ty != NULL);
-    DBG_ASSERT(ty->canonical != NULL);
-    ty = ty->canonical;
     DBG_ASSERT(ty->status == STATUS_RESOLVED);
+RETRY:
     switch(ty->kind)
     {
     case TYPE_BOOL:
@@ -345,18 +345,23 @@ ByteSize type_size(const Type* ty)
     case TYPE_SLICE:
         // TODO: Make this simpler, or better yet, cache the size/alignment of types somewhere else.
         return ALIGN_UP(g_compiler.target.ptr_size + type_size(g_type_usize), type_alignment(ty));
-    case TYPE_ALIAS_DISTINCT:
-        return type_size(ty->typedef_->alias.type);
-    case TYPE_ENUM_DISTINCT:
-        return type_size(ty->enum_->underlying.type);
-    case TYPE_STRUCT:
-        return ty->struct_->size;
-    case TYPE_UNION:
-        return type_size(ty->struct_->largest_type);
-    case TYPE_INVALID:
-    case TYPE_VOID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
+        ty = ty->canonical;
+        goto RETRY;
+    case TYPE_ALIAS_DISTINCT:
+        ty = obj_as_typedef(ty->user_def)->alias.type;
+        goto RETRY;
+    case TYPE_ENUM_DISTINCT:
+        ty = obj_as_enum(ty->user_def)->underlying.type;
+        goto RETRY;
+    case TYPE_STRUCT:
+        return obj_as_struct(ty->user_def)->size;
+    case TYPE_UNION:
+        ty = obj_as_struct(ty->user_def)->largest_type;
+        goto RETRY;
+    case TYPE_INVALID:
+    case TYPE_VOID:
     case SEMA_ONLY_TYPES:
         break;
     }
@@ -366,9 +371,7 @@ ByteSize type_size(const Type* ty)
 ByteSize type_alignment(const Type* ty)
 {
     DBG_ASSERT(ty != NULL);
-    DBG_ASSERT(ty->canonical != NULL);
-    ty = ty->canonical;
-    DBG_ASSERT(ty->status == STATUS_RESOLVED || ty->kind == TYPE_VOID);
+RETRY:
     switch(ty->kind)
     {
     case TYPE_VOID:
@@ -380,20 +383,26 @@ ByteSize type_alignment(const Type* ty)
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
-        return type_alignment(ty->array.elem_type);
+        ty = ty->array.elem_type;
+        goto RETRY;
     case TYPE_SLICE:
         return MAX(g_compiler.target.ptr_size, type_alignment(g_type_usize));
-    case TYPE_ALIAS_DISTINCT:
-        return type_alignment(ty->typedef_->alias.type);
-    case TYPE_ENUM_DISTINCT:
-        return type_alignment(ty->enum_->underlying.type);
-    case TYPE_STRUCT:
-        return ty->struct_->align;
-    case TYPE_UNION:
-        return type_alignment(ty->struct_->largest_type);
-    case TYPE_INVALID:
     case TYPE_ALIAS:
     case TYPE_ENUM:
+        ty = ty->canonical;
+        goto RETRY;
+    case TYPE_ALIAS_DISTINCT:
+        ty = obj_as_typedef(ty->user_def)->alias.type;
+        goto RETRY;
+    case TYPE_ENUM_DISTINCT:
+        ty = obj_as_enum(ty->user_def)->underlying.type;
+        goto RETRY;
+    case TYPE_STRUCT:
+        return obj_as_struct(ty->user_def)->align;
+    case TYPE_UNION:
+        ty = obj_as_struct(ty->user_def)->largest_type;
+        goto RETRY;
+    case TYPE_INVALID:
     case SEMA_ONLY_TYPES:
         break;
     }
@@ -449,22 +458,22 @@ const char* type_to_string(const Type* type)
     case TYPE_ALIAS:
         // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
         // somehow express that it is an alias and not a distinct type.
-        res = str_format("%s (a.k.a. %s)", type->typedef_->header.symbol, type_to_string(type->canonical));
+        res = str_format("%s (a.k.a. %s)", obj_as_typedef(type->user_def)->header.sym, type_to_string(type->canonical));
         break;
     case TYPE_ALIAS_DISTINCT:
-        res = type->typedef_->header.symbol;
+        res = obj_as_typedef(type->user_def)->header.sym;
         break;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
-        res = type->enum_->header.symbol;
+        res = obj_as_enum(type->user_def)->header.sym;
         break;
     case TYPE_STRUCT: {
-        Symbol s = type->struct_->header.symbol;
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
         res = s ? s : "anonymous struct";
         break;
     }
     case TYPE_UNION: {
-        Symbol s = type->struct_->header.symbol;
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
         res = s ? s : "anonymous union";
         break;
     }

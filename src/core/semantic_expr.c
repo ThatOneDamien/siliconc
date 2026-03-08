@@ -12,9 +12,9 @@ static bool analyze_array_access(ASTExpr* expr);
 static bool analyze_array_init_list(ASTExpr* expr);
 static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
+static bool analyze_conditional(ASTExpr* expr);
 static bool analyze_ident(ASTExpr* expr);
 static bool analyze_struct_init_list(ASTExpr* expr);
-static bool analyze_ternary(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
 static bool analyze_unresolved_dot(ASTExpr* expr);
@@ -80,12 +80,7 @@ bool analyze_rvalue_no_mutate(ASTExpr* expr)
 bool analyze_lvalue(ASTExpr* expr, bool will_write)
 {
     DBG_ASSERT(expr != NULL);
-    if(expr->is_evaluated) return !expr_is_bad(expr);
-    bool success = analyze_lvalue_dispatch(expr, will_write);
-    DBG_ASSERT(!success || (expr->type != NULL && expr->type->status == STATUS_RESOLVED));
-    expr->is_evaluated = true;
-    if(!success) expr->kind = EXPR_INVALID;
-    return success;
+    return analyze_expr(expr) && analyze_lvalue_dispatch(expr, will_write);
 }
 
 static bool analyze_expr_dispatch(ASTExpr* expr)
@@ -102,6 +97,8 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
         return analyze_binary(expr);
     case EXPR_CAST:
         return analyze_explicit_cast(expr);
+    case EXPR_CONDITIONAL:
+        return analyze_conditional(expr);
     case EXPR_CONSTANT:
         return true;
     case EXPR_FUNC_CALL:
@@ -110,8 +107,6 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
         SIC_TODO();
     case EXPR_STRUCT_INIT_LIST:
         return analyze_struct_init_list(expr);
-    case EXPR_TERNARY:
-        return analyze_ternary(expr);
     case EXPR_TUPLE:
         SIC_TODO();
     case EXPR_POSTFIX:
@@ -136,6 +131,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_FUNCTION:
     case EXPR_POINTER_OFFSET:
     case EXPR_MEMBER_ACCESS:
+    case EXPR_METHOD:
     case EXPR_TYPE_IDENT:
     case EXPR_VAR:
     case EXPR_ZEROED_OUT:
@@ -162,12 +158,12 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
         }
         return true;
     case EXPR_FUNCTION:
-        sic_error_at(expr->loc, "Functions cannot be used directly. If you want to get the address do '&func'.");
+    case EXPR_METHOD:
+        sic_error_at(expr->loc, "Functions cannot be used as values directly. If you want to get the address do '&func'.");
         return false;
     case EXPR_MEMBER_ACCESS:
         return analyze_rvalue_dispatch(expr->expr.member_access.parent_expr, mutate);
     case EXPR_RANGE:
-    case EXPR_STRUCT_INIT_LIST:
     case EXPR_TUPLE:
         SIC_TODO();
     case EXPR_TYPE_IDENT:
@@ -178,10 +174,11 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_ARRAY_INIT_LIST:
     case EXPR_BINARY:
     case EXPR_CAST:
+    case EXPR_CONDITIONAL:
     case EXPR_CONSTANT:
     case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
-    case EXPR_TERNARY:
+    case EXPR_STRUCT_INIT_LIST:
     case EXPR_UNARY:
     case EXPR_ZEROED_OUT:
         return true;
@@ -200,14 +197,12 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
 
 static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
 {
-RETRY:
     switch(expr->kind)
     {
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS: {
         ASTExprAAccess* access = &expr->expr.array_access;
-        if(!analyze_expr(expr)) return false;
         if(!analyze_lvalue_dispatch(access->array_expr, will_write)) return false;
         expr->is_const_eval = access->array_expr->is_const_eval && access->index_expr->is_const_eval;
         break;
@@ -223,6 +218,16 @@ RETRY:
         if(!analyze_lvalue_dispatch(expr->expr.member_access.parent_expr, will_write)) return false;
         expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
         break;
+    case EXPR_METHOD:
+        sic_error_at(expr->loc, will_write ? "Methods are not mutable." : 
+                                             "You cannot get the address of a method accessed "
+                                             "from an instance. Instead, use '%s.%s'.", 
+                     type_to_string(expr->expr.method_access.parent_expr->type->canonical),
+                     expr->expr.method_access.method->header.sym);
+        return false;
+    case EXPR_TYPE_IDENT:
+        sic_error_at(expr->loc, "Type identifier not expected or allowed here.");
+        return false;
     case EXPR_UNARY:
         if(!analyze_expr(expr)) return false;
         if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
@@ -238,18 +243,21 @@ RETRY:
         if(var->kind == VAR_GLOBAL)
             expr->is_const_eval = true;
         var->written = true;
+        if(!will_write)
+            var->read = true; // For address of we count it as a read and a write because we dont track the pointer
         break;
     }
+    default:
+        goto ERR;
     case EXPR_UNRESOLVED_ARROW:
     case EXPR_UNRESOLVED_DOT:
-        if(!analyze_expr(expr)) return false;
-        goto RETRY;
     case EXPR_UNRESOLVED_IDENT:
-        if(!analyze_ident(expr)) return false;
-        goto RETRY;
-    default:
-        if(!analyze_expr(expr)) return false;
-        goto ERR;
+    case EXPR_CT_ALIGNOF:
+    case EXPR_CT_OFFSETOF:
+    case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_MAX:
+    case EXPR_CT_TYPE_MIN:
+        SIC_UNREACHABLE();
     }
 
     if(expr->type->kind != TYPE_INVALID && will_write && (expr->type->qualifiers & TYPE_QUAL_CONST))
@@ -325,7 +333,7 @@ static bool analyze_array_access(ASTExpr* expr)
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
                      "Cannot access element of array literal. Please first assign the array to a const "
-                     "literal or cast it to a typed array (i.e. int[*]), then perform the access.");
+                     "literal or cast it to a typed array (i.e. [*]int), then perform the access.");
         return false;
     default:
         sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
@@ -485,28 +493,69 @@ static inline bool analyze_binary(ASTExpr* expr)
 
 static bool analyze_call(ASTExpr* expr)
 {
-    ASTExprCall* call = &expr->expr.call;
-    if(!analyze_expr(call->func_expr)) return false;
-    if(call->func_expr->kind != EXPR_FUNCTION && !analyze_rvalue(call->func_expr)) return false;
-    
-    Type* func_type = call->func_expr->type->canonical;
-    if(func_type->kind != TYPE_FUNC_PTR)
+    ASTExpr* func_expr = expr->expr.call.func_expr;
+    ASTExprDA* args = &expr->expr.call.args;
+    if(!analyze_expr(func_expr)) return false;
+    Type* func_type;
+
+    switch(func_expr->kind)
     {
-        sic_error_at(expr->loc, "Attempted to call non-function.");
-        return false;
+    case EXPR_FUNCTION:
+        func_type = func_expr->type;
+        DBG_ASSERT(func_type->kind == TYPE_FUNC_PTR);
+        break;
+    case EXPR_METHOD: {
+        ASTExpr* parent = func_expr->expr.method_access.parent_expr;
+        ObjFunc* method = func_expr->expr.method_access.method;
+        func_type = func_expr->type;
+        const ObjVarDA params = method->signature.params;
+        DBG_ASSERT(func_type->kind == TYPE_FUNC_PTR);
+        if(method->is_static)
+        {
+            sic_error_at(expr->loc, "Cannot call static method '%s', on instance of '%s'.",
+                         method->header.sym, type_to_string(parent->type));
+            return false;
+        }
+        if(params.data[0]->type_loc.type->canonical->kind == TYPE_POINTER_SINGLE)
+        {
+            ASTExpr* inner = parent;
+            parent = CALLOC_STRUCT(ASTExpr);
+            parent->kind = EXPR_UNARY;
+            parent->loc = inner->loc;
+            parent->expr.unary.inner = inner;
+            parent->expr.unary.kind = UNARY_ADDR_OF;
+        }
+
+        da_reserve(args, args->size + 1);
+        memcpy(&args->data[1], &args->data[0], sizeof(ASTExpr*) * args->size);
+        args->size++;
+        args->data[0] = parent;
+        func_expr->kind = EXPR_FUNCTION;
+        func_expr->expr.function = method;
+        break;
     }
+    default:
+        if(!analyze_rvalue(func_expr)) return false;
+        func_type = func_expr->type->canonical;
+        if(func_type->kind != TYPE_FUNC_PTR)
+        {
+            sic_error_at(expr->loc, "Left side of call expression must be a function.");
+            return false;
+        }
+    }
+    
 
     FuncSignature* sig = func_type->func_ptr;
-    if(call->args.size < sig->params.size)
+    if(args->size < sig->params.size)
     {
         sic_error_at(expr->loc, "Too few arguments passed to function. Expected %s%u, got %u.",
-                     sig->is_var_arg ? "at least " : "", sig->params.size, call->args.size);
+                     sig->is_var_arg ? "at least " : "", sig->params.size, args->size);
         return false;
     }
-    if(!sig->is_var_arg && call->args.size > sig->params.size)
+    if(!sig->is_var_arg && args->size > sig->params.size)
     {
         sic_error_at(expr->loc, "Too many arguments passed to function. Expected %u, got %u.",
-                     sig->params.size, call->args.size);
+                     sig->params.size, args->size);
         return false;
     }
 
@@ -514,16 +563,16 @@ static bool analyze_call(ASTExpr* expr)
     for(uint32_t i = 0; i < sig->params.size; ++i)
     {
         ObjVar* param = sig->params.data[i];
-        if(!implicit_cast(call->args.data[i], param->type_loc.type))
+        if(!implicit_cast(args->data[i], param->type_loc.type))
         {
             valid = false;
             continue;
         }
     }
 
-    for(uint32_t i = sig->params.size; i < call->args.size; ++i)
+    for(uint32_t i = sig->params.size; i < args->size; ++i)
     {
-        if(!implicit_cast_vararg(call->args.data[i]))
+        if(!implicit_cast_vararg(args->data[i]))
         {
             valid = false;
             continue;
@@ -585,40 +634,53 @@ static bool analyze_ident(ASTExpr* expr)
 
 static bool analyze_struct_init_list(ASTExpr* expr)
 {
+    const StructInitList list = expr->expr.struct_init;
     bool valid = true;
-    bool seen_named = false;
+    bool is_named = list.size > 0 && list.data[0].unresolved_member.sym != NULL;
     bool errored = false;
     bool is_const_eval = true;
-    StructInitList* list = &expr->expr.struct_init;
-    for(uint32_t i = 0; i < list->size; ++i)
+    for(uint32_t i = 0; i < list.size; ++i)
     {
-        StructInitEntry* entry = list->data + i;
-        if(!analyze_expr(entry->init_value)) valid = false;
+        StructInitEntry* entry = list.data + i;
+        if(!analyze_rvalue(entry->init_value)) valid = false;
         else if(!entry->init_value->is_const_eval)
             is_const_eval = false;
-        if(entry->unresolved_member.sym != NULL)
-            seen_named = true;
-        else if(seen_named && !errored)
+        if(!errored)
         {
-            sic_error_at(entry->init_value->loc, "Unnamed members of initializer list must always precede named members.");
-            errored = true;
-            valid = false;
+            if(is_named == (entry->unresolved_member.sym == NULL))
+            {
+                sic_error_at(entry->init_value->loc, "Unnamed members of initializer list cannot be combined with named members.");
+                errored = true;
+                valid = false;
+                continue;
+            }
+            if(is_named)
+            {
+                for(uint32_t j = 0; j < i; ++j)
+                {
+                    if(list.data[j].unresolved_member.sym == entry->unresolved_member.sym)
+                    {
+                        sic_error_at(entry->unresolved_member.loc, "Duplicate initializer list member \'%s\'.",
+                                     entry->unresolved_member.sym);
+                        sic_diagnostic_at(DIAG_NOTE, list.data[j].unresolved_member.loc, "Previous definition here.");
+                        valid = false;
+                    }
+                }
+            }
+
         }
     }
     expr->is_const_eval = is_const_eval;
     return valid;
 }
 
-static bool analyze_ternary(ASTExpr* expr)
+static bool analyze_conditional(ASTExpr* expr)
 {
-    ASTExprTernary* tern = &expr->expr.ternary;
+    ASTExprCond* cond= &expr->expr.conditional;
     bool valid = true;
-    valid &= analyze_rvalue(tern->cond_expr);
-    if(tern->then_expr != NULL)
-        valid &= analyze_rvalue(tern->then_expr);
-    else
-        tern->then_expr = tern->cond_expr;
-    valid &= analyze_rvalue(tern->else_expr);
+    valid &= analyze_rvalue(cond->cond_expr);
+    valid &= analyze_rvalue(cond->then_expr);
+    valid &= analyze_rvalue(cond->else_expr);
     if(!valid) return false;
 
     SIC_TODO();
@@ -626,8 +688,8 @@ static bool analyze_ternary(ASTExpr* expr)
     //    !arith_type_conv(&tern->then_expr, &tern->else_expr, expr->loc))
     //     return false;
 
-    expr->type = tern->else_expr->type;
-    return implicit_cast(tern->cond_expr, g_type_bool);
+    expr->type = cond->else_expr->type;
+    return implicit_cast(cond->cond_expr, g_type_bool);
 }
 
 static bool analyze_unary(ASTExpr* expr)
@@ -683,9 +745,11 @@ static bool resolve_member(ASTExpr* expr)
         SIC_TODO();
     case TYPE_STRUCT:
     case TYPE_UNION: {
-        const ObjVarDA members = t->struct_->members;
+        const ObjVarDA members = obj_as_struct(t->user_def)->members;
+        const ObjFuncDA methods = obj_as_struct(t->user_def)->methods;
         for(uint32_t i = 0; i < members.size; ++i)
-            if(members.data[i]->header.symbol == member.sym)
+        {
+            if(members.data[i]->header.sym == member.sym)
             {
                 expr->kind = EXPR_MEMBER_ACCESS;
                 expr->expr.member_access.parent_expr = parent;
@@ -694,6 +758,18 @@ static bool resolve_member(ASTExpr* expr)
                 expr->type = type_apply_qualifiers(members.data[i]->type_loc.type, parent->type->qualifiers);
                 return true;
             }
+        }
+        for(uint32_t i = 0; i < methods.size; ++i)
+        {
+            if(methods.data[i]->header.sym == member.sym)
+            {
+                expr->kind = EXPR_METHOD;
+                expr->expr.method_access.parent_expr = parent;
+                expr->expr.method_access.method = methods.data[i];
+                expr->type = methods.data[i]->func_type;
+                return true;
+            }
+        }
         break;
     }
     case TYPE_VOID:
@@ -741,18 +817,62 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
-        ObjEnum* enum_ = obj_as_enum(parent->expr.type_ident);
-        const ObjEnumValueDA values = enum_->values;
-        for(uint32_t i = 0; i < values.size; ++i)
-            if(values.data[i]->header.symbol == uaccess->member.sym)
+        Object* type_ident = parent->expr.type_ident;
+        if(!analyze_type_obj(type_ident)) return false;
+    RETRY:
+        switch(type_ident->kind)
+        {
+        case OBJ_BITFIELD:
+            SIC_TODO();
+        case OBJ_ENUM: {
+            ObjEnum* enum_ = obj_as_enum(type_ident);
+            const ObjEnumValueDA values = enum_->values;
+            for(uint32_t i = 0; i < values.size; ++i)
+                if(values.data[i]->header.sym == uaccess->member.sym)
+                {
+                    expr->type = enum_->type_ref;
+                    convert_to_const_int(expr, values.data[i]->const_value);
+                    return true;
+                }
+            sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
+                         type_ident->sym, uaccess->member.sym);
+            return false;
+        }
+        case OBJ_STRUCT: {
+            ObjStruct* struct_ = obj_as_struct(type_ident);
+            const ObjVarDA members = struct_->members;
+            for(uint32_t i = 0; i < members.size; ++i)
+                if(members.data[i]->header.sym == uaccess->member.sym)
+                {
+                    sic_error_at(uaccess->member.loc, "Struct member must be accessed with an instance.");
+                    return false;
+                }
+            const ObjFuncDA methods = struct_->methods;
+            for(uint32_t i = 0; i < methods.size; ++i)
             {
-                expr->type = enum_->type_ref;
-                convert_to_const_int(expr, values.data[i]->const_value);
-                return true;
+                ObjFunc* func = methods.data[i];
+                if(func->header.sym == uaccess->member.sym)
+                {
+                    expr->type = func->func_type;
+                    expr->kind = EXPR_FUNCTION;
+                    expr->expr.function = func;
+                    expr->is_const_eval = true;
+                    func->used = true;
+                    return true;
+                }
             }
-        sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
-                     enum_->header.symbol, uaccess->member.sym);
-        return false;
+            sic_error_at(uaccess->member.loc, "Struct \'%s\' has no method \'%s\'.",
+                         type_ident->sym, uaccess->member.sym);
+            return false;
+        }
+        case OBJ_TYPEDEF:
+            type_ident = obj_as_typedef(type_ident)->alias.type->user_def;
+            goto RETRY;
+        case OBJ_UNION:
+            SIC_TODO();
+        default:
+            SIC_UNREACHABLE();
+        }
     }
 
     if(parent->type->canonical->kind == TYPE_POINTER_SINGLE)
@@ -850,11 +970,11 @@ RETRY:
         convert_to_const_float(expr, DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        type = type->typedef_->alias.type;
+        type = obj_as_typedef(type->user_def)->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = type->enum_;
+        ObjEnum* enum_ = obj_as_enum(type->user_def);
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
         // or should they actually be their own type of constant.
         convert_to_const_int(expr, enum_->values.data[enum_->max_idx]->const_value);
@@ -904,11 +1024,11 @@ RETRY:
         convert_to_const_float(expr, -DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        type = type->typedef_->alias.type;
+        type = obj_as_typedef(type->user_def)->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = type->enum_;
+        ObjEnum* enum_ = obj_as_enum(type->user_def);
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
         // or should they actually be their own type of constant.
         convert_to_const_int(expr, enum_->values.data[enum_->min_idx]->const_value);
@@ -1749,7 +1869,7 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     }
     else
     {
-        expr->type = inner->type;
+        expr->type = type_pointer_to_single(inner->type);
     }
     return true;
 }
@@ -1872,16 +1992,52 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
     return true;
 }
 
+static bool resolve_int_lit(ASTExpr* lit, bool to_signed)
+{
+    Type* type = lit->type;
+    DBG_ASSERT(type_is_int_literal(type));
+    Int128 value = lit->expr.constant.i;
+    if(to_signed)
+    {
+        if(i128_is_neg(value))
+        {
+            if(!type_is_signed(type)) return false;
+            value = i128_not(value);
+        }
+        if(i128_ucmp64(value, INT64_MAX) > 0)
+            return true;
+        if(i128_ucmp64(value, INT32_MAX) > 0)
+            lit->type = g_type_long;
+        else if(i128_ucmp64(value, INT16_MAX) > 0)
+            lit->type = g_type_int;
+        else if(i128_ucmp64(value, INT8_MAX) > 0)
+            lit->type = g_type_short;
+        else
+            lit->type = g_type_byte;
+    }
+    else
+    {
+        if(i128_is_neg(value))
+            return type_is_unsigned(type);
+        if(value.hi != 0)
+            return true;
+        if(i128_ucmp64(value, UINT32_MAX) > 0)
+            lit->type = g_type_ulong;
+        else if(i128_ucmp64(value, UINT16_MAX) > 0)
+            lit->type = g_type_uint;
+        else if(i128_ucmp64(value, UINT8_MAX) > 0)
+            lit->type = g_type_ushort;
+        else
+            lit->type = g_type_ubyte;
+    }
+    return true;
+}
 
 // For add/sub/mult/div/mod
 static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
 {
     Type* t1  = expr1->type->canonical;
     Type* t2  = expr2->type->canonical;
-    if(type_is_int_literal(t1))
-        return implicit_cast(expr1, expr2->type);
-    else if(type_is_int_literal(t2))
-        return implicit_cast(expr2, expr1->type);
     TypeKind k1 = t1->kind;
     TypeKind k2 = t2->kind;
 
@@ -1892,10 +2048,26 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
         return false;
     }
 
-    if(type_kind_is_integer(k1) && type_kind_is_integer(k2) && type_kind_is_signed(k1) != type_kind_is_signed(k2))
+    if(type_kind_is_integer(k1) && type_kind_is_integer(k2))
     {
-        sic_error_at(loc, "You cannot combine signed and unsigned integer types.");
-        return false;
+        bool t1_signed = type_kind_is_signed(k1);
+        bool t2_signed = type_kind_is_signed(k2);
+        if(type_is_int_literal(t1))
+        {
+            // Both expressions should not be literals. This should be handled elsewhere
+            DBG_ASSERT(!type_is_int_literal(t2));
+            if(!resolve_int_lit(expr1, t2_signed)) goto INT_ERR;
+            t1 = expr1->type;
+            k1 = t1->kind;
+        }
+        else if(type_is_int_literal(t2))
+        {
+            if(!resolve_int_lit(expr2, t1_signed)) goto INT_ERR;
+            t2 = expr2->type;
+            k2 = t2->kind;
+        }
+        else if(t1_signed != t2_signed)
+            goto INT_ERR;
     }
 
     if(k1 < k2)
@@ -1910,6 +2082,10 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
     perform_cast(expr2, expr1->type);
     DBG_ASSERT(type_equal(expr1->type, expr2->type));
     return true;
+
+INT_ERR:
+    sic_error_at(loc, "You cannot combine signed and unsigned integer types.");
+    return false;
 }
 
 static void convert_to_const_zero(ASTExpr* expr, Type* type)

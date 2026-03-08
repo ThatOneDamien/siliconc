@@ -1,0 +1,3 @@
+const a = 01_; // #error: cannot finish with an underscore.
+const b = 101;
+const c = 101f;

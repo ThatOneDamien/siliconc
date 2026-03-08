@@ -60,16 +60,17 @@ typedef struct ASTExprAAccess   ASTExprAAccess;
 typedef struct ASTExprBinary    ASTExprBinary;
 typedef struct ASTExprCall      ASTExprCall;
 typedef struct ASTExprCast      ASTExprCast;
+typedef struct ASTExprCond      ASTExprCond;
 typedef struct ASTExprConstant  ASTExprConstant;
 typedef struct ArrInitEntry     ArrInitEntry;
 typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
 typedef struct StructInitList   StructInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprMethod    ASTExprMethod;
 typedef struct ASTExprPtrOff    ASTExprPtrOff;
 typedef struct ASTExprRange     ASTExprRange;
 typedef struct ASTExprPreIdent  ASTExprPreIdent;
-typedef struct ASTExprTernary   ASTExprTernary;
 typedef struct ASTExprTuple     ASTExprTuple;
 typedef struct ASTExprUnary     ASTExprUnary;
 typedef struct ASTExprUAccess   ASTExprUAccess;
@@ -256,9 +257,7 @@ struct Type
         TypeSlice       slice;
         ASTExpr*        type_of;
         ModulePath      unresolved;
-        ObjEnum*        enum_;
-        ObjStruct*      struct_;
-        ObjTypedef*     typedef_;
+        Object*         user_def;
     };
 };
 
@@ -401,7 +400,7 @@ struct StructInitEntry
     union
     {
         SymbolLoc unresolved_member;
-        // ObjVar*   member;
+        uint32_t  member_idx;
     };
     ASTExpr*  init_value;
 };
@@ -428,11 +427,25 @@ struct ASTExprConstant
     };
 };
 
+struct ASTExprCond
+{
+    ASTExpr* cond_expr;
+    ASTExpr* then_expr;
+    ASTExpr* else_expr;
+};
+
+
 struct ASTExprMAccess
 {
     ASTExpr* parent_expr;
     ObjVar*  member;
     uint32_t member_idx;
+};
+
+struct ASTExprMethod
+{
+    ASTExpr* parent_expr;
+    ObjFunc* method;
 };
 
 struct ASTExprPtrOff
@@ -446,13 +459,6 @@ struct ASTExprRange
     ASTExpr* from;
     ASTExpr* to;
     bool     inclusive;
-};
-
-struct ASTExprTernary
-{
-    ASTExpr* cond_expr;
-    ASTExpr* then_expr;
-    ASTExpr* else_expr;
 };
 
 struct ASTExprUnary
@@ -488,13 +494,14 @@ struct ASTExpr
         ASTExprBinary   binary;
         ASTExprCall     call;
         ASTExprCast     cast;
+        ASTExprCond     conditional;
         ASTExprConstant constant;
         ObjFunc*        function;
         ASTExprMAccess  member_access;
+        ASTExprMethod   method_access;
         ASTExprPtrOff   pointer_offset;
         ASTExprRange    range;
         StructInitList  struct_init;
-        ASTExprTernary  ternary;
         ASTExprDA       tuple;
         Object*         type_ident;
         ASTExprUnary    unary;
@@ -639,7 +646,7 @@ struct FuncSignature
 
 struct Object
 {
-    Symbol        symbol;
+    Symbol        sym;
     Symbol        link_name;
     SourceLoc     loc;
     ObjKind       kind;
@@ -675,12 +682,15 @@ struct ObjFunc
 {
     Object         header;
     FuncSignature  signature;
+    SymbolLoc      method_parent;
     Type*          func_type;
     ASTStmt*       body;
     ByteSize       swap_stmt_align;
     ByteSize       swap_stmt_size;
     bool           is_extern;
     bool           used;
+    bool           is_method;
+    bool           is_static;
 };
 
 struct ObjImport
@@ -700,6 +710,7 @@ struct ObjModule
     ObjModule*  parent;
     ObjModuleDA submodules;
     ObjFuncDA   funcs;
+    ObjFuncDA   methods;
     ObjImportDA imports;
     ObjectDA    types;
     ObjVarDA    vars;
@@ -710,9 +721,10 @@ struct ObjModule
 
 struct ObjStruct
 {
-    Object   header;
-    Type*    type_ref;
-    ObjVarDA members;
+    Object    header;
+    Type*     type_ref;
+    ObjVarDA  members;
+    ObjFuncDA methods;
     union
     {
         struct

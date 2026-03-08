@@ -37,8 +37,16 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_POINTER_MULTI:
         if(!resolve_multi_pointer(type, error_loc)) break;
         return true;
-    case TYPE_SLICE:
-        SIC_TODO();
+    case TYPE_SLICE: {
+        bool prev = g_sema.type_res_allow_unresolved;
+        g_sema.type_res_allow_unresolved = true;
+        bool valid = resolve_type(&type->slice.base, TYPE_RES_NORMAL, error_loc, "Slice of type %s is not allowed.");
+        g_sema.type_res_allow_unresolved = prev;
+        if(!valid) break;
+        type->status = STATUS_RESOLVED;
+        type->visibility = type->pointer.base->visibility;
+        return true;
+    }
     case TYPE_FUNC_PTR:
         if(!resolve_func_ptr(type)) break;
         return true;
@@ -66,9 +74,8 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT: {
         DBG_ASSERT(type->status == STATUS_RESOLVING);
-        ObjTypedef* typedef_ = type->typedef_;
-        if(!analyze_type_obj(&typedef_->header)) break;
-        Type* alias = typedef_->alias.type;
+        if(!analyze_type_obj(type->user_def)) break;
+        Type* alias = obj_as_typedef(type->user_def)->alias.type;
         if(!resolve_type(&alias, flags, error_loc, error_msg)) break;
         type->status = alias->status;
         return true;
@@ -77,8 +84,7 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_UNION: {
         DBG_ASSERT(type->status == STATUS_RESOLVING);
         if(g_sema.type_res_allow_unresolved) return true;
-        ObjStruct* struct_ = type->struct_;
-        if(!analyze_type_obj(&struct_->header)) break;
+        if(!analyze_type_obj(type->user_def)) break;
         type->status = STATUS_RESOLVED;
         return true;
     }

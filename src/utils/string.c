@@ -46,11 +46,11 @@ void scratch_append_module_path(const ObjModule* module)
     }
 
     if(path.size > 0)
-        scratch_append(path.data[path.size - 1]->header.symbol);
+        scratch_append(path.data[path.size - 1]->header.sym);
     for(uint32_t i = path.size - 2; i < path.size; --i)
     {
         scratch_appendn("::", 2);
-        scratch_append(path.data[i]->header.symbol);
+        scratch_append(path.data[i]->header.sym);
     }
 }
 
@@ -65,7 +65,7 @@ void scratch_append_obj_link_name(Object* obj)
     scratch_append("_SI");
     if(obj->kind == OBJ_FUNC)
     {
-        scratch_appendc('F');
+        scratch_appendc(obj_as_func(obj)->is_method ? 'M' : 'F');
     }
     else if(obj->kind == OBJ_VAR)
     {
@@ -78,16 +78,28 @@ void scratch_append_obj_link_name(Object* obj)
     // TODO: When we are making a library, we want the name of the library to
     //       be appended. For an executable it doesn't matter.
     // if(path.data[path.size - 1] == &g_compiler.top_module && IS_LIBRARY)
+    size_t len;
     for(uint32_t i = path.size - 2; i < path.size; --i)
     {
-        size_t len = strlen(path.data[i]->header.symbol);
+        len = strlen(path.data[i]->header.sym);
         scratch_appendf("%zu", len);
-        scratch_appendn(path.data[i]->header.symbol, len);
+        scratch_appendn(path.data[i]->header.sym, len);
     }
 
-    size_t len = strlen(obj->symbol);
+    if(obj->kind == OBJ_FUNC)
+    {
+        ObjFunc* func = obj_as_func(obj);
+        if(func->is_method)
+        {
+            len = strlen(func->method_parent.sym);
+            scratch_appendf("%zu", len);
+            scratch_appendn(func->method_parent.sym, len);
+        }
+    }
+
+    len = strlen(obj->sym);
     scratch_appendf("%zu", len);
-    scratch_appendn(obj->symbol, len);
+    scratch_appendn(obj->sym, len);
 }
 
 char* str_format(const char* fmt, ...)

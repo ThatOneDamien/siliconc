@@ -147,13 +147,13 @@ FileId find_and_open_module_path(ObjModule* module)
 
     for(uint32_t i = stack.size - 1; i < stack.size; --i)
     {
-        size_t next_len = strlen(stack.data[i]->header.symbol);
+        size_t next_len = strlen(stack.data[i]->header.sym);
         if(next_len + len + sizeof("/mod.si") > PATH_MAX) // Check to make sure the path can fit in the buffer.
         {
             path_one[len] = '\0';
             sic_fatal_error("Length of search path exceeds maximum: \'%s\'", path_one);
         }
-        memcpy(path_one + len, stack.data[i]->header.symbol, next_len);
+        memcpy(path_one + len, stack.data[i]->header.sym, next_len);
         len += next_len;
         path_one[len++] = '/';
     }
@@ -166,7 +166,7 @@ FileId find_and_open_module_path(ObjModule* module)
         if(file_exists(path_two))
         {
             sic_error_at(module->header.loc, "Module %s has conflicting paths \'%s\' and \'%s\'. Please remove one.", 
-                         module->header.symbol, path_one, path_two);
+                         module->header.sym, path_one, path_two);
             return FILE_NULL;
         }
         return source_file_add_or_get(path_one, module);
@@ -175,7 +175,7 @@ FileId find_and_open_module_path(ObjModule* module)
     if(!file_exists(path_two))
     {
         sic_error_at(module->header.loc, "Module %s was not found at path \'%s\' or \'%s\'. Please add one of those files.", 
-                     module->header.symbol, path_one, path_two);
+                     module->header.sym, path_one, path_two);
         return FILE_NULL;
     }
     return source_file_add_or_get(path_two, module);

@@ -188,9 +188,9 @@ static inline void sic_fatal_error(const char* message, ...)
     exit(EXIT_FAILURE);
 }
 
-static inline void sic_error_redef(Object* redef, Object* orig)
+static inline void sic_error_redef(Object* redef, Object* orig, const char* kind)
 {
-    sic_diagnostic_at(DIAG_ERROR, redef->loc, "Redefinition of symbol \'%s\'.", redef->symbol);
+    sic_diagnostic_at(DIAG_ERROR, redef->loc, "Redefinition of %s \'%s\'.", kind, redef->sym);
     sic_diagnostic_at(DIAG_NOTE, orig->loc, "Previous definition here.");
 }
 
