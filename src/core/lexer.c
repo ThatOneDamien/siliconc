@@ -77,8 +77,8 @@ Lexer lexer_from_source(FileId fileid)
     l.la_buf.cur = 1;
     for(size_t i = 0; i < LOOK_AHEAD_SIZE - 1; ++i)
     {
-        lexer_advance(&l);
         l.la_buf.buf[i].loc.file = fileid;
+        lexer_advance(&l);
     }
     l.la_buf.buf[LOOK_AHEAD_SIZE - 1].loc.file = fileid;
     return l;
@@ -367,10 +367,22 @@ void lexer_advance(Lexer* l)
         extract_attr_identifier(l, t);
         return;
     default:
-        t->loc.len = 1;
-        sic_error_at(t->loc, "Invalid/unknown character. For now, siliconc does not support "
-                             "unicode charcters anywhere except in char/string literals.");
         t->kind = TOKEN_INVALID;
+        t->loc.len = 1;
+        if(c >= 32 && c <= 126)
+        {
+            sic_error_at(t->loc, "Invalid character encountered when lexing.");
+            return;
+        }
+
+        sic_error_upto(t->loc, "Invalid character(s)/data starting here. Sic does not support unicode outside of string/char literals.");
+        while(true)
+        {
+            c = peek(l);
+            if(c >= 32 && c <= 126)
+                break;
+            next(l);
+        }
         return;
     }
 
@@ -495,6 +507,7 @@ static inline void extract_char_literal(Lexer* l, Token* t, TypeKind kind, ByteS
         return;
     }
     t->kind = TOKEN_CHAR_LITERAL;
+    t->chr.kind = kind;
 }
 
 static inline void extract_string_literal(Lexer* l, Token* t, TypeKind kind, ByteSize char_size)

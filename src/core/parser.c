@@ -532,8 +532,13 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     da_append(&l->module->types, &enum_->header);
     declare_obj(l, &enum_->header);
 
-    if(try_consume(l, TOKEN_COLON) && !parse_type(l, &enum_->underlying))
-        goto BAD_PARSE;
+    if(try_consume(l, TOKEN_COLON))
+    {
+        if(!parse_type(l, &enum_->underlying))
+            goto BAD_PARSE;
+    }
+    else
+        enum_->underlying.type = g_type_int;
 
     CONSUME_OR_RET(TOKEN_LBRACE, NULL);
     if(tok_equal(l, TOKEN_RBRACE))
@@ -551,7 +556,6 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
         value->header.loc = peek(l)->loc;
         value->header.visibility = vis;
         value->header.kind = OBJ_ENUM_VALUE;
-        value->enum_type = type;
         advance(l);
         if(try_consume(l, TOKEN_ASSIGN))
         {
@@ -1490,7 +1494,7 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
         if(src[i] == '_')
             continue;
         if(val.hi > (UINT64_MAX >> bits_per_digit))
-            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds maximum supported integer literal value.");
+            ERROR_AND_RET(BAD_EXPR, "Integer value exceeds the maximum supported integer literal value.");
         uint64_t hex_val = g_hex_char_to_val[(uint8_t)src[i]] - 1;
         DBG_ASSERT(hex_val < 16);
         val = i128_add64(i128_shl64(val, bits_per_digit), hex_val);
@@ -1541,7 +1545,7 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
             if(is_neg)
                 sic_error_at(expr->loc, "Integer value is less than the minimum supported integer value.");
             else
-                sic_error_at(expr->loc, "Integer value exceeds maximum supported integer value.");
+                sic_error_at(expr->loc, "Integer value exceeds the maximum supported integer value.");
             return BAD_EXPR;
         }
     }
@@ -1605,7 +1609,7 @@ static ASTExpr* parse_float_literal(Lexer* l)
         val *= 10.0;
         val += (double)(c - '0');
         if(prev > val)
-            ERROR_AND_RET(BAD_EXPR, "Float value exceeds maximum double value.");
+            ERROR_AND_RET(BAD_EXPR, "Float value exceeds the maximum double value.");
         index++;
     }
     
@@ -1736,10 +1740,11 @@ static inline bool expect(Lexer* l, TokenKind kind)
     if(tok_equal(l, kind))
         return true;
 
-    const char* const tok_str = tok_kind_to_str(kind);
-    sic_diagnostic_after(DIAG_ERROR, peek_prev(l)->loc, tok_str, 
-                         "Expected \'%s\'.",
-                         tok_str);
+    if(!tok_equal(l, TOKEN_INVALID))
+    {
+        const char* const tok_str = tok_kind_to_str(kind);
+        sic_diagnostic_after(DIAG_ERROR, peek_prev(l)->loc, tok_str, "Expected \'%s\'.", tok_str);
+    }
     return false;
 }
 
@@ -1748,7 +1753,8 @@ static inline bool expect_ident(Lexer* l)
     if(tok_equal(l, TOKEN_IDENT))
         return true;
 
-    sic_diagnostic_after(DIAG_ERROR, peek_prev(l)->loc, NULL, "Expected identifier.");
+    if(!tok_equal(l, TOKEN_INVALID))
+        sic_diagnostic_after(DIAG_ERROR, peek_prev(l)->loc, NULL, "Expected identifier.");
     return false;
 
 }

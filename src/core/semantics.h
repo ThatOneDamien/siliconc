@@ -12,8 +12,9 @@ struct SemaContext
 {
     ObjModule*   module;
     ObjFunc*     cur_func;
-    Object*      cyclic_def;
+    Object*      circular_def;
     ObjVarDA     locals;
+    ObjEnum*     cur_enum; // Used when analyzing enums to find members
     
     ASTStmt*     break_target;
     ASTStmt*     continue_target;
@@ -29,6 +30,8 @@ extern SemaContext g_sema;
 bool analyze_global_var(ObjVar* var);
 bool analyze_function_signature(ObjFunc* function);
 bool analyze_type_obj(Object* type_obj);
+bool analyze_enum_underlying(ObjEnum* enum_);
+bool analyze_enum_value(ObjEnum* parent, uint32_t index);
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 bool resolve_import(ObjModule* module, ObjImport* import);
 
@@ -60,7 +63,6 @@ void       pop_scope(uint32_t old);
 void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 void       pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
 ASTStmt*   find_labeled_stmt(SymbolLoc label);
-void       set_object_link_name(Object* obj);
 
 static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
 {
@@ -72,9 +74,11 @@ static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
 
 static inline void const_int_correct(ASTExpr* expr)
 {
+    Type* ctype = type_reduce(expr->type);
+    DBG_ASSERT(type_is_integer(ctype));
     DBG_ASSERT(expr->kind == EXPR_CONSTANT && expr->expr.constant.kind == CONSTANT_INTEGER);
-    Type* ctype = expr->type->canonical;
     BitSize shift = 128 - ctype->builtin.bit_size;
+    if(shift == 0) return;
     Int128 val = i128_shl64(expr->expr.constant.i, shift);
     if(type_is_signed(ctype))
         expr->expr.constant.i = i128_ashr64(val, shift);
@@ -82,18 +86,18 @@ static inline void const_int_correct(ASTExpr* expr)
         expr->expr.constant.i = i128_lshr64(val, shift);
 }
 
-static inline void set_cyclic_def(Object* obj)
+static inline void set_circular_def(Object* obj)
 {
-    sic_error_at(obj->loc, "Cyclic definition.");
-    g_sema.cyclic_def = obj;
+    sic_error_at(obj->loc, "Circular definition.");
+    g_sema.circular_def = obj;
     invalidate_obj(obj);
 }
 
-static inline void check_cyclic_def(Object* other, SourceLoc loc)
+static inline void check_circular_def(Object* other, SourceLoc loc)
 {
-    if(g_sema.cyclic_def == other)
-        g_sema.cyclic_def = NULL;
-    else if(g_sema.cyclic_def != NULL)
+    if(g_sema.circular_def == other)
+        g_sema.circular_def = NULL;
+    else if(g_sema.circular_def != NULL)
         sic_diagnostic_at(DIAG_NOTE, loc, "From declaration here.");
     invalidate_obj(other);
 }
@@ -115,37 +119,38 @@ static inline Type* flatten_type(Type* type)
     }
 }
 
-static inline void convert_to_constant(ASTExpr* expr, ConstantKind kind)
+static inline void convert_to_constant(ASTExpr* expr, Type* to, ConstantKind kind)
 {
     expr->kind = EXPR_CONSTANT;
     expr->is_const_eval = true;
     expr->expr.constant.kind = kind;
+    expr->type = to;
 }
 
-static inline void convert_to_const_bool(ASTExpr* expr, bool value)
+static inline void convert_to_const_bool(ASTExpr* expr, Type* to, bool value)
 {
-    DBG_ASSERT(expr->type == g_type_bool);
-    convert_to_constant(expr, CONSTANT_BOOL);
+    DBG_ASSERT(to->canonical->kind == TYPE_BOOL);
+    convert_to_constant(expr, to, CONSTANT_BOOL);
     expr->expr.constant.b = value;
 }
 
-static inline void convert_to_const_float(ASTExpr* expr, double value)
+static inline void convert_to_const_float(ASTExpr* expr, Type* to, double value)
 {
-    DBG_ASSERT(type_is_float(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_FLOAT);
+    DBG_ASSERT(type_is_float(to->canonical));
+    convert_to_constant(expr, to, CONSTANT_FLOAT);
     expr->expr.constant.f = value;
 }
 
-static inline void convert_to_const_int(ASTExpr* expr, Int128 value)
+static inline void convert_to_const_int(ASTExpr* expr, Type* to, Int128 value)
 {
-    DBG_ASSERT(type_is_integer(expr->type->canonical));
-    convert_to_constant(expr, CONSTANT_INTEGER);
+    DBG_ASSERT(type_is_integer(type_reduce(to)));
+    convert_to_constant(expr, to, CONSTANT_INTEGER);
     expr->expr.constant.i = value;
     const_int_correct(expr);
 }
 
-static inline void convert_to_const_pointer(ASTExpr* expr, Int128 value)
+static inline void convert_to_const_pointer(ASTExpr* expr, Type* to, Int128 value)
 {
-    convert_to_constant(expr, CONSTANT_POINTER);
+    convert_to_constant(expr, to, CONSTANT_POINTER);
     expr->expr.constant.i = value;
 }

@@ -7,3 +7,50 @@ enum Test
     E = 1,
     F = C,
 }
+
+enum Test2 : long
+{
+    A = Test.A,
+    B = Test.C,
+    C = Test3.A, // #error: Circular definition
+    D,
+}
+
+enum Test3
+{
+    A = Test2.C,
+    B,
+    C,
+    D
+}
+
+enum Test4
+{
+    A = B,
+    B = 1,
+}
+
+enum Test5 // #error: Circular definition
+{
+    A = 1,
+    B = #type_max(Test5),
+}
+
+enum Test6
+{
+    A = returns_int(), // #error: compile-time constant
+}
+
+enum Test7 : uint
+{
+    A = -1, // #error: cannot be represented
+}
+
+enum Test8 : uint
+{
+    A = 0xFFFFFFFF,
+    B // #error: exceeds the maximum
+}
+
+
+fn returns_int() int { return 1; }

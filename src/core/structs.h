@@ -647,7 +647,6 @@ struct FuncSignature
 struct Object
 {
     Symbol        sym;
-    Symbol        link_name;
     SourceLoc     loc;
     ObjKind       kind;
     Visibility    visibility;
@@ -670,7 +669,6 @@ struct ObjEnum
 struct ObjEnumValue
 {
     Object   header;
-    Type*    enum_type;
     union
     {
         ASTExpr* raw_value;
@@ -681,6 +679,7 @@ struct ObjEnumValue
 struct ObjFunc
 {
     Object         header;
+    Symbol         link_name;
     FuncSignature  signature;
     SymbolLoc      method_parent;
     Type*          func_type;
@@ -746,6 +745,7 @@ struct ObjTypedef
 struct ObjVar
 {
     Object          header;
+    Symbol          link_name;
     TypeLoc         type_loc;
     ASTExpr*        initial_val;
     bool            uninitialized; // If this is true we have something like int a = void; By default, variables are initialized

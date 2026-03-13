@@ -1,0 +1,6 @@
+const ✀: int = 1; // #error: Invalid character
+const str = "✀";
+const raw_str = `✀`;
+const c1 = u'✀';
+const c2 = U'✀';
+const c3 = '✀'; // #error: Value of char literal cannot fit

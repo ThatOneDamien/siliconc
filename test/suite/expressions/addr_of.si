@@ -1,3 +1,9 @@
+struct TestStruct
+{
+    a: int,
+    b: float,
+}
+
 fn test1() void
 {
     var _a: int = 0;
@@ -7,4 +13,11 @@ fn test1() void
 fn test2() void
 {
     const _a: *int = &(0); // #error: Expression is not an lvalue 
+}
+
+fn test3() void
+{
+    var _a: TestStruct;
+    const _b: *int = &_a.a;
+    const _c: *float = &_a.b;
 }

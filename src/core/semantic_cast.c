@@ -364,7 +364,7 @@ static void cast_bool_to_int(const CastParams* const params)
 {
     if(params->inner->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, i128_from_u64(params->inner->expr.constant.b));
+        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, params->to, i128_from_u64(params->inner->expr.constant.b));
         return;
     }
 
@@ -379,7 +379,7 @@ static void cast_int_to_bool(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         bool value = !i128_is_zero(params->inner->expr.constant.i);
-        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, value);
+        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, params->to, value);
         return;
     }
 
@@ -396,7 +396,7 @@ static void cast_int_to_int(const CastParams* const params)
     {
         Int128 val = params->inner->expr.constant.i;
         ASTExpr* const cast = params->cast == NULL ? params->inner : params->cast;
-        convert_to_constant(cast, CONSTANT_INTEGER);
+        convert_to_constant(cast, params->to, CONSTANT_INTEGER);
         if(to_bit_width == 128)
         {
             cast->expr.constant.i = val;
@@ -445,7 +445,7 @@ static void cast_int_to_float(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         double value = i128_to_float(params->inner->expr.constant.i, params->fromc->kind);
-        convert_to_const_float(params->cast == NULL ? params->inner : params->cast, value);
+        convert_to_const_float(params->cast == NULL ? params->inner : params->cast, params->to, value);
         return;
     }
 
@@ -458,7 +458,7 @@ static void cast_int_to_ptr(const CastParams* const params)
 {
     if(params->inner->kind == EXPR_CONSTANT)
     {
-        convert_to_const_pointer(params->cast == NULL ? params->inner : params->cast, params->inner->expr.constant.i);
+        convert_to_const_pointer(params->cast == NULL ? params->inner : params->cast, params->to, params->inner->expr.constant.i);
         return;
     }
 
@@ -472,7 +472,7 @@ static void cast_float_to_float(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         if(params->cast != NULL)
-            convert_to_const_float(params->cast, params->inner->expr.constant.f);
+            convert_to_const_float(params->cast, params->to, params->inner->expr.constant.f);
         return;
     }
 
@@ -486,7 +486,7 @@ static void cast_float_to_bool(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         bool value = params->inner->expr.constant.f != 0.0;
-        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, value);
+        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, params->to, value);
         return;
     }
 
@@ -500,7 +500,7 @@ static void cast_float_to_int(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         Int128 value = i128_from_double(params->inner->expr.constant.f, params->toc->kind);
-        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, value);
+        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, params->to, value);
         return;
     }
 
@@ -514,7 +514,7 @@ static void cast_ptr_to_bool(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         bool value = !i128_is_zero(params->inner->expr.constant.i);
-        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, value);
+        convert_to_const_bool(params->cast == NULL ? params->inner : params->cast, params->to, value);
         return;
     }
 
@@ -527,7 +527,7 @@ static void cast_ptr_to_int(const CastParams* const params)
 {
     if(params->inner->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, params->inner->expr.constant.i);
+        convert_to_const_int(params->cast == NULL ? params->inner : params->cast, params->to, params->inner->expr.constant.i);
         return;
     }
 
@@ -541,7 +541,7 @@ static void cast_ptr_to_ptr(const CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         if(params->cast != NULL)
-            convert_to_const_pointer(params->cast, params->inner->expr.constant.i);
+            convert_to_const_pointer(params->cast, params->to, params->inner->expr.constant.i);
         return;
     }
 

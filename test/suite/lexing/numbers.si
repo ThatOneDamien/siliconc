@@ -1,0 +1,10 @@
+const b1: int = 01_; // #error: cannot finish with an underscore.
+const b2: int = _01; // #error: undefined symbol
+const b3: float = 0.1_f; // #error: cannot finish with an underscore.
+const b4: float = 0._1f; // #error: An underscore cannot follow the decimal point
+
+
+const g1: int = 101;
+const g2: float = 101f;
+const g3: float = 101.;
+const g4: float = 101.f;

@@ -1545,16 +1545,16 @@ static LLVMValueRef get_var_llvm_ref(CodegenContext* c, ObjVar* var)
     Object* header = &var->header;
     if(var->kind != VAR_GLOBAL) return header->llvm_ref;
     if(header->llvm_ref != NULL && LLVMGetGlobalParent(header->llvm_ref) == c->llvm_module) return header->llvm_ref;
-    DBG_ASSERT(header->link_name != NULL);
-    return header->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, var->type_loc.type), header->link_name);
+    DBG_ASSERT(var->link_name != NULL);
+    return header->llvm_ref = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, var->type_loc.type), var->link_name);
 }
 
 static LLVMValueRef get_func_llvm_ref(CodegenContext* c, ObjFunc* func)
 {
     Object* header = &func->header;
     if(header->llvm_ref != NULL && LLVMGetGlobalParent(header->llvm_ref) == c->llvm_module) return header->llvm_ref;
-    DBG_ASSERT(header->link_name != NULL);
-    return header->llvm_ref = LLVMAddFunction(c->llvm_module, header->link_name, get_llvm_func_type(c, func->func_type));
+    DBG_ASSERT(func->link_name != NULL);
+    return header->llvm_ref = LLVMAddFunction(c->llvm_module, func->link_name, get_llvm_func_type(c, func->func_type));
 }
 
 static LLVMTargetRef get_llvm_target(const char* triple)

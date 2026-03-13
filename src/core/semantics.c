@@ -70,7 +70,7 @@ bool analyze_function_signature(ObjFunc* func)
     if(func->header.status == STATUS_RESOLVED) return !obj_is_bad(&func->header);
     if(func->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(&func->header);
+        set_circular_def(&func->header);
         return false;
     }
 
@@ -84,14 +84,19 @@ bool analyze_function_signature(ObjFunc* func)
 
     if(func->is_extern)
     {
-        if(func->header.link_name == NULL)
-            func->header.link_name = func->header.sym;
+        if(func->link_name == NULL)
+            func->link_name = func->header.sym;
         if(func->body != NULL)
             sic_error_at(func->header.loc, "Function marked 'extern' cannot have a body.");
     }
     else 
     {
-        set_object_link_name(&func->header);
+        if(func->link_name == NULL)
+        {
+            scratch_clear();
+            scratch_append_obj_link_name(&func->header);
+            func->link_name = scratch_copy();
+        }
         if(func->body == NULL)
             sic_error_at(func->header.loc, "Function must either have a body, or be marked 'extern'.");
     }
@@ -100,7 +105,7 @@ bool analyze_function_signature(ObjFunc* func)
     if(!resolve_type(&func->signature.ret_type.type, TYPE_RES_ALLOW_VOID, 
                      func->signature.ret_type.loc, "Function cannot have return type"))
     {
-        check_cyclic_def(&func->header, func->header.loc);
+        check_circular_def(&func->header, func->header.loc);
         success = false;
     }
     else
@@ -119,7 +124,7 @@ bool analyze_function_signature(ObjFunc* func)
         ObjVar* param = params.data[i];
         if(!resolve_type(&param->type_loc.type, TYPE_RES_NORMAL, param->type_loc.loc, "Parameter cannot be of type"))
         {
-            check_cyclic_def(&param->header, param->header.loc);
+            check_circular_def(&param->header, param->header.loc);
             success = false;
             continue;
         }
@@ -150,7 +155,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     if(import->header.status == STATUS_RESOLVED) return !obj_is_bad(&import->header);
     if(import->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(&import->header);
+        set_circular_def(&import->header);
         return false;
     }
 
@@ -170,7 +175,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
             if((other_import->header.sym == NULL || other_import->header.sym == path.data[i].sym) &&
                !resolve_import(mod, other_import))
             {
-                check_cyclic_def(&import->header, import->header.loc);
+                check_circular_def(&import->header, import->header.loc);
                 return false;
             }
         }
@@ -186,7 +191,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
             ObjImport* other_import = mod->imports.data[i];
             if(!resolve_import(mod, other_import))
             {
-                check_cyclic_def(&import->header, import->header.loc);
+                check_circular_def(&import->header, import->header.loc);
                 return false;
             }
         }
@@ -248,7 +253,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         if((other_import->header.sym == NULL || other_import->header.sym == actual) &&
            !resolve_import(mod, other_import))
         {
-            check_cyclic_def(&import->header, import->header.loc);
+            check_circular_def(&import->header, import->header.loc);
             return false;
         }
     }
@@ -300,7 +305,7 @@ bool analyze_global_var(ObjVar* var)
     if(var->header.status == STATUS_RESOLVED) return !obj_is_bad(&var->header);
     if(var->header.status == STATUS_RESOLVING)
     {
-        set_cyclic_def(&var->header);
+        set_circular_def(&var->header);
         return false;
     }
 
@@ -312,20 +317,25 @@ bool analyze_global_var(ObjVar* var)
     analyze_attributes(&var->header);
     if(var->is_extern)
     {
-        if(var->header.link_name == NULL)
-            var->header.link_name = var->header.sym;
+        if(var->link_name == NULL)
+            var->link_name = var->header.sym;
         if(var->initial_val != NULL)
             sic_error_at(var->header.loc, "Global variable marked 'extern' cannot have an initial value.");
     }
     else 
     {
-        set_object_link_name(&var->header);
+        if(var->link_name == NULL)
+        {
+            scratch_clear();
+            scratch_append_obj_link_name(&var->header);
+            var->link_name = scratch_copy();
+        }
     }
 
     if(!analyze_declaration(var))
     {
         g_sema.in_global_init = prev;
-        check_cyclic_def(&var->header, var->header.loc);
+        check_circular_def(&var->header, var->header.loc);
         return false;
     }
     g_sema.in_global_init = prev;
@@ -349,11 +359,15 @@ bool analyze_global_var(ObjVar* var)
 bool analyze_type_obj(Object* type_obj)
 {
     DBG_ASSERT(type_obj != NULL);
-    if(type_obj->status == STATUS_RESOLVED) return !obj_is_bad(type_obj);
-    if(type_obj->status == STATUS_RESOLVING)
+    switch(type_obj->status)
     {
-        set_cyclic_def(type_obj);
+    case STATUS_UNRESOLVED:
+        break;
+    case STATUS_RESOLVING:
+        set_circular_def(type_obj);
         return false;
+    case STATUS_RESOLVED:
+        return !obj_is_bad(type_obj);
     }
 
     switch(type_obj->kind)
@@ -569,11 +583,6 @@ static bool analyze_attributes(Object* obj)
             continue;
         case ATTR_LINK_NAME: {
             if(!check_attribute_args(attr, 1)) break;
-            if(kind != OBJ_FUNC && (kind != OBJ_VAR || obj_as_var(obj)->kind != VAR_GLOBAL))
-            {
-                sic_error_at(attr->loc, "Attribute %s can only be applied to global functions/vars.", attr->symbol);
-                break;
-            }
             ASTExpr* expr = attr->args.data[0];
             if(!analyze_expr(expr)) break;
             if(expr->kind != EXPR_CONSTANT || expr->expr.constant.kind != CONSTANT_STRING)
@@ -581,8 +590,25 @@ static bool analyze_attributes(Object* obj)
                 sic_error_at(attr->loc, "Attribute %s first argument should be a string constant.", attr->symbol);
                 break;
             }
-            obj->link_name = expr->expr.constant.str.val;
-            continue;
+            switch(kind)
+            {
+            case OBJ_FUNC:
+                obj_as_func(obj)->link_name = expr->expr.constant.str.val;
+                continue;
+            case OBJ_VAR: {
+                ObjVar* var = obj_as_var(obj);
+                if(var->kind == VAR_GLOBAL)
+                {
+                    var->link_name = expr->expr.constant.str.val;
+                    continue;
+                }
+                FALLTHROUGH;
+            }
+            default:
+                sic_error_at(attr->loc, "Attribute %s can only be applied to global functions/vars.", attr->symbol);
+                break;
+            }
+            break;
         }
         case ATTR_NODISCARD:
             if(!check_attribute_args(attr, 0)) break;
@@ -664,7 +690,7 @@ static inline void analyze_main()
             goto BAD_SIG;
     }
 
-    main->link_name = main->sym;
+    func->link_name = main->sym;
     return;
 
 BAD_SIG:
@@ -677,64 +703,146 @@ BAD_SIG:
     return;
 }
 
-static bool analyze_enum(ObjEnum* enum_)
+bool analyze_enum_underlying(ObjEnum* enum_)
 {
     Type* const type = enum_->type_ref;
-    analyze_attributes(&enum_->header);
+    if(type->status == STATUS_RESOLVED) return !type_is_bad(type);
+    if(!resolve_type(&enum_->underlying.type, TYPE_RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
+        goto ERR;
+
+    enum_->underlying.type = enum_->underlying.type->canonical;
+    if(!type_is_integer(enum_->underlying.type))
+    {
+        sic_error_at(enum_->underlying.loc, "Underlying type for enums must be an integer type.");
+        goto ERR;
+    }
 
     type->status = STATUS_RESOLVED;
-    enum_->header.status = STATUS_RESOLVED;
-
-    if(enum_->underlying.type == NULL)
-        enum_->underlying.type = g_type_int;
-    else if(!resolve_type(&enum_->underlying.type, TYPE_RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
-        goto ERR;
-    else 
-    {
-        enum_->underlying.type = enum_->underlying.type->canonical;
-        if(!type_is_integer(enum_->underlying.type))
-        {
-            sic_error_at(enum_->underlying.loc, "Underlying type for enums must be an integer type.");
-            goto ERR;
-        }
-    }
-
     type->canonical = type->kind == TYPE_ENUM ? enum_->underlying.type : type;
-
-    uint32_t scope = push_scope();
-    Int128 next_value = (Int128){ 0, 0 };
-    for(uint32_t i = 0; i < enum_->values.size; ++i)
-    {
-        ObjEnumValue* value = enum_->values.data[i];
-        value->enum_type = type;
-        if(value->raw_value == NULL)
-        {
-            value->const_value = next_value;
-            next_value = i128_add64(next_value, 1);
-        }
-        else if(!analyze_expr(value->raw_value))
-            goto ERR;
-        else if(value->raw_value->kind != EXPR_CONSTANT)
-        {
-            sic_error_at(value->header.loc, "Enum value must be assigned a constant integer expression.");
-            goto ERR;
-        }
-        else if(!implicit_cast(value->raw_value, enum_->underlying.type))
-            goto ERR;
-        else
-        {
-            value->const_value = value->raw_value->expr.constant.i;
-            next_value = i128_add64(value->const_value, 1);
-        }
-        push_obj(&value->header);
-    }
-    pop_scope(scope);
-
-
     return true;
 ERR:
-    enum_->header.kind = OBJ_INVALID;
-    type->kind = TYPE_INVALID;
+    enum_->type_ref = g_type_invalid;
+    return false;
+}
+
+static bool analyze_enum(ObjEnum* enum_)
+{
+    enum_->header.status = STATUS_RESOLVING;
+    analyze_attributes(&enum_->header);
+
+    bool valid = analyze_enum_underlying(enum_);
+
+    DBG_ASSERT(enum_->values.size > 0);
+    TypeKind underlying_kind = enum_->underlying.type->kind;
+    Int128 min_value;
+    Int128 max_value;
+    if(!analyze_enum_value(enum_, 0)) valid = false;
+    min_value = enum_->values.data[0]->const_value;
+    max_value = min_value;
+
+    for(uint32_t i = 1; i < enum_->values.size; ++i)
+    {
+        ObjEnumValue* value = enum_->values.data[i];
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            ObjEnumValue* other = enum_->values.data[j];
+            if(value->header.sym == other->header.sym)
+            {
+                sic_error_redef(&value->header, &other->header, "enum value");
+                valid = false;
+                goto NEXT;
+            }
+        }
+        if(!analyze_enum_value(enum_, i))
+        {
+            valid = false;
+            goto NEXT;
+        }
+        if(i128_cmp(value->const_value, min_value, underlying_kind) < 0)
+        {
+            min_value = value->const_value;
+            enum_->min_idx = i;
+        }
+        else if(i128_cmp(value->const_value, max_value, underlying_kind) > 0)
+        {
+            max_value = value->const_value;
+            enum_->max_idx = i;
+        }
+
+    NEXT:;
+    }
+
+    enum_->header.status = STATUS_RESOLVED;
+
+    if(!valid)
+    {
+        invalidate_obj(&enum_->header);
+        return false;
+    }
+    return true;
+}
+
+bool analyze_enum_value(ObjEnum* parent, uint32_t index)
+{
+    DBG_ASSERT(index < parent->values.size);
+    ObjEnumValue* value = parent->values.data[index];
+    switch(value->header.status)
+    {
+    case STATUS_UNRESOLVED:
+        break;
+    case STATUS_RESOLVING:
+        set_circular_def(&value->header);
+        return false;
+    case STATUS_RESOLVED:
+        return !obj_is_bad(&value->header);
+    }
+
+    bool enum_valid = analyze_enum_underlying(parent);
+    Type* underlying = parent->underlying.type;
+    ASTExpr* value_expr = value->raw_value;
+
+    value->header.status = STATUS_RESOLVING;
+
+
+    if(value_expr != NULL) 
+    {
+        ObjEnum* prev = g_sema.cur_enum;
+        g_sema.cur_enum = parent;
+        bool valid = analyze_rvalue(value_expr);
+        g_sema.cur_enum = prev;
+        if(!valid) goto ERR;
+        if(value_expr->kind != EXPR_CONSTANT || value_expr->expr.constant.kind != CONSTANT_INTEGER)
+        {
+            sic_error_at(value->header.loc, "Enum value must be assigned a compile-time constant integer value.");
+            goto ERR;
+        }
+
+        if(!enum_valid || !implicit_cast(value_expr, underlying)) goto ERR;
+        value->const_value = value->raw_value->expr.constant.i;
+    }
+    else
+    {
+        if(index == 0)
+        {
+            value->const_value = UINT128_MIN;
+        }
+        else if(!analyze_enum_value(parent, index - 1)) goto ERR;
+        else
+        {
+            Int128 last = parent->values.data[index - 1]->const_value;
+            if(i128_cmp(last, int_max(underlying->kind), underlying->kind) >= 0)
+            {
+                sic_error_at(value->header.loc, "Enum value exceeds the maximum of underlying type.");
+                goto ERR;
+            }
+            value->const_value = i128_add64(last, 1);
+        }
+    }
+
+    value->header.status = STATUS_RESOLVED;
+    return true;
+ERR:
+    invalidate_obj(&value->header);
     return false;
 }
 
@@ -750,7 +858,7 @@ static bool analyze_struct(ObjStruct* struct_)
         ObjVar* member = struct_->members.data[i];
         if(!resolve_type(&member->type_loc.type, TYPE_RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot have type %s."))
         {
-            check_cyclic_def(&struct_->header, struct_->header.loc);
+            check_circular_def(&struct_->header, struct_->header.loc);
             return false;
         }
         for(uint32_t j = 0; j < i; ++j)
@@ -819,7 +927,7 @@ static bool analyze_typedef(ObjTypedef* typedef_)
     g_sema.type_res_allow_unresolved = prev;
     if(!success)
     {
-        check_cyclic_def(&typedef_->header, typedef_->header.loc);
+        check_circular_def(&typedef_->header, typedef_->header.loc);
         return false;
     }
     typedef_->header.status = STATUS_RESOLVED;
@@ -842,7 +950,7 @@ static bool analyze_union(ObjStruct* union_)
         ObjVar* member = union_->members.data[i];
         if(!resolve_type(&member->type_loc.type, TYPE_RES_NORMAL, member->type_loc.loc, "Union member cannot have type %s."))
         {
-            check_cyclic_def(&union_->header, union_->header.loc);
+            check_circular_def(&union_->header, union_->header.loc);
             return false;
         }
         for(uint32_t j = 0; j < i; ++j)

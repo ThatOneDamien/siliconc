@@ -56,12 +56,6 @@ void scratch_append_module_path(const ObjModule* module)
 
 void scratch_append_obj_link_name(Object* obj)
 {
-    if(obj->link_name)
-    {
-        scratch_append(obj->link_name);
-        return;
-    }
-
     scratch_append("_SI");
     if(obj->kind == OBJ_FUNC)
     {
@@ -72,7 +66,7 @@ void scratch_append_obj_link_name(Object* obj)
         scratch_appendc('G');
     }
     else
-        SIC_TODO();
+        SIC_UNREACHABLE();
 
     ObjModuleDA path = module_path_to_stack(obj->module);
     // TODO: When we are making a library, we want the name of the library to

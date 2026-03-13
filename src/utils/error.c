@@ -151,3 +151,25 @@ void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under
         g_warning_cnt++;
 }
 
+void sic_error_upto(SourceLoc loc, const char* message)
+{
+    DBG_ASSERT(message != NULL);
+    SourceFile* file = file_from_id(loc.file);
+    LineCol source_lc = loc_get_col_line(loc);
+    const char* const color = color_str(DIAG_ERROR);
+    const char* const reset = reset_color_str();
+
+    fprintf(stderr, "%s:%u:%u: %s%s:%s %s",
+            file->rel_path, source_lc.line, source_lc.col, color, DIAG_NAME[DIAG_ERROR], reset, message);
+
+    const char* line_start = file->src + file->line_starts.data[source_lc.line - 1];
+
+    // FIXME: Rewrite this to support multi-line.
+    fprintf(stderr, "\n%4u | %.*s\n     | ", 
+            source_lc.line, 
+            source_lc.col - 1, line_start);
+    for(uint32_t i = 0; i < source_lc.col - 1; ++i)
+        putc(line_start[i] == '\t' ? '\t' : ' ', stderr);
+
+    fprintf(stderr, "%s^%s\n", color, reset);
+}

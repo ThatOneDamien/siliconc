@@ -407,6 +407,62 @@ double i128_to_float_unsigned(Int128 val)
 	return (double)val.lo + ldexp((double)val.hi, 64);
 }
 
+Int128 int_max(TypeKind kind)
+{
+    DBG_ASSERT(type_kind_is_integer(kind));
+    switch(kind)
+    {
+    case TYPE_BYTE:
+        return i128_from_u64(INT8_MAX);
+    case TYPE_SHORT:
+        return i128_from_u64(INT16_MAX);
+    case TYPE_INT:
+        return i128_from_u64(INT32_MAX);
+    case TYPE_LONG:
+        return i128_from_u64(INT64_MAX);
+    case TYPE_INT128:
+        return INT128_MAX;
+    case TYPE_UBYTE:
+        return i128_from_u64(UINT8_MAX);
+    case TYPE_USHORT:
+        return i128_from_u64(UINT16_MAX);
+    case TYPE_UINT:
+        return i128_from_u64(UINT32_MAX);
+    case TYPE_ULONG:
+        return i128_from_u64(UINT64_MAX);
+    case TYPE_UINT128:
+        return UINT128_MAX;
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
+Int128 int_min(TypeKind kind)
+{
+    DBG_ASSERT(type_kind_is_integer(kind));
+    switch(kind)
+    {
+    case TYPE_BYTE:
+        return i128_from_s64(INT8_MIN);
+    case TYPE_SHORT:
+        return i128_from_s64(INT16_MIN);
+    case TYPE_INT:
+        return i128_from_s64(INT32_MIN);
+    case TYPE_LONG:
+        return i128_from_s64(INT64_MIN);
+    case TYPE_INT128:
+        return INT128_MIN;
+    case TYPE_UBYTE:
+    case TYPE_USHORT:
+    case TYPE_UINT:
+    case TYPE_ULONG:
+    case TYPE_UINT128:
+        return UINT128_MIN;
+    default:
+        SIC_UNREACHABLE();
+    }
+}
+
 bool i128_fits(Int128 val, Type* optype, TypeKind totype)
 {
     // This should only be called for integer literals, not any integer.

@@ -13,5 +13,5 @@ struct D
     c2: *C,
 }
 
-typedef E = F; // #error: Cyclic definition
+typedef E = F; // #error: Circular definition
 typedef F = E; 

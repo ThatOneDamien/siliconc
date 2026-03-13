@@ -45,11 +45,11 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
 
 // Unary functions
 static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner_ref);
+static bool analyze_bit_not(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_deref(ASTExpr* expr, ASTExpr* inner);
 static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref);
-static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref);
+static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner);
+static bool analyze_negate(ASTExpr* expr, ASTExpr* inner);
 
 static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc);
 static void convert_to_const_zero(ASTExpr* expr, Type* type);
@@ -586,17 +586,30 @@ static bool analyze_call(ASTExpr* expr)
 
 static bool analyze_ident(ASTExpr* expr)
 {
+    const ModulePath path = expr->expr.unresolved_ident;
+    if(g_sema.cur_enum != NULL && path.size == 1)
+    {
+        for(uint32_t i = 0; i < g_sema.cur_enum->values.size; ++i)
+        {
+            ObjEnumValue* value = g_sema.cur_enum->values.data[i];
+            if(value->header.sym == path.data[0].sym)
+            {
+                if(!analyze_enum_value(g_sema.cur_enum, i))
+                {
+                    check_circular_def(&value->header, expr->loc);
+                    return false;
+                }
+                convert_to_const_int(expr, g_sema.cur_enum->type_ref, value->const_value);
+                return true;
+            }
+        }
+    }
+
     Object* ident = find_obj(&expr->expr.unresolved_ident);
     if(ident == NULL) return false;
 
     switch(ident->kind)
     {
-    case OBJ_ENUM_VALUE: {
-        ObjEnumValue* value = obj_as_enum_value(ident);
-        expr->type = value->enum_type;
-        convert_to_const_int(expr, value->const_value);
-        return true;
-    }
     case OBJ_FUNC: {
         ObjFunc* func = obj_as_func(ident);
         if(!analyze_function_signature(func)) return false;
@@ -625,6 +638,7 @@ static bool analyze_ident(ASTExpr* expr)
     }
     case OBJ_INVALID:
         return false;
+    case OBJ_ENUM_VALUE:
     case OBJ_IMPORT:
     case OBJ_MODULE:
         break;
@@ -703,16 +717,16 @@ static bool analyze_unary(ASTExpr* expr)
     case UNARY_ADDR_OF:
         return analyze_addr_of(expr, inner);
     case UNARY_BIT_NOT:
-        return analyze_bit_not(expr, &expr->expr.unary.inner);
+        return analyze_bit_not(expr, inner);
     case UNARY_DEC:
     case UNARY_INC:
         return analyze_incdec(expr, inner);
     case UNARY_DEREF:
         return analyze_deref(expr, inner);
     case UNARY_LOG_NOT:
-        return analyze_log_not(expr, &expr->expr.unary.inner);
+        return analyze_log_not(expr, inner);
     case UNARY_NEG:
-        return analyze_negate(expr, &expr->expr.unary.inner);
+        return analyze_negate(expr, inner);
     }
     SIC_UNREACHABLE();
 }
@@ -728,16 +742,14 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_STATIC_ARRAY:
         if(member.sym == g_sym_len)
         {
-            expr->type = g_type_usize;
-            convert_to_const_int(expr, i128_from_u64(t->array.static_len));
+            convert_to_const_int(expr, g_type_usize, i128_from_u64(t->array.static_len));
             return true;
         }
         break;
     case TYPE_POINTER_MULTI:
         if(member.sym == g_sym_len && t->pointer.static_len != 0)
         {
-            expr->type = g_type_usize;
-            convert_to_const_int(expr, i128_from_u64(t->pointer.static_len));
+            convert_to_const_int(expr, g_type_usize, i128_from_u64(t->pointer.static_len));
             return true;
         }
         break;
@@ -818,7 +830,6 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     if(parent->kind == EXPR_TYPE_IDENT)
     {
         Object* type_ident = parent->expr.type_ident;
-        if(!analyze_type_obj(type_ident)) return false;
     RETRY:
         switch(type_ident->kind)
         {
@@ -830,8 +841,12 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
             for(uint32_t i = 0; i < values.size; ++i)
                 if(values.data[i]->header.sym == uaccess->member.sym)
                 {
-                    expr->type = enum_->type_ref;
-                    convert_to_const_int(expr, values.data[i]->const_value);
+                    if(!analyze_enum_value(enum_, i))
+                    {
+                        check_circular_def(&values.data[i]->header, expr->loc);
+                        return false;
+                    }
+                    convert_to_const_int(expr, enum_->type_ref, values.data[i]->const_value);
                     return true;
                 }
             sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
@@ -839,6 +854,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
             return false;
         }
         case OBJ_STRUCT: {
+            if(!analyze_type_obj(type_ident)) return false;
             ObjStruct* struct_ = obj_as_struct(type_ident);
             const ObjVarDA members = struct_->members;
             for(uint32_t i = 0; i < members.size; ++i)
@@ -866,6 +882,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
             return false;
         }
         case OBJ_TYPEDEF:
+            if(!analyze_type_obj(type_ident)) return false;
             type_ident = obj_as_typedef(type_ident)->alias.type->user_def;
             goto RETRY;
         case OBJ_UNION:
@@ -896,8 +913,7 @@ static bool analyze_ct_alignof(ASTExpr* expr)
         return false;
 
     ByteSize align = type_alignment(expr->expr.ct_typearg.type);
-    expr->type = g_type_usize;
-    convert_to_const_int(expr, i128_from_u64(align));
+    convert_to_const_int(expr, g_type_usize, i128_from_u64(align));
     return true;
 }
 
@@ -919,8 +935,7 @@ static bool analyze_ct_sizeof(ASTExpr* expr)
         return false;
     
     uint32_t size = type_size(expr->expr.ct_typearg.type);
-    expr->type = g_type_usize;
-    convert_to_const_int(expr, i128_from_u64(size));
+    convert_to_const_int(expr, g_type_usize, i128_from_u64(size));
     return true;
 }
 
@@ -928,60 +943,36 @@ static bool analyze_ct_type_max(ASTExpr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get max of type %s."))
         return false;
-    Type* type = expr->type = expr->expr.ct_typearg.type;
+    Type* type = expr->expr.ct_typearg.type;
 
+    Type* t = type;
 RETRY:
-    switch(type->kind)
+    switch(t->kind)
     {
-    case TYPE_BYTE:
-        convert_to_const_int(expr, i128_from_u64(INT8_MAX));
-        return true;
-    case TYPE_SHORT:
-        convert_to_const_int(expr, i128_from_u64(INT16_MAX));
-        return true;
-    case TYPE_INT:
-        convert_to_const_int(expr, i128_from_u64(INT32_MAX));
-        return true;
-    case TYPE_LONG:
-        convert_to_const_int(expr, i128_from_u64(INT64_MAX));
-        return true;
-    case TYPE_INT128:
-        convert_to_const_int(expr, INT128_MAX);
-        return true;
-    case TYPE_UBYTE:
-        convert_to_const_int(expr, i128_from_u64(UINT8_MAX));
-        return true;
-    case TYPE_USHORT:
-        convert_to_const_int(expr, i128_from_u64(UINT16_MAX));
-        return true;
-    case TYPE_UINT:
-        convert_to_const_int(expr, i128_from_u64(UINT32_MAX));
-        return true;
-    case TYPE_ULONG:
-        convert_to_const_int(expr, i128_from_u64(UINT64_MAX));
-        return true;
-    case TYPE_UINT128:
-        convert_to_const_int(expr, UINT128_MAX);
+    case INT_TYPES:
+        convert_to_const_int(expr, type, int_max(t->kind));
         return true;
     case TYPE_FLOAT:
-        convert_to_const_float(expr, (double)FLT_MAX);
+        convert_to_const_float(expr, type, (double)FLT_MAX);
         return true;
     case TYPE_DOUBLE:
-        convert_to_const_float(expr, DBL_MAX);
+        convert_to_const_float(expr, type, DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        type = obj_as_typedef(type->user_def)->alias.type;
+        t = obj_as_typedef(t->user_def)->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = obj_as_enum(type->user_def);
+        ObjEnum* enum_ = obj_as_enum(t->user_def);
+        // This line ensures that the enum has its min and max set.
+        if(!analyze_type_obj(&enum_->header)) return false;
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
         // or should they actually be their own type of constant.
-        convert_to_const_int(expr, enum_->values.data[enum_->max_idx]->const_value);
+        convert_to_const_int(expr, type, enum_->values.data[enum_->max_idx]->const_value);
         return true;
     }
     default:
-        sic_error_at(expr->loc, "Cannot get max of type %s.", type_to_string(expr->type));
+        sic_error_at(expr->loc, "Cannot get max of type %s.", type_to_string(type));
         return false;
     }
 }
@@ -990,52 +981,36 @@ static bool analyze_ct_type_min(ASTExpr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get min of type %s."))
         return false;
-    Type* type = expr->type = expr->expr.ct_typearg.type;
+    Type* type = expr->expr.ct_typearg.type;
 
+    Type* t = type;
 RETRY:
-    switch(type->kind)
+    switch(t->kind)
     {
-    case TYPE_BYTE:
-        convert_to_const_int(expr, i128_from_s64(INT8_MIN));
-        return true;
-    case TYPE_SHORT:
-        convert_to_const_int(expr, i128_from_s64(INT16_MIN));
-        return true;
-    case TYPE_INT:
-        convert_to_const_int(expr, i128_from_s64(INT32_MIN));
-        return true;
-    case TYPE_LONG:
-        convert_to_const_int(expr, i128_from_s64(INT64_MIN));
-        return true;
-    case TYPE_INT128:
-        convert_to_const_int(expr, INT128_MIN);
-        return true;
-    case TYPE_UBYTE:
-    case TYPE_USHORT:
-    case TYPE_UINT:
-    case TYPE_ULONG:
-    case TYPE_UINT128:
-        convert_to_const_int(expr, UINT128_MIN);
+    case INT_TYPES:
+        convert_to_const_int(expr, type, int_min(t->kind));
         return true;
     case TYPE_FLOAT:
-        convert_to_const_float(expr, (double)-FLT_MAX);
+        convert_to_const_float(expr, type, (double)-FLT_MAX);
         return true;
     case TYPE_DOUBLE:
-        convert_to_const_float(expr, -DBL_MAX);
+        convert_to_const_float(expr, type, -DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        type = obj_as_typedef(type->user_def)->alias.type;
+        t = obj_as_typedef(t->user_def)->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = obj_as_enum(type->user_def);
+        ObjEnum* enum_ = obj_as_enum(t->user_def);
+        // This line ensures that the enum has its min and max set.
+        if(!analyze_type_obj(&enum_->header)) return false;
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
         // or should they actually be their own type of constant.
-        convert_to_const_int(expr, enum_->values.data[enum_->min_idx]->const_value);
+        convert_to_const_int(expr, type, enum_->values.data[enum_->min_idx]->const_value);
         return true;
     }
     default:
-        sic_error_at(expr->loc, "Cannot get min of type %s.", type_to_string(expr->type));
+        sic_error_at(expr->loc, "Cannot get min of type %s.", type_to_string(type));
         return false;
     }
 }
@@ -1071,7 +1046,7 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offs
         DBG_ASSERT(expr->kind == EXPR_BINARY);
         if(kind == BINARY_SUB)
             actual_val_to_add = i128_neg(actual_val_to_add);
-        convert_to_const_pointer(expr, i128_add(pointer->expr.constant.i, actual_val_to_add));
+        convert_to_const_pointer(expr, expr->type, i128_add(pointer->expr.constant.i, actual_val_to_add));
         return true;
     }
 
@@ -1149,7 +1124,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
             else
                 expr->type = i128_ucmp(l, i128_neg(r)) >= 0 ? lt : rt;
         }
-        convert_to_const_int(expr, value);
+        convert_to_const_int(expr, expr->type, value);
         expr->expr.constant.is_bit_int = is_bit_int;
         return true;
     }
@@ -1168,9 +1143,9 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f + rhs->expr.constant.f);
+            convert_to_const_float(expr, expr->type, lhs->expr.constant.f + rhs->expr.constant.f);
         else
-            convert_to_const_int(expr, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
+            convert_to_const_int(expr, expr->type, i128_add(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
@@ -1225,7 +1200,7 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
             else
                 expr->type = i128_ucmp(l, r) >= 0 ? lt : rt;
         }
-        convert_to_const_int(expr, value);
+        convert_to_const_int(expr, expr->type, value);
         expr->expr.constant.is_bit_int = is_bit_int;
         return true;
     }
@@ -1239,9 +1214,9 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f - rhs->expr.constant.f);
+            convert_to_const_float(expr, expr->type, lhs->expr.constant.f - rhs->expr.constant.f);
         else
-            convert_to_const_int(expr, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
+            convert_to_const_int(expr, expr->type, i128_sub(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
@@ -1295,7 +1270,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
                 expr->type = g_type_uint128;
             }
         }
-        convert_to_const_int(expr, i128_mult(l, r));
+        convert_to_const_int(expr, expr->type, i128_mult(l, r));
         return true;
     }
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
@@ -1304,9 +1279,9 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f * rhs->expr.constant.f);
+            convert_to_const_float(expr, expr->type, lhs->expr.constant.f * rhs->expr.constant.f);
         else
-            convert_to_const_int(expr, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
+            convert_to_const_int(expr, expr->type, i128_mult(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
 
@@ -1354,7 +1329,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
             else
                 value = i128_udiv(l, r);
         }
-        convert_to_const_int(expr, value);
+        convert_to_const_int(expr, expr->type, value);
         return true;
     }
     if(!valid) return false;
@@ -1364,7 +1339,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         if(lhs->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, lhs->expr.constant.f / rhs->expr.constant.f);
+            convert_to_const_float(expr, expr->type, lhs->expr.constant.f / rhs->expr.constant.f);
         else
         {
             Int128 rval = rhs->expr.constant.i;
@@ -1373,7 +1348,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
                 sic_error_at(expr->loc, "Right side of integer division evaluates to 0.");
                 return false;
             }
-            convert_to_const_int(expr, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
+            convert_to_const_int(expr, expr->type, i128_div(lhs->expr.constant.i, rval, expr->type->canonical->kind));
         }
         return true;
     }
@@ -1412,7 +1387,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
             expr->type = g_type_neg_int_lit;
             value = i128_srem(l, r);
         }
-        convert_to_const_int(expr, value);
+        convert_to_const_int(expr, expr->type, value);
         return true;
     }
 
@@ -1434,7 +1409,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
             sic_error_at(expr->loc, "Right side of modulo evaluates to 0.");
             return false;
         }
-        convert_to_const_int(expr, i128_rem(lhs->expr.constant.i, rval, expr->type->canonical->kind));
+        convert_to_const_int(expr, expr->type, i128_rem(lhs->expr.constant.i, rval, expr->type->canonical->kind));
         return true;
     }
 
@@ -1539,8 +1514,7 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         Int128 l = lhs->expr.constant.i;
         Int128 r = rhs->expr.constant.i;
         bool value = lt == rt && i128_ucmp(l, r) == 0;
-        expr->type = g_type_bool;
-        convert_to_const_bool(expr, value ^ (kind == BINARY_NE));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_NE));
         return true;
     }
     if(!analyze_comparison(expr, lhs, rhs, true)) return false;
@@ -1554,7 +1528,7 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         else
             value = i128_ucmp(lhs->expr.constant.i, rhs->expr.constant.i) == 0;
 
-        convert_to_const_bool(expr, value ^ (kind == BINARY_NE));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_NE));
         return true;
     }
 
@@ -1576,12 +1550,11 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         Int128 l = lhs->expr.constant.i;
         Int128 r = rhs->expr.constant.i;
         bool value;
-        expr->type = g_type_bool;
         if(lt == g_type_neg_int_lit)
             value = rt == g_type_pos_int_lit || i128_ucmp(l, r) < 0;
         else
             value = rt == g_type_pos_int_lit && i128_ucmp(l, r) < 0;
-        convert_to_const_bool(expr, value ^ (kind == BINARY_GE));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GE));
         return true;
     }
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
@@ -1595,7 +1568,7 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         else
             value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, lt->kind) < 0;
 
-        convert_to_const_bool(expr, value ^ (kind == BINARY_GE));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GE));
         return true;
     }
 
@@ -1617,12 +1590,11 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         Int128 l = lhs->expr.constant.i;
         Int128 r = rhs->expr.constant.i;
         bool value;
-        expr->type = g_type_bool;
         if(lt == g_type_neg_int_lit)
             value = rt == g_type_pos_int_lit || i128_ucmp(l, r) <= 0;
         else
             value = rt == g_type_pos_int_lit && i128_ucmp(l, r) <= 0;
-        convert_to_const_bool(expr, value ^ (kind == BINARY_GT));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GT));
         return true;
     }
     if(!analyze_comparison(expr, lhs, rhs, false)) return false;
@@ -1636,7 +1608,7 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         else
             value = i128_cmp(lhs->expr.constant.i, rhs->expr.constant.i, lt->kind) <= 0;
 
-        convert_to_const_bool(expr, value ^ (kind == BINARY_GT));
+        convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GT));
         return true;
     }
 
@@ -1697,7 +1669,7 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
                 new_val = i128_shl64(lhs->expr.constant.i, shift);
                 new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
             }
-            convert_to_const_int(expr, new_val);
+            convert_to_const_int(expr, expr->type, new_val);
             if(type_is_int_literal(lt))
             {
                 expr->type = g_type_pos_int_lit;
@@ -1742,8 +1714,7 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     // Untyped int literal case
     if(type_is_int_literal(lt) && type_is_int_literal(rt))
     {
-        expr->type = g_type_pos_int_lit;
-        convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, g_type_pos_int_lit, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
         expr->expr.constant.is_bit_int = true;
         return true;
     }
@@ -1751,7 +1722,7 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(expr, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, expr->type, i128_or(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
 
@@ -1770,8 +1741,7 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     // Untyped int literal case
     if(type_is_int_literal(lt) && type_is_int_literal(rt))
     {
-        expr->type = g_type_pos_int_lit;
-        convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, g_type_pos_int_lit, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
         expr->expr.constant.is_bit_int = true;
         return true;
     }
@@ -1779,7 +1749,7 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(expr, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, expr->type, i128_xor(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
 
@@ -1797,8 +1767,7 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     // Untyped int literal case
     if(type_is_int_literal(lt) && type_is_int_literal(rt))
     {
-        expr->type = g_type_pos_int_lit;
-        convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, g_type_pos_int_lit, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
         expr->expr.constant.is_bit_int = true;
         return true;
     }
@@ -1806,7 +1775,7 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(expr, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, expr->type, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
     }
 
@@ -1874,10 +1843,10 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
+static bool analyze_bit_not(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!analyze_rvalue(*inner)) return false;
-    Type* type = (*inner)->type;
+    if(!analyze_rvalue(inner)) return false;
+    Type* type = inner->type;
     if(!type_is_integer(type->canonical))
     {
         sic_error_at(expr->loc, "Invalid operand type %s.", 
@@ -1885,18 +1854,15 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr** inner)
         return false;
     }
 
-    // promote_int_type(inner);
-    ASTExpr* in = *inner;
-
-    expr->type = in->type;
-    if(in->kind == EXPR_CONSTANT)
+    expr->type = inner->type;
+    if(inner->kind == EXPR_CONSTANT)
     {
-        DBG_ASSERT(in->expr.constant.kind == CONSTANT_INTEGER);
-        convert_to_const_int(expr, i128_not(in->expr.constant.i));
+        DBG_ASSERT(inner->expr.constant.kind == CONSTANT_INTEGER);
+        convert_to_const_int(expr, expr->type, i128_not(inner->expr.constant.i));
         return true;
     }
 
-    expr->is_const_eval = in->is_const_eval;
+    expr->is_const_eval = inner->is_const_eval;
     return true;
 }
 
@@ -1939,18 +1905,16 @@ static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref)
+static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner)
 {
-    if(!implicit_cast(*inner_ref, g_type_bool)) 
+    if(!implicit_cast(inner, g_type_bool)) 
         return false;
-
-    ASTExpr* inner = *inner_ref;
 
     expr->type = g_type_bool;
     if(inner->kind == EXPR_CONSTANT)
     {
         DBG_ASSERT(inner->expr.constant.kind == CONSTANT_BOOL);
-        convert_to_const_bool(expr, !inner->expr.constant.b);
+        convert_to_const_bool(expr, g_type_bool, !inner->expr.constant.b);
         return true;
     }
 
@@ -1958,12 +1922,20 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr** inner_ref)
     return true;
 }
 
-static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
+static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
 {
-    ASTExpr* inner = *inner_ref;
     if(!analyze_rvalue(inner)) return false;
     Type* type = inner->type;
     Type* ctype = type->canonical;
+
+    if(type_is_int_literal(ctype))
+    {
+        Int128 i = inner->expr.constant.i;
+        if(ctype == g_type_pos_int_lit && i128_ucmp(i, INT128_MIN) > 0)
+            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Negation of integer literal underflows.");
+        convert_to_const_int(expr, ctype == g_type_pos_int_lit ? g_type_neg_int_lit : g_type_pos_int_lit, i128_neg(i));
+    }
+
     if(!type_is_numeric(ctype))
     {
         sic_error_at(expr->loc, "Cannot negate non-numeric type %s.",
@@ -1971,19 +1943,13 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr** inner_ref)
         return false;
     }
 
-
-    // if(type_is_integer(ctype))
-        // promote_int_type(inner_ref);
-
-    inner = *inner_ref;
     expr->type = inner->type;
-
     if(inner->kind == EXPR_CONSTANT)
     {
         if(inner->expr.constant.kind == CONSTANT_FLOAT)
-            convert_to_const_float(expr, -inner->expr.constant.f);
+            convert_to_const_float(expr, expr->type, -inner->expr.constant.f);
         else
-            convert_to_const_int(expr, i128_neg(inner->expr.constant.i));
+            convert_to_const_int(expr, expr->type, i128_neg(inner->expr.constant.i));
 
         return true;
     }
@@ -2090,28 +2056,37 @@ INT_ERR:
 
 static void convert_to_const_zero(ASTExpr* expr, Type* type)
 {
-    expr->type = type;
-    type = type_reduce(type);
-    switch(type->kind)
+    Type* t = type;
+RETRY:
+    switch(t->kind)
     {
     case TYPE_BOOL:
-        convert_to_const_bool(expr, false);
+        convert_to_const_bool(expr, type, false);
         return;
     case CHAR_TYPES:
     case INT_TYPES:
-        convert_to_const_int(expr, UINT128_MIN);
+        convert_to_const_int(expr, type, UINT128_MIN);
         return;
     case FLOAT_TYPES:
-        convert_to_const_float(expr, 0.0);
+        convert_to_const_float(expr, type, 0.0);
         return;
     case TYPE_POINTER_SINGLE:
     case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
-        convert_to_const_pointer(expr, UINT128_MIN);
+        convert_to_const_pointer(expr, type, UINT128_MIN);
         return;
     case TYPE_STATIC_ARRAY:
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
+        t = obj_as_typedef(t->user_def)->alias.type;
+        goto RETRY;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+        t = obj_as_enum(t->user_def)->underlying.type;
+        goto RETRY;
     case TYPE_STRUCT:
     case TYPE_UNION:
+        expr->type = type;
         expr->kind = EXPR_ZEROED_OUT;
         expr->is_const_eval = true;
         return;
@@ -2119,10 +2094,6 @@ static void convert_to_const_zero(ASTExpr* expr, Type* type)
         SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
-    case TYPE_ALIAS:
-    case TYPE_ALIAS_DISTINCT:
-    case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
     case SEMA_ONLY_TYPES:
         break;
     }

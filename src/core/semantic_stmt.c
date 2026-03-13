@@ -408,6 +408,7 @@ void analyze_ct_if(ASTStmt* stmt)
 
 bool analyze_declaration(ObjVar* decl)
 {
+    ASTExpr* initial_val = decl->initial_val;
     if(decl->type_loc.type == NULL)
     {
         if(decl->is_extern)
@@ -415,16 +416,16 @@ bool analyze_declaration(ObjVar* decl)
             sic_error_at(decl->header.loc, "Extern variables require a type to be specified.");
             goto ERR;
         }
-        if(decl->initial_val == NULL)
+        if(initial_val == NULL)
         {
             sic_error_at(decl->header.loc, "Variables require a type or an initial value to "
                                            "be specified. Please provide at least 1.");
             goto ERR;
         } 
-        if(!analyze_rvalue(decl->initial_val))
+        if(!analyze_rvalue(initial_val))
             goto ERR;
 
-        Type* rhs_type = decl->initial_val->type;
+        Type* rhs_type = initial_val->type;
         if(rhs_type->kind == TYPE_INIT_LIST)
         {
             sic_error_at(decl->header.loc, "Unable to deduce type of right hand expression. "
@@ -439,7 +440,9 @@ bool analyze_declaration(ObjVar* decl)
         }
         else if(type_is_int_literal(rhs_type))
         {
-            SIC_TODO();
+            sic_error_at(decl->header.loc, "Integer literals do not have an inherent type. Please "
+                                           "explicitly define the type in the variable declaration.");
+            goto ERR;
         }
         decl->type_loc.type = decl->binding_kind == VAR_BINDING_RT_CONST ? type_apply_qualifiers(rhs_type, TYPE_QUAL_CONST) : rhs_type;
         return true;
@@ -458,11 +461,11 @@ bool analyze_declaration(ObjVar* decl)
             goto ERR;
         }
     }
-    else if(!analyze_rvalue(decl->initial_val))
+    else if(!analyze_rvalue(initial_val))
         goto ERR;
     else
     {
-        Type* rhs_type = decl->initial_val->type;
+        Type* rhs_type = initial_val->type;
         Type* rhs_ctype = rhs_type->canonical;
         if(kind == TYPE_INFERRED_ARRAY)
         {
@@ -481,18 +484,27 @@ bool analyze_declaration(ObjVar* decl)
             }
             else if(rhs_type->kind == TYPE_INIT_LIST)
             {
-                if(decl->initial_val->expr.array_init.size == 0)
+                if(initial_val->expr.array_init.size == 0)
                 {
                     sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
                     goto ERR;
                 }
 
                 decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
-                decl->type_loc.type->array.static_len = decl->initial_val->expr.array_init.max + 1;
-                implicit_cast(decl->initial_val, decl->type_loc.type);
+                decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
+                if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
+            }
+            else
+            {
+                sic_error_at(decl->header.loc, 
+                             "Cannot resolve auto-sized array type \'%s\' to "
+                             "incompatible type \'%s\'.",
+                             type_to_string(decl->type_loc.type),
+                             type_to_string(rhs_type));
+                goto ERR;
             }
         }
-        else if(!implicit_cast(decl->initial_val, decl->type_loc.type))
+        else if(!implicit_cast(initial_val, decl->type_loc.type))
             return false;
     }
     if(decl->binding_kind == VAR_BINDING_RT_CONST)

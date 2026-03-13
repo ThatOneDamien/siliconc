@@ -218,11 +218,3 @@ ASTStmt* find_labeled_stmt(SymbolLoc label)
         sic_error_at(label.loc, "Reference to undefined label \'%s\'.", label.sym);
     return stmt->stmt;
 }
-
-void set_object_link_name(Object* obj)
-{
-    if(obj->link_name != NULL) return;
-    scratch_clear();
-    scratch_append_obj_link_name(obj);
-    obj->link_name = scratch_copy();
-}

@@ -255,11 +255,13 @@ static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc erro
         return false;
     case OBJ_BITFIELD:
         SIC_TODO();
-    case OBJ_ENUM: // Enums always have to be resolved
-        if(!analyze_type_obj(type_obj)) return false;
-        user_ty = obj_as_enum(type_obj)->type_ref;
+    case OBJ_ENUM: { // Enums always have to be resolved
+        ObjEnum* enum_ = obj_as_enum(type_obj);
+        if(!analyze_enum_underlying(enum_)) return false;
+        user_ty = enum_->type_ref;
         user_ty->status = STATUS_RESOLVED;
         break;
+    }
     case OBJ_STRUCT:
         user_ty = obj_as_struct(type_obj)->type_ref;
         if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;

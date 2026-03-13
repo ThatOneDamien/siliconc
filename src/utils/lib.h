@@ -101,6 +101,8 @@ uint32_t i128_ctz(Int128 val);
 Int128   i128_from_double(double x, TypeKind kind);
 Int128   i128_unsigned_from_double(double x);
 Int128   i128_signed_from_double(double x);
+Int128   int_max(TypeKind kind);
+Int128   int_min(TypeKind kind);
 bool     i128_fits(Int128 val, Type* optype, TypeKind totype);
 static inline Int128 i128_from_s64(int64_t i) { return (Int128){ i < 0 ? UINT64_MAX : 0, (uint64_t)i }; }
 static inline Int128 i128_from_u64(uint64_t i) { return (Int128){ 0, i }; }
@@ -132,6 +134,7 @@ LineCol loc_get_col_line(const SourceLoc loc);
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va);
 void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message, va_list va);
 void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, va_list va);
+void sic_error_upto(SourceLoc loc, const char* message);
 
 PRINTF_FMT(2, 3)
 static inline void sic_diagnostic(DiagnosticType diag, const char* message, ...)
@@ -184,7 +187,6 @@ static inline void sic_fatal_error(const char* message, ...)
     va_start(va, message);
     sic_diagnosticv(DIAG_FATAL, message, va);
     va_end(va);
-    DBG_ERROR("Breaking because of fatal error!");
     exit(EXIT_FAILURE);
 }
 

@@ -80,7 +80,7 @@ FileId source_file_add_or_get(const char* path, ObjModule* module)
         goto ERR;
 
     if((size_t)size > (size_t)UINT32_MAX)
-        sic_fatal_error("Size of file \'%s\' exceeds maximum supported size (4GB).", path);
+        sic_fatal_error("Size of file \'%s\' exceeds the maximum supported size (4GB).", path);
 
     char* buf = MALLOC(size + 1, sizeof(char));
     file->src = buf;
@@ -151,7 +151,7 @@ FileId find_and_open_module_path(ObjModule* module)
         if(next_len + len + sizeof("/mod.si") > PATH_MAX) // Check to make sure the path can fit in the buffer.
         {
             path_one[len] = '\0';
-            sic_fatal_error("Length of search path exceeds maximum: \'%s\'", path_one);
+            sic_fatal_error("Length of search path exceeds the maximum: \'%s\'", path_one);
         }
         memcpy(path_one + len, stack.data[i]->header.sym, next_len);
         len += next_len;
