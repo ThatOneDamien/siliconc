@@ -43,7 +43,7 @@ enum Test6
 
 enum Test7 : uint
 {
-    A = -1, // #error: cannot be represented
+    A = -1, // #error: is not representable
 }
 
 enum Test8 : uint

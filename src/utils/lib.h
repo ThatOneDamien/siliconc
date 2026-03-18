@@ -103,7 +103,7 @@ Int128   i128_unsigned_from_double(double x);
 Int128   i128_signed_from_double(double x);
 Int128   int_max(TypeKind kind);
 Int128   int_min(TypeKind kind);
-bool     i128_fits(Int128 val, Type* optype, TypeKind totype);
+bool     i128_fits(Int128 val, TypeKind optype, TypeKind totype);
 static inline Int128 i128_from_s64(int64_t i) { return (Int128){ i < 0 ? UINT64_MAX : 0, (uint64_t)i }; }
 static inline Int128 i128_from_u64(uint64_t i) { return (Int128){ 0, i }; }
 

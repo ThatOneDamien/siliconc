@@ -463,10 +463,8 @@ Int128 int_min(TypeKind kind)
     }
 }
 
-bool i128_fits(Int128 val, Type* optype, TypeKind totype)
+bool i128_fits(Int128 val, TypeKind optype, TypeKind totype)
 {
-    // This should only be called for integer literals, not any integer.
-    DBG_ASSERT(type_is_int_literal(optype));
 	Int128 min;
 	Int128 max;
 	bool is_signed = false;
@@ -515,24 +513,24 @@ bool i128_fits(Int128 val, Type* optype, TypeKind totype)
     default:
         SIC_UNREACHABLE();
 	}
-	bool op_is_signed = optype == g_type_neg_int_lit;
+	bool op_is_signed = type_kind_is_signed(optype);
 	if (is_signed)
 	{
 		if (op_is_signed)
 		{
-			if (i128_scmp(val, min) == -1) return false;
-			if (i128_scmp(val, max) == 1) return false;
+			if (i128_scmp(val, min) < 0) return false;
+			if (i128_scmp(val, max) > 0) return false;
 			return true;
 		}
-		return i128_ucmp(val, max) != 1;
+		return i128_ucmp(val, max) <= 0;
 	}
 	if (op_is_signed)
 	{
 		if (i128_is_neg(val)) return false;
-		if (i128_ucmp(val, max) == 1) return false;
+		if (i128_ucmp(val, max) > 0) return false;
 		return true;
 	}
-	return i128_ucmp(val, max) != 1;
+	return i128_ucmp(val, max) <= 0;
 }
 
 Int128 i128_from_double(double x, TypeKind kind)

@@ -201,7 +201,7 @@ static bool rule_int_to_int(const CastParams* const params)
                 CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
             return true;
         }
-        if(!i128_fits(i, params->fromc, params->toc->kind))
+        if(!i128_fits(i, params->fromc->kind, params->toc->kind))
         {
             CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
         }

@@ -16,6 +16,12 @@ class StatusColor(Enum):
     FAIL = "31"
     INFO = "34"
 
+class DiagKind(Enum):
+    FATAL = "Fatal Error"
+    ERROR = "Error"
+    WARNING = "Warning"
+    NOTE = "Note"
+
 def color_str(s: str, color: StatusColor):
     if sys.stdout.isatty():
         return f'\033[{color.value}m{s}\033[0m'
@@ -23,7 +29,7 @@ def color_str(s: str, color: StatusColor):
 
 @dataclass(frozen=True)
 class ExpectedDiag:
-    is_error: bool
+    kind: DiagKind 
     message: str
     line_nr: int
 
@@ -39,9 +45,9 @@ class TestMeta:
         self.name = name
         self.expected = []
 
-    def find_diag(self, is_error: bool, message: str, line_nr: int):
+    def find_diag(self, kind: DiagKind, message: str, line_nr: int):
         for diag in self.expected:
-            if diag.is_error == is_error and diag.line_nr == line_nr and diag.message in message:
+            if diag.kind == kind and diag.line_nr == line_nr and diag.message in message:
                 self.expected.remove(diag)
                 return True
 
@@ -53,16 +59,20 @@ class TestMeta:
         i = 0
         while i < len(lines):
             line = lines[i].strip()
-            m = re.match(r'[^:]+:(\d+):\d+: (\w+): (.*)', line)
+            m = re.match(r'[^:]+:(\d+):\d+: ([^:]+): (.*)', line)
             if m:
                 line_nr = int(m.group(1))
                 kind = m.group(2).lower()
                 message = m.group(3)
                 success = True
+                if kind == 'fatal error':
+                    success = self.find_diag(kind=DiagKind.FATAL, message=message, line_nr=line_nr)
                 if kind == 'error':
-                    success = self.find_diag(is_error=True, message=message, line_nr=line_nr)
+                    success = self.find_diag(kind=DiagKind.ERROR, message=message, line_nr=line_nr)
                 elif kind == 'warning':
-                    success = self.find_diag(is_error=False, message=message, line_nr=line_nr)
+                    success = self.find_diag(kind=DiagKind.WARNING, message=message, line_nr=line_nr)
+                elif kind == 'note':
+                    self.find_diag(kind=DiagKind.NOTE, message=message, line_nr=line_nr)
 
                 if not success:
                     unexpected.append(line)
@@ -79,7 +89,7 @@ class TestMeta:
         if has_more_expected:
             print(color_str('    Diagnostics that were expected, but never occurred:', StatusColor.INFO))
             for diag in self.expected:
-                print(f'        {diag.line_nr}: {'Error' if diag.is_error else 'Warning'}: {diag.message}')
+                print(f'        {diag.line_nr}: {diag.kind.value}: {diag.message}')
         if has_unexpected:
             print(color_str('    Diagnostics that were unexcpected:', StatusColor.INFO))
             for l in unexpected:
@@ -151,16 +161,24 @@ def parse_test_file(test_path: str, test_root: str):
         i = 0
         while i < len(lines):
             line = lines[i].strip()
-            m = re.search(r'// #(\w+):\s+(\w.*)$', line)
+            m = re.search(r'// #([^:]+):\s+(\w.*)$', line)
             if m:
                 directive, message = m.groups()
-                if directive == 'error':
+                if directive == 'fatal error' or directive == 'fatal':
                     test.expected.append(
-                        ExpectedDiag(is_error=True, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
+                        ExpectedDiag(kind=DiagKind.FATAL, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
+                    )
+                elif directive == 'error':
+                    test.expected.append(
+                        ExpectedDiag(kind=DiagKind.ERROR, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
                     )
                 elif directive == 'warning':
                     test.expected.append(
-                        ExpectedDiag(is_error=False, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
+                        ExpectedDiag(kind=DiagKind.WARNING, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
+                    )
+                elif directive == 'note':
+                    test.expected.append(
+                        ExpectedDiag(kind=DiagKind.NOTE, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
                     )
             i += 1
 

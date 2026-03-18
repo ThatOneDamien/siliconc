@@ -5,3 +5,12 @@ const a = cast<SpecialInt>(1);
 const b = cast<OtherSpecial>(1);
 
 const c: SpecialInt = 1; // #error: requires an explicit cast
+
+enum distinct Test1
+{
+    A = 1,
+    B = A
+}
+
+const e = Test1.A;
+const f: int = Test1.A; // #error: requires an explicit cast

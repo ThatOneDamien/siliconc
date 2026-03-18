@@ -817,8 +817,15 @@ bool analyze_enum_value(ObjEnum* parent, uint32_t index)
             goto ERR;
         }
 
-        if(!enum_valid || !implicit_cast(value_expr, underlying)) goto ERR;
-        value->const_value = value->raw_value->expr.constant.i;
+        if(!enum_valid) goto ERR;
+        TypeKind from_kind = type_reduce(value_expr->type)->kind;
+        value->const_value = value_expr->expr.constant.i;
+        if(!i128_fits(value->const_value, from_kind, underlying->kind))
+        {
+            sic_error_at(value->header.loc, "Enum value(%s) is not representable by underlying type.",
+                         i128_to_string(value->const_value, type_kind_is_signed(from_kind)));
+            goto ERR;
+        }
     }
     else
     {
