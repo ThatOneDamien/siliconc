@@ -34,7 +34,7 @@ extern Type* const g_type_init_list;
 extern Type* const g_type_pos_int_lit;
 extern Type* const g_type_neg_int_lit;
 extern Type* const g_type_str_lit;
-extern Type* const g_type_auto;
+extern Type* const g_type_range;
 
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;

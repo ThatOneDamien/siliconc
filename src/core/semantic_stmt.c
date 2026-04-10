@@ -172,22 +172,60 @@ static void analyze_expr_stmt(ASTStmt* stmt)
 
 static void analyze_for(ASTStmt* stmt)
 {
-    SIC_TODO();
-    ASTFor* for_stmt = &stmt->stmt.for_;
+    ObjVar* loop_var = stmt->stmt.for_.loop_var;
+    ASTExpr* collection = stmt->stmt.for_.collection;
+    SymbolLoc label = stmt->stmt.for_.label;
     uint32_t scope = push_scope();
-    analyze_declaration(for_stmt->loop_var);
-    push_obj(&for_stmt->loop_var->header);
-    analyze_expr(for_stmt->collection);
+    push_obj(&loop_var->header);
+    if(analyze_rvalue(collection))
+    {
+        // TODO: Change this to be generic when ranges are implemented properly.
+        Type* ty = collection->type;
+    RETRY:
+        switch(ty->kind)
+        {
+        case TYPE_POINTER_MULTI:
+            if(ty->pointer.static_len == 0)
+            {
+                sic_error_at(collection->loc, "Cannot loop over multi-pointer type '%s' because it has unknown length.", type_to_string(collection->type));
+                break;
+            }
+            ty = ty->pointer.base;
+            break;
+        case TYPE_STATIC_ARRAY:
+            ty = ty->array.elem_type;
+            break;
+        case TYPE_SLICE:
+            ty = ty->slice.base;
+            break;
+        case TYPE_ALIAS:
+            ty = ty->canonical;
+            goto RETRY;
+        case TYPE_STRUCT:
+            if(ty == g_type_range)
+            {
+                ty = g_type_usize;
+                break;
+            }
+            FALLTHROUGH;
+        default:
+            sic_error_at(collection->loc, "For loop cannot loop over non-collection type '%s'.", type_to_string(collection->type));
+            break;
+        }
+        loop_var->type_loc.type = type_apply_qualifiers(ty, TYPE_QUAL_CONST);
+    }
+    else
+        invalidate_obj(&loop_var->header);
 
     ASTStmt* prev_break = g_sema.break_target;
     ASTStmt* prev_continue = g_sema.continue_target;
     g_sema.break_target = stmt;
     g_sema.continue_target = stmt;
-    push_labeled_stmt(stmt, for_stmt->label);
+    push_labeled_stmt(stmt, label);
 
-    analyze_stmt(for_stmt->body);
+    analyze_stmt(stmt->stmt.for_.body);
     
-    pop_labeled_stmt(stmt, for_stmt->label);
+    pop_labeled_stmt(stmt, label);
     g_sema.break_target = prev_break;
     g_sema.continue_target = prev_continue;
     pop_scope(scope);

@@ -13,7 +13,7 @@ typedef struct
 
 typedef enum
 {
-    FLAG_HELP,
+    FLAG_HELP = 0,
     FLAG_OPTIMIZE,
     FLAG_EMIT,
     FLAG_OUT_NAME,

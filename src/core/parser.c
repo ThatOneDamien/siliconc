@@ -458,7 +458,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
         p->header.kind = OBJ_VAR;
         p->header.visibility = VIS_PUBLIC;
         p->kind = VAR_PARAM;
-        p->binding_kind = VAR_BINDING_RT_CONST;
+        p->binding_kind = VAR_BINDING_MUTABLE;
 
         if(peek(l)->kind == TOKEN_UNDERSCORE && peek_next(l)->kind == TOKEN_COLON)
         {
@@ -970,9 +970,6 @@ static ASTStmt* parse_for(Lexer* l)
     ASTFor* for_stmt = &stmt->stmt.for_;
     advance(l);
 
-    TypeLoc type_loc;
-
-    if(!parse_type(l, &type_loc)) return BAD_STMT;
     EXPECT_IDENT_OR_RET(BAD_STMT);
 
     ObjVar* var = for_stmt->loop_var = CALLOC_STRUCT(ObjVar);
@@ -981,7 +978,7 @@ static ASTStmt* parse_for(Lexer* l)
     var->header.visibility = VIS_PUBLIC;
     var->header.kind = OBJ_VAR;
     var->kind = VAR_LOCAL;
-    var->type_loc = type_loc;
+    var->binding_kind = VAR_BINDING_RT_CONST;
     advance(l);
 
     CONSUME_OR_RET(TOKEN_IN, BAD_STMT);
@@ -1370,10 +1367,11 @@ static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
     ASTExprRange* range = &expr->expr.range;
     range->from = from;
     advance(l);
-    range->inclusive = try_consume(l, TOKEN_ASSIGN);
+    // range->inclusive = try_consume(l, TOKEN_ASSIGN);
     range->to = parse_expr_with_prec(l, PREC_CONDITIONAL, NULL);
     if(expr_is_bad(range->to)) return BAD_EXPR;
     expr->loc = extend_loc(from->loc, range->to->loc);
+    expr->type = g_type_range;
     return expr;
 }
 

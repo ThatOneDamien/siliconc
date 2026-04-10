@@ -76,6 +76,20 @@ static Type s_void = {
 TYPE_DEF(s_voidptr    , TYPE_POINTER_SINGLE, .pointer.base = &s_void);
 TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
 TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
+static Type s_range;
+static ObjStruct s_range_obj = {
+    .header = {
+        .kind = OBJ_STRUCT,
+        .visibility = VIS_PUBLIC,
+        .status = STATUS_RESOLVED,
+        .sym = "Range",
+    },
+    .type_ref = &s_range,
+};
+
+static ObjVar s_range_start_member;
+static ObjVar s_range_end_member;
+TYPE_DEF(s_range, TYPE_STRUCT, .user_def = &s_range_obj.header);
 
 ALIAS_TYPE_DEF(s_iptr , s_iptr_obj);
 ALIAS_TYPE_DEF(s_uptr , s_uptr_obj);
@@ -106,6 +120,7 @@ Type* const g_type_iptr        = &s_iptr;
 Type* const g_type_uptr        = &s_uptr;
 Type* const g_type_isize       = &s_isize;
 Type* const g_type_usize       = &s_usize;
+Type* const g_type_range       = &s_range;
 
 Type* const g_type_init_list   = &s_init_list;
 Type* const g_type_pos_int_lit = &s_pos_int_lit;
@@ -142,20 +157,54 @@ void builtin_type_init()
     //       For right now I am not doing proper platform detection, so they will always
     //       be the same size.
     s_iptr_obj.header.sym  = tok_kind_to_str(TOKEN_IPTR);
-    s_iptr_obj.alias.type     = &s_long;
-    s_iptr.canonical          = &s_long;
+    s_iptr_obj.alias.type  = &s_long;
+    s_iptr.canonical       = &s_long;
 
     s_uptr_obj.header.sym  = tok_kind_to_str(TOKEN_UPTR);
-    s_uptr_obj.alias.type     = &s_ulong;
-    s_uptr.canonical          = &s_ulong;
+    s_uptr_obj.alias.type  = &s_ulong;
+    s_uptr.canonical       = &s_ulong;
 
     s_isize_obj.header.sym = tok_kind_to_str(TOKEN_ISIZE);
-    s_isize_obj.alias.type    = &s_long;
-    s_isize.canonical         = &s_long;
+    s_isize_obj.alias.type = &s_long;
+    s_isize.canonical      = &s_long;
 
     s_usize_obj.header.sym = tok_kind_to_str(TOKEN_USIZE);
-    s_usize_obj.alias.type    = &s_ulong;
-    s_usize.canonical         = &s_ulong;
+    s_usize_obj.alias.type = &s_ulong;
+    s_usize.canonical      = &s_ulong;
+    
+    s_range_obj.members.capacity = 2;
+    s_range_obj.members.size = 2;
+    s_range_obj.members.data = MALLOC_STRUCTS(ObjVar*, 2);
+
+    s_range_obj.members.data[0] = &s_range_start_member;
+    s_range_obj.members.data[1] = &s_range_end_member;
+    s_range_obj.size = type_size(g_type_usize) * 2;
+    s_range_obj.align = type_alignment(g_type_usize);
+
+    TokenKind temp = TOKEN_IDENT;
+    s_range_start_member = (ObjVar) {
+        .header = {
+            .kind = OBJ_VAR,
+            .status = STATUS_RESOLVED,
+            .visibility = VIS_PUBLIC,
+            .sym = sym_map_add("start", &temp),
+        },
+        .kind = VAR_MEMBER,
+        .binding_kind = VAR_BINDING_MUTABLE,
+        .type_loc.type = g_type_usize,
+    };
+
+    s_range_end_member = (ObjVar) {
+        .header = {
+            .kind = OBJ_VAR,
+            .status = STATUS_RESOLVED,
+            .visibility = VIS_PUBLIC,
+            .sym = sym_map_add("end", &temp),
+        },
+        .kind = VAR_MEMBER,
+        .binding_kind = VAR_BINDING_MUTABLE,
+        .type_loc.type = g_type_usize,
+    };
 }
 
 Type* type_from_token(TokenKind type_token)

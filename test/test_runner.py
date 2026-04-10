@@ -57,8 +57,9 @@ class TestMeta:
         lines = proc_res.stderr.splitlines()
         unexpected: list[str] = []
         i = 0
+        prev_success = True
         while i < len(lines):
-            line = lines[i].strip()
+            line = lines[i]
             m = re.match(r'[^:]+:(\d+):\d+: ([^:]+): (.*)', line)
             if m:
                 line_nr = int(m.group(1))
@@ -74,8 +75,12 @@ class TestMeta:
                 elif kind == 'note':
                     self.find_diag(kind=DiagKind.NOTE, message=message, line_nr=line_nr)
 
+                prev_success = success
                 if not success:
                     unexpected.append(line)
+            elif not prev_success:
+                unexpected.append(line)
+
             i += 1
 
         has_more_expected = len(self.expected) > 0

@@ -81,6 +81,7 @@ static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, Gen
 static void     store_default(CodegenContext* c, GenValue* ptr);
 
 static inline void       emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* value);
+static inline void       emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* value);
 static LLVMValueRef      emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
@@ -116,9 +117,9 @@ void llvm_initialize()
     LLVMInitializeX86TargetInfo();
     LLVMInitializeX86Target();
     LLVMInitializeX86TargetMC();
-    LLVMContextSetDiagnosticHandler(LLVMGetGlobalContext(), llvm_diag_handler, NULL);
+    s_context = LLVMContextCreate();
+    LLVMContextSetDiagnosticHandler(s_context, llvm_diag_handler, NULL);
     s_initialized = true;
-    s_context = LLVMGetGlobalContext();
 }
 
 void llvm_codegen()
@@ -127,10 +128,10 @@ void llvm_codegen()
     DBG_ASSERT(g_compiler.sources.size > 0);
 
     CodegenContext c = {0};
-    c.ptr_type = LLVMPointerType(LLVMInt8Type(), 0);
+    c.ptr_type = LLVMPointerType(LLVMInt8TypeInContext(s_context), 0);
     LLVMTypeRef slice_types[2] = { c.ptr_type, get_llvm_type(&c, g_type_usize)};
-    c.slice_type = LLVMStructType(slice_types, 2, false);
-    c.builder = LLVMCreateBuilder();
+    c.slice_type = LLVMStructTypeInContext(s_context, slice_types, 2, false);
+    c.builder = LLVMCreateBuilderInContext(s_context);
 
     // LARGE TODO: Add support for incremental builds. Because this is
     //             done extremely naively at the moment, I am putting all
@@ -269,11 +270,11 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
         return;
     c->cur_func = func;
     append_old_basic_block(c, create_basic_block(""));
-    c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32Type(), ".alloca_ptr");
+    c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32TypeInContext(s_context), ".alloca_ptr");
     if(func->swap_stmt_size > 0)
     {
         c->swap_ref = emit_llvm_alloca(c, ".swap_space", 
-                                       LLVMArrayType2(LLVMInt8Type(), func->swap_stmt_size), 
+                                       LLVMArrayType2(LLVMInt8TypeInContext(s_context), func->swap_stmt_size), 
                                        func->swap_stmt_align);
     }
     
@@ -446,48 +447,105 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
     }
 }
 
-static void emit_for(UNUSED CodegenContext* c, UNUSED ASTStmt* stmt)
+static void emit_for(CodegenContext* c, ASTStmt* stmt)
 {
-    SIC_TODO();
-//     ASTFor* for_stmt = &stmt->stmt.for_;
-//
-//     LLVMBasicBlockRef exit_block = create_basic_block(".for_exit");
-//     LLVMBasicBlockRef body_block = create_basic_block(".for_body");
-//     LLVMBasicBlockRef cond_block = body_block;
-//     LLVMBasicBlockRef loop_block;
-//     if(!stmt_empty(for_stmt->init_stmt))
-//         emit_stmt(c, for_stmt->init_stmt);
-//
-//     if(for_stmt->cond_expr != NULL)
-//     {
-//         cond_block = append_new_basic_block(c, ".for_cond");
-//         GenValue cond = emit_expr(c, for_stmt->cond_expr);
-//         load_rvalue(c, &cond);
-//         LLVMBuildCondBr(c->builder, cond.value, body_block, exit_block);
-//     }
-//     else
-//         emit_br(c, body_block);
-//
-//     loop_block = for_stmt->loop_expr == NULL ? cond_block : create_basic_block(".for_loop");
-//     
-//     LLVMBasicBlockRef prev_break = c->last_break_block;
-//     LLVMBasicBlockRef prev_cont = c->last_continue_block;
-//     c->last_break_block = exit_block;
-//     c->last_continue_block = loop_block;
-//     append_old_basic_block(c, body_block);
-//     emit_stmt(c, for_stmt->body);
-//     emit_br(c, loop_block);
-//     c->last_break_block = prev_break;
-//     c->last_continue_block = prev_cont;
-//     
-//     if(for_stmt->loop_expr != NULL)
-//     {
-//         append_old_basic_block(c, loop_block); 
-//         emit_expr(c, for_stmt->loop_expr);
-//     }
-//
-//     emit_br(c, cond_block);
-//     append_old_basic_block(c, exit_block);
+    ASTFor* for_stmt = &stmt->stmt.for_;
+
+    LLVMBasicBlockRef cond_block = create_basic_block(".for_cond");
+    LLVMBasicBlockRef body_block = create_basic_block(".for_body");
+    LLVMBasicBlockRef loop_block = create_basic_block(".for_loop");
+    LLVMBasicBlockRef exit_block = create_basic_block(".for_exit");
+
+    emit_var_alloca(c, for_stmt->loop_var);
+    Type* ty = stmt->stmt.for_.collection->type;
+    LLVMValueRef for_index;
+    LLVMTypeRef usize_ref = get_llvm_type(c, g_type_usize);
+    ByteSize usize_align = type_alignment(g_type_usize);
+    // TODO: This is also something that needs to be fixed once range is fully implemented.
+    //       I assume usize as the underlying type of the range.
+
+
+    // Second TODO: Clean this up. This is extremely messy and doesn't reuse code well. I just
+    //              wanted to get some basic functionality working but this definitely needs to be
+    //              better.
+RETRY:
+    switch(ty->kind)
+    {
+    case TYPE_POINTER_MULTI: {
+        SIC_TODO();
+        // for_index = emit_llvm_alloca(c, ".for_index", usize_ref, usize_align);
+        // emit_llvm_store(c, LLVMConstInt(usize_ref, 0, false), for_index, usize_align);
+        // use_basic_block(c, cond_block);
+        // LLVMValueRef i = emit_llvm_load(c, usize_ref, for_index, usize_align);
+        // LLVMBuildCondBr(c->builder, 
+        //                 LLVMBuildICmp(c->builder, LLVMIntULT, i, LLVMConstInt(usize_ref, ty->pointer.static_len, false), ""),
+        //                 body_block,
+        //                 exit_block);
+        // use_basic_block(c, body_block);
+        // emit_llvm_load
+        // use_basic_block(c, loop_block)
+        break;
+    }
+    case TYPE_STATIC_ARRAY: {
+        for_index = emit_llvm_alloca(c, ".for_index", usize_ref, usize_align);
+        emit_llvm_store(c, LLVMConstInt(usize_ref, 0, false), for_index, usize_align);
+        GenValue arr = emit_expr(c, for_stmt->collection);
+        emit_br(c, cond_block);
+        append_old_basic_block(c, cond_block);
+        LLVMValueRef i = emit_llvm_load(c, usize_ref, for_index, usize_align);
+        LLVMBuildCondBr(c->builder, 
+                        LLVMBuildICmp(c->builder, LLVMIntULT, i, LLVMConstInt(usize_ref, ty->array.static_len, false), ""),
+                        body_block,
+                        exit_block);
+        append_old_basic_block(c, body_block);
+        emit_llvm_store(c, emit_llvm_load(c, get_llvm_type(c, ty->array.elem_type), LLVMBuildGEP2(c->builder, get_llvm_type(c, ty->array.elem_type), arr.value, &i, 1, ""), type_alignment(ty->array.elem_type)), 
+                        for_stmt->loop_var->header.llvm_ref, 
+                        type_alignment(ty->array.elem_type));
+        for_stmt->backend.break_block = exit_block;
+        for_stmt->backend.continue_block = loop_block;
+        emit_stmt(c, for_stmt->body);
+        emit_br(c, loop_block);
+        append_old_basic_block(c, loop_block);
+        // TODO: Change this to allow doing increments other than 1.
+        emit_llvm_store(c, LLVMBuildAdd(c->builder, i, LLVMConstInt(usize_ref, 1, false), ""), for_index, usize_align);
+        emit_br(c, cond_block);
+        append_old_basic_block(c, exit_block);
+        break;
+    }
+    case TYPE_SLICE:
+        SIC_TODO();
+        break;
+    case TYPE_ALIAS:
+        ty = ty->canonical;
+        goto RETRY;
+    case TYPE_STRUCT: {
+        DBG_ASSERT(ty == g_type_range);
+        for_index = for_stmt->loop_var->header.llvm_ref;
+        GenValue range = emit_rvalue(c, for_stmt->collection);
+        emit_llvm_store(c, LLVMBuildExtractValue(c->builder, range.value, 0, ""), for_index, usize_align);
+        LLVMValueRef end = LLVMBuildExtractValue(c->builder, range.value, 1, "");
+        emit_br(c, cond_block);
+        append_old_basic_block(c, cond_block);
+        LLVMValueRef i = emit_llvm_load(c, usize_ref, for_index, usize_align);
+        LLVMBuildCondBr(c->builder, 
+                        LLVMBuildICmp(c->builder, LLVMIntULT, i, end, ""),
+                        body_block,
+                        exit_block);
+        append_old_basic_block(c, body_block);
+        for_stmt->backend.break_block = exit_block;
+        for_stmt->backend.continue_block = loop_block;
+        emit_stmt(c, for_stmt->body);
+        emit_br(c, loop_block);
+        append_old_basic_block(c, loop_block);
+        // TODO: Change this to allow doing increments other than 1.
+        emit_llvm_store(c, LLVMBuildAdd(c->builder, i, LLVMConstInt(usize_ref, 1, false), ""), for_index, usize_align);
+        emit_br(c, cond_block);
+        append_old_basic_block(c, exit_block);
+        break;
+    }
+    default:
+        SIC_UNREACHABLE();
+    }
 }
 
 static void emit_if(CodegenContext* c, ASTStmt* stmt)
@@ -540,7 +598,7 @@ static void emit_swap(CodegenContext* c, ASTStmt* stmt)
     }
 
     DBG_ASSERT(c->swap_ref != NULL);
-    LLVMValueRef size = LLVMConstInt(LLVMInt64Type(), type_size(lhs.type), false);
+    LLVMValueRef size = LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(lhs.type), false);
     LLVMBuildMemCpy(c->builder, c->swap_ref, c->cur_func->swap_stmt_align, lhs.value, lhs.alignment, size);
     LLVMBuildMemCpy(c->builder, lhs.value, lhs.alignment, rhs.value, rhs.alignment, size);
     LLVMBuildMemCpy(c->builder, rhs.value, rhs.alignment, c->swap_ref, c->cur_func->swap_stmt_align, size);
@@ -662,7 +720,11 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         break;
     }
     case EXPR_RANGE:
-        SIC_TODO();
+        result.value = LLVMGetUndef(get_llvm_type(c, result.type));
+        result.value = LLVMBuildInsertValue(c->builder, result.value, emit_rvalue(c, expr->expr.range.from).value, 0, "");
+        result.value = LLVMBuildInsertValue(c->builder, result.value, emit_rvalue(c, expr->expr.range.to).value, 1, "");
+        result.kind = GEN_VAL_RVALUE;
+        break;
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
     case EXPR_TUPLE:
@@ -716,7 +778,7 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
         LLVMBuildMemCpy(c->builder, 
                         lhs->value, lhs->alignment,
                         global, type_alignment(right->type), 
-                        LLVMConstInt(LLVMInt64Type(), type_size(right->type), false));
+                        LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(right->type), false));
         result->value = global;
         return;
     }
@@ -982,7 +1044,7 @@ static void emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result)
     case CONSTANT_INVALID:
         break;
     case CONSTANT_BOOL:
-        result->value = LLVMConstInt(LLVMInt1Type(), constant->b, false);
+        result->value = LLVMConstInt(LLVMInt1TypeInContext(s_context), constant->b, false);
         return;
     case CONSTANT_FLOAT:
         result->value = LLVMConstReal(get_llvm_type(c, expr->type), constant->f);
@@ -1016,11 +1078,11 @@ static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_le
     {
     case TYPE_CHAR: {
         if((desired_len - str.len) <= 1)
-            return LLVMConstString(str.val, str.len, desired_len == str.len);
+            return LLVMConstStringInContext2(s_context, str.val, str.len, desired_len == str.len);
         char* s = MALLOC(desired_len, sizeof(char));
         memcpy(s, str.val, str.len);
         memset(s + str.len, 0, desired_len - str.len);
-        LLVMValueRef res = LLVMConstString(s, desired_len, true);
+        LLVMValueRef res = LLVMConstStringInContext2(s_context, s, desired_len, true);
         FREE(s, desired_len);
         return res;
     }
@@ -1029,11 +1091,11 @@ static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_le
         uint16_t* s = (uint16_t*)str.val;
 
         for(uint32_t i = 0; i < str.len; ++i)
-            values[i] = LLVMConstInt(LLVMInt16Type(), s[i], false);
+            values[i] = LLVMConstInt(LLVMInt16TypeInContext(s_context), s[i], false);
         for(uint32_t i = str.len; i < desired_len; ++i)
-            values[i] = LLVMConstNull(LLVMInt16Type());
+            values[i] = LLVMConstNull(LLVMInt16TypeInContext(s_context));
 
-        LLVMValueRef res = LLVMConstArray2(LLVMInt16Type(), values, desired_len);
+        LLVMValueRef res = LLVMConstArray2(LLVMInt16TypeInContext(s_context), values, desired_len);
         FREE(values, desired_len * sizeof(LLVMValueRef));
         return res;
     }
@@ -1042,11 +1104,11 @@ static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_le
         uint32_t* s = (uint32_t*)str.val;
 
         for(uint32_t i = 0; i < str.len; ++i)
-            values[i] = LLVMConstInt(LLVMInt32Type(), s[i], false);
+            values[i] = LLVMConstInt(LLVMInt32TypeInContext(s_context), s[i], false);
         for(uint32_t i = str.len; i < desired_len; ++i)
-            values[i] = LLVMConstNull(LLVMInt32Type());
+            values[i] = LLVMConstNull(LLVMInt32TypeInContext(s_context));
 
-        LLVMValueRef res = LLVMConstArray2(LLVMInt32Type(), values, desired_len);
+        LLVMValueRef res = LLVMConstArray2(LLVMInt32TypeInContext(s_context), values, desired_len);
         FREE(values, desired_len * sizeof(LLVMValueRef));
         return res;
     }
@@ -1150,9 +1212,9 @@ static void emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* resu
 
 static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or)
 {
-    LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlock(c->cur_func->header.llvm_ref, ".log_rhs");
+    LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, ".log_rhs");
     LLVMBasicBlockRef blocks[2] = { c->cur_block, rhs_bb };
-    LLVMBasicBlockRef exit_bb = LLVMAppendBasicBlock(c->cur_func->header.llvm_ref, ".log_exit");
+    LLVMBasicBlockRef exit_bb = LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, ".log_exit");
     LLVMBasicBlockRef true_bb;
     LLVMBasicBlockRef false_bb;
     int exit_early_val;
@@ -1170,18 +1232,18 @@ static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, G
         exit_early_val = 0;
     }
 
-    lhs->value = LLVMBuildTrunc(c->builder, lhs->value, LLVMInt1Type(), "");
+    lhs->value = LLVMBuildTrunc(c->builder, lhs->value, LLVMInt1TypeInContext(s_context), "");
     LLVMBuildCondBr(c->builder, lhs->value, true_bb, false_bb);
     LLVMPositionBuilderAtEnd(c->builder, rhs_bb);
     c->cur_block = rhs_bb;
     GenValue rhs_val = emit_rvalue(c, rhs);
-    rhs_val.value = LLVMBuildTrunc(c->builder, rhs_val.value, LLVMInt1Type(), "");
+    rhs_val.value = LLVMBuildTrunc(c->builder, rhs_val.value, LLVMInt1TypeInContext(s_context), "");
     emit_br(c, exit_bb);
     LLVMPositionBuilderAtEnd(c->builder, exit_bb);
     c->cur_block = exit_bb;
-    result->value = LLVMBuildPhi(c->builder, LLVMInt1Type(), "");
+    result->value = LLVMBuildPhi(c->builder, LLVMInt1TypeInContext(s_context), "");
 
-    LLVMValueRef values[2] = { LLVMConstInt(LLVMInt1Type(), exit_early_val, false), rhs_val.value };
+    LLVMValueRef values[2] = { LLVMConstInt(LLVMInt1TypeInContext(s_context), exit_early_val, false), rhs_val.value };
     result->type = g_type_bool;
     LLVMAddIncoming(result->value, values, blocks, 2);
 }
@@ -1308,8 +1370,8 @@ static void store_default(CodegenContext* c, GenValue* ptr)
     case TYPE_UNION:
     case TYPE_SLICE:
         LLVMBuildMemSet(c->builder, ptr->value, 
-                        LLVMConstInt(LLVMInt8Type(), 0, false), 
-                        LLVMConstInt(LLVMInt64Type(), type_size(ptr->type), false), 
+                        LLVMConstInt(LLVMInt8TypeInContext(s_context), 0, false), 
+                        LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(ptr->type), false), 
                         type_alignment(ptr->type));
         break;
     case TYPE_INVALID:
@@ -1335,13 +1397,30 @@ static inline void emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* 
             LLVMBuildMemCpy(c->builder, 
                             ptr->value, ptr->alignment, 
                             value->value, value->alignment, 
-                            LLVMConstInt(LLVMInt64Type(), type_size(value->type), false));
+                            LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(value->type), false));
             return;
         }
     }
 
     emit_llvm_store(c, value->value, ptr->value, ptr->alignment);
 
+}
+
+static inline void UNUSED emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* value)
+{
+    DBG_ASSERT(struct_->type->kind == TYPE_STRUCT);
+    Type* member_ty = obj_as_struct(struct_->type->user_def)->members.data[member_idx]->type_loc.type;
+    value->kind = GEN_VAL_RVALUE;
+    if(struct_->kind == GEN_VAL_ADDRESS)
+    {
+        value->value = emit_llvm_load(c, get_llvm_type(c, member_ty),
+                                      LLVMBuildStructGEP2(c->builder, get_llvm_type(c, struct_->type), struct_->value, member_idx, ""),
+                                      struct_->alignment);
+    }
+    else
+    {
+        value->value = LLVMBuildExtractValue(c->builder, struct_->value, member_idx, "");
+    }
 }
 
 static inline LLVMValueRef emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment)
@@ -1382,7 +1461,7 @@ static LLVMBasicBlockRef create_basic_block(const char* label)
 
 static LLVMBasicBlockRef append_new_basic_block(CodegenContext* c, const char* label)
 {
-    LLVMBasicBlockRef res = LLVMAppendBasicBlock(c->cur_func->header.llvm_ref, label);
+    LLVMBasicBlockRef res = LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, label);
     emit_br(c, res);
     LLVMPositionBuilderAtEnd(c->builder, res);
     return c->cur_block = res;
@@ -1457,30 +1536,30 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     switch(type->kind)
     {
     case TYPE_VOID:
-        return type->llvm_ref = LLVMVoidType();
+        return type->llvm_ref = LLVMVoidTypeInContext(s_context);
     case TYPE_BOOL:
     case TYPE_CHAR:
     case TYPE_BYTE:
     case TYPE_UBYTE:
-        return type->llvm_ref = LLVMInt8Type();
+        return type->llvm_ref = LLVMInt8TypeInContext(s_context);
     case TYPE_CHAR16:
     case TYPE_SHORT:
     case TYPE_USHORT:
-        return type->llvm_ref = LLVMInt16Type();
+        return type->llvm_ref = LLVMInt16TypeInContext(s_context);
     case TYPE_CHAR32:
     case TYPE_INT:
     case TYPE_UINT:
-        return type->llvm_ref = LLVMInt32Type();
+        return type->llvm_ref = LLVMInt32TypeInContext(s_context);
     case TYPE_LONG:
     case TYPE_ULONG:
-        return type->llvm_ref = LLVMInt64Type();
+        return type->llvm_ref = LLVMInt64TypeInContext(s_context);
     case TYPE_INT128:
     case TYPE_UINT128:
-        return type->llvm_ref = LLVMInt128Type();
+        return type->llvm_ref = LLVMInt128TypeInContext(s_context);
     case TYPE_FLOAT:
-        return type->llvm_ref = LLVMFloatType();
+        return type->llvm_ref = LLVMFloatTypeInContext(s_context);
     case TYPE_DOUBLE:
-        return type->llvm_ref = LLVMDoubleType();
+        return type->llvm_ref = LLVMDoubleTypeInContext(s_context);
     case TYPE_POINTER_SINGLE:
     case TYPE_POINTER_MULTI:
     case TYPE_FUNC_PTR:
@@ -1575,7 +1654,7 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     {
     case TYPE_BOOL:
         ptr->value = emit_llvm_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment); 
-        ptr->value = LLVMBuildTrunc(c->builder, ptr->value, LLVMInt1Type(), "");
+        ptr->value = LLVMBuildTrunc(c->builder, ptr->value, LLVMInt1TypeInContext(s_context), "");
         return;
     case TYPE_CHAR:
     case TYPE_CHAR16:

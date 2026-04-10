@@ -14,6 +14,7 @@ static bool analyze_binary(ASTExpr* expr);
 static bool analyze_call(ASTExpr* expr);
 static bool analyze_conditional(ASTExpr* expr);
 static bool analyze_ident(ASTExpr* expr);
+static bool analyze_range(ASTExpr* expr);
 static bool analyze_struct_init_list(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
@@ -104,7 +105,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
     case EXPR_RANGE:
-        SIC_TODO();
+        return analyze_range(expr);
     case EXPR_STRUCT_INIT_LIST:
         return analyze_struct_init_list(expr);
     case EXPR_TUPLE:
@@ -163,7 +164,6 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
         return false;
     case EXPR_MEMBER_ACCESS:
         return analyze_rvalue_dispatch(expr->expr.member_access.parent_expr, mutate);
-    case EXPR_RANGE:
     case EXPR_TUPLE:
         SIC_TODO();
     case EXPR_TYPE_IDENT:
@@ -178,6 +178,7 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_CONSTANT:
     case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
+    case EXPR_RANGE:
     case EXPR_STRUCT_INIT_LIST:
     case EXPR_UNARY:
     case EXPR_ZEROED_OUT:
@@ -307,8 +308,7 @@ static bool analyze_array_access(ASTExpr* expr)
 {
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     ASTExpr* index_expr = expr->expr.array_access.index_expr;
-    bool valid;
-    valid = analyze_expr(arr_expr);
+    bool valid = analyze_expr(arr_expr);
     valid &= implicit_cast(index_expr, g_type_usize);
     if(!valid) return false;
     Type* arr_type = type_reduce(arr_expr->type);
@@ -644,6 +644,24 @@ static bool analyze_ident(ASTExpr* expr)
         break;
     }
     SIC_UNREACHABLE();
+}
+
+static bool analyze_range(ASTExpr* expr)
+{
+    ASTExpr* from = expr->expr.range.from;
+    ASTExpr* to = expr->expr.range.to;
+    bool valid = implicit_cast(from, g_type_usize);
+    valid &= implicit_cast(to, g_type_usize);
+    if(!valid) return false;
+    if(from->kind == EXPR_CONSTANT && to->kind == EXPR_CONSTANT)
+    {
+        if(i128_ucmp(from->expr.constant.i, to->expr.constant.i) >= 0)
+        {
+            sic_diagnostic_at(DIAG_WARNING, expr->loc, "Range always has a length of 0.");
+        }
+    }
+    expr->is_const_eval = from->is_const_eval & to->is_const_eval;
+    return true;
 }
 
 static bool analyze_struct_init_list(ASTExpr* expr)

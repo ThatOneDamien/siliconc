@@ -1,0 +1,4 @@
+fn test() void 
+{
+    const _a: []int;
+}

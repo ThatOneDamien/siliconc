@@ -1,0 +1,14 @@
+fn test1() void {}
+
+fn test2) void {} // #error: Expected '('
+
+// Keep in mind that this 'a' is treated as a type, not a parameter name
+fn test3(a) void {} // #error: Expected parameter name
+
+fn test4() {} // #error: Expected typename
+
+fn test5() void } // #error: Expected '{'
+
+fn () void {} // #error: Expected identifier
+
+fn test7() void { // #error: Encountered end-of-file

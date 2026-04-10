@@ -4,20 +4,17 @@ struct TestStruct
     b: float,
 }
 
-fn test1() void
+fn test() void
 {
     var _a: int = 0;
     const _b: *int = &_a;
-}
+    const _c: *int = &(0); // #error: Expression is not an lvalue 
+    
+    var _d: TestStruct;
+    const _e: *int = &_d.a;
+    const _f: *float = &_d.b;
 
-fn test2() void
-{
-    const _a: *int = &(0); // #error: Expression is not an lvalue 
-}
-
-fn test3() void
-{
-    var _a: TestStruct;
-    const _b: *int = &_a.a;
-    const _c: *float = &_a.b;
+    const _g: int = 1;
+    const _h: *int = &_g; // #error: disregards 'const' qualifier
+    const _i: *const int = &_g;
 }

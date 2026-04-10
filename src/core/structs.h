@@ -458,7 +458,7 @@ struct ASTExprRange
 {
     ASTExpr* from;
     ASTExpr* to;
-    bool     inclusive;
+    // bool     inclusive;
 };
 
 struct ASTExprUnary

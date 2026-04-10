@@ -20,12 +20,14 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
 - More test cases
 - Ranges/For loops
 - Slice arithmetic
+- Adding bitfields (data type)
 - Defer statements
-- Generics
-- Macros/constant-eval functions
 - Interfaces?
-- Add support for float80/float128 (refactoring)
 - Build system
+- std library
+- Macros/constant-eval functions
+- Generics
+- Add support for float80/float128 (refactoring)
 - Self hosting
 - Optimization of compiler memory usage
 - Update README
