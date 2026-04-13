@@ -137,6 +137,7 @@ typedef enum : uint8_t
     EXPR_FUNC_CALL,
     EXPR_FUNCTION,
     EXPR_MEMBER_ACCESS,
+    EXPR_MEMBER_BUILTIN,
     EXPR_METHOD,
     EXPR_POINTER_OFFSET,
     EXPR_POSTFIX,
@@ -442,9 +443,12 @@ typedef enum : uint8_t
     TYPE_FLOAT_END      = TYPE_DOUBLE,
     TYPE_NUMERIC_END    = TYPE_DOUBLE,
 
-    TYPE_POINTER_SINGLE,
-    TYPE_POINTER_MULTI,
+    TYPE_POINTER_SINGLE,        // *T     - Pointer to 1 T object.
+    TYPE_POINTERS_START = TYPE_POINTER_SINGLE,
+    TYPE_POINTER_MULTI_STATIC,  // *[N]T  - Pointer to N T objects.
+    TYPE_POINTER_MULTI_UNKNOWN, // *[*]T  - Pointer to an unknown number of T objects.
     TYPE_FUNC_PTR,
+    TYPE_POINTERS_END = TYPE_FUNC_PTR,
     TYPE_STATIC_ARRAY,
     TYPE_INFERRED_ARRAY,
     TYPE_SLICE,

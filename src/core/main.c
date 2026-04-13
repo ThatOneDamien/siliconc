@@ -76,7 +76,7 @@ int main(int argc, char* argv[])
     resolve_dependency_paths(&crt_path, &gcc_path);
 
     StringDA cmd;
-    da_init(&cmd, 20 + g_compiler.linker_inputs.size); // The 20 is how many appends will be done
+    da_init(&cmd, 20 + g_compiler.linker_inputs.size + g_compiler.extra_linker_flags.size); // The 20 is how many appends will be done
     da_append(&cmd, "ld");
     da_append(&cmd, "-m");
     da_append(&cmd, "elf_x86_64");
@@ -114,6 +114,9 @@ int main(int argc, char* argv[])
 
     da_append(&cmd, str_format("%s/crtendS.o", gcc_path));
     da_append(&cmd, str_format("%s/crtn.o", crt_path));
+
+    for(uint32_t i = 0; i < g_compiler.extra_linker_flags.size; ++i)
+        da_append(&cmd, g_compiler.extra_linker_flags.data[i]);
 
     da_append(&cmd, NULL);
     run_subprocess(cmd.data);

@@ -68,6 +68,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or);
 static void     emit_conditional(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -81,7 +82,7 @@ static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, Gen
 static void     store_default(CodegenContext* c, GenValue* ptr);
 
 static inline void       emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* value);
-static inline void       emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* value);
+static inline void       emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* result);
 static LLVMValueRef      emit_llvm_store(CodegenContext* c, LLVMValueRef value, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_load(CodegenContext* c, LLVMTypeRef type, LLVMValueRef ptr, ByteSize alignment);
 static LLVMValueRef      emit_llvm_alloca(CodegenContext* c, const char* name, LLVMTypeRef type, uint32_t align);
@@ -471,7 +472,8 @@ static void emit_for(CodegenContext* c, ASTStmt* stmt)
 RETRY:
     switch(ty->kind)
     {
-    case TYPE_POINTER_MULTI: {
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN: {
         SIC_TODO();
         // for_index = emit_llvm_alloca(c, ".for_index", usize_ref, usize_align);
         // emit_llvm_store(c, LLVMConstInt(usize_ref, 0, false), for_index, usize_align);
@@ -710,6 +712,9 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         break;
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
+        break;
+    case EXPR_MEMBER_BUILTIN:
+        emit_member_builtin(c, expr, &result);
         break;
     case EXPR_POINTER_OFFSET:
         emit_pointer_offset(c, expr, &result);
@@ -1182,23 +1187,49 @@ static void emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenVa
 
 static void emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result)
 {
-    ASTExprMAccess* maccess = &expr->expr.member_access;
     ASTExpr* parent = expr->expr.member_access.parent_expr;
+    uint32_t member_idx = expr->expr.member_access.member_idx;
     GenValue parent_val = emit_expr(c, parent);
     DBG_ASSERT(parent_val.type->kind == TYPE_STRUCT || parent_val.type->kind == TYPE_UNION);
 
     result->kind = GEN_VAL_ADDRESS;
     result->alignment = MIN(parent_val.alignment, result->alignment);
-    if(parent_val.type->kind == TYPE_UNION || maccess->member_idx == 0)
+    if(parent_val.type->kind == TYPE_UNION || member_idx == 0)
     {
         result->value = parent_val.value;
         return;
     }
 
+    // FIXME: This might not be entirely correct, in the case that parent_val is an RVALUE,
+    //        we probably need to use extractvalue instead of GEP.
     result->value = LLVMBuildStructGEP2(c->builder, 
-                                        get_llvm_type(c, maccess->parent_expr->type), 
+                                        get_llvm_type(c, parent_val.type), 
                                         parent_val.value, 
-                                        maccess->member_idx, 
+                                        member_idx, 
+                                        "");
+}
+
+static void emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result)
+{
+    ASTExpr* parent = expr->expr.member_builtin.parent_expr;
+    uint32_t member_idx = expr->expr.member_builtin.member_idx;
+    GenValue parent_val = emit_expr(c, parent);
+    DBG_ASSERT(parent_val.type->kind == TYPE_SLICE);
+
+    result->kind = GEN_VAL_ADDRESS;
+    result->alignment = MIN(parent_val.alignment, result->alignment);
+    if(parent_val.type->kind == TYPE_UNION || member_idx == 0)
+    {
+        result->value = parent_val.value;
+        return;
+    }
+
+    // FIXME: This might not be entirely correct, in the case that parent_val is an RVALUE,
+    //        we probably need to use extractvalue instead of GEP.
+    result->value = LLVMBuildStructGEP2(c->builder, 
+                                        get_llvm_type(c, parent_val.type), 
+                                        parent_val.value, 
+                                        member_idx, 
                                         "");
 }
 
@@ -1361,7 +1392,8 @@ static void store_default(CodegenContext* c, GenValue* ptr)
     {
     case NUMERIC_TYPES:
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
         emit_llvm_store(c, LLVMConstNull(ty_ref), ptr->value, ptr->alignment);
         break;
@@ -1402,24 +1434,28 @@ static inline void emit_smart_store(CodegenContext* c, GenValue* ptr, GenValue* 
         }
     }
 
-    emit_llvm_store(c, value->value, ptr->value, ptr->alignment);
+    LLVMValueRef val = value->type->kind == TYPE_BOOL ? 
+        LLVMBuildZExt(c->builder, value->value, LLVMInt8TypeInContext(s_context), "") :
+        value->value;
+
+    emit_llvm_store(c, val, ptr->value, ptr->alignment);
 
 }
 
-static inline void UNUSED emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* value)
+static inline void UNUSED emit_member_load(CodegenContext* c, GenValue* struct_, uint32_t member_idx, GenValue* result)
 {
     DBG_ASSERT(struct_->type->kind == TYPE_STRUCT);
     Type* member_ty = obj_as_struct(struct_->type->user_def)->members.data[member_idx]->type_loc.type;
-    value->kind = GEN_VAL_RVALUE;
+    result->kind = GEN_VAL_RVALUE;
     if(struct_->kind == GEN_VAL_ADDRESS)
     {
-        value->value = emit_llvm_load(c, get_llvm_type(c, member_ty),
+        result->value = emit_llvm_load(c, get_llvm_type(c, member_ty),
                                       LLVMBuildStructGEP2(c->builder, get_llvm_type(c, struct_->type), struct_->value, member_idx, ""),
                                       struct_->alignment);
     }
     else
     {
-        value->value = LLVMBuildExtractValue(c->builder, struct_->value, member_idx, "");
+        result->value = LLVMBuildExtractValue(c->builder, struct_->value, member_idx, "");
     }
 }
 
@@ -1538,6 +1574,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_VOID:
         return type->llvm_ref = LLVMVoidTypeInContext(s_context);
     case TYPE_BOOL:
+        return type->llvm_ref = LLVMInt1TypeInContext(s_context);
     case TYPE_CHAR:
     case TYPE_BYTE:
     case TYPE_UBYTE:
@@ -1561,7 +1598,8 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     case TYPE_DOUBLE:
         return type->llvm_ref = LLVMDoubleTypeInContext(s_context);
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
         return type->llvm_ref = c->ptr_type;
     case TYPE_STATIC_ARRAY:
@@ -1672,7 +1710,8 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
     case TYPE_FLOAT:
     case TYPE_DOUBLE:
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
     case TYPE_STATIC_ARRAY:
     case TYPE_ENUM:

@@ -1,6 +1,5 @@
 fn test() void
 {
     for i in 0..10 {
-        
     }
 }

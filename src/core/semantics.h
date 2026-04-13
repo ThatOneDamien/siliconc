@@ -15,6 +15,7 @@ struct SemaContext
     Object*      circular_def;
     ObjVarDA     locals;
     ObjEnum*     cur_enum; // Used when analyzing enums to find members
+    Type*        inferred_type;
     
     ASTStmt*     break_target;
     ASTStmt*     continue_target;

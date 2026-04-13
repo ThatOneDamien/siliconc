@@ -680,10 +680,10 @@ static inline void analyze_main()
     if(params.size >= 2)
     {
         second = params.data[1]->type_loc.type;
-        if(second->kind != TYPE_POINTER_MULTI)
+        if(second->kind != TYPE_POINTER_MULTI_UNKNOWN)
             goto BAD_SIG;
         second = second->pointer.base;
-        if(second->kind != TYPE_POINTER_MULTI)
+        if(second->kind != TYPE_POINTER_MULTI_UNKNOWN)
             goto BAD_SIG;
         second = second->pointer.base;
         if(second->kind != TYPE_CHAR)

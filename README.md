@@ -18,10 +18,11 @@ programs at a small to intermediate scale, mostly ignoring optimizations.
 
 ## Future Feature Plans (sorted from highest to lowest priority)
 - More test cases
-- Ranges/For loops
 - Slice arithmetic
 - Adding bitfields (data type)
+- Optionals + optional arithmetic
 - Defer statements
+- For loop improvements
 - Interfaces?
 - Build system
 - std library

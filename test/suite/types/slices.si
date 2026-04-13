@@ -1,4 +1,9 @@
 fn test() void 
 {
-    const _a: []int;
+    var _a: []int;
+    _a.ptr = nullptr;
+    _a.len = 1;
+    
+    const _b = _a;
+    _b.ptr = nullptr; // #error: cannot be modified
 }

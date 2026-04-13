@@ -39,8 +39,9 @@ extern Type* const g_type_range;
 extern ASTExpr* g_bad_expr;
 extern ASTStmt* g_bad_stmt;
 
-extern Symbol   g_sym_len;
 extern Symbol   g_sym_main;
+extern Symbol   g_sym_len;
+extern Symbol   g_sym_ptr;
 extern Symbol   g_attr_list[__ATTR_COUNT];
 
 extern const uint8_t g_hex_char_to_val[256];
@@ -118,7 +119,8 @@ Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(const Type* other);
 Type*       type_apply_qualifiers(Type* base, TypeQualifiers qualifiers);
 Type*       type_pointer_to_single(Type* base);
-Type*       type_pointer_to_multi(Type* base, ASTExpr* size_expr);
+Type*       type_pointer_to_multi_static(Type* base, ASTExpr* size_expr);
+Type*       type_pointer_to_multi_unknown(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind);
 Type*       type_slice_of(Type* elem_ty);
@@ -166,7 +168,7 @@ static inline bool type_kind_is_distinct(TypeKind kind)
 
 static inline bool type_kind_is_pointer(TypeKind kind)
 {
-    return kind == TYPE_POINTER_SINGLE || kind == TYPE_POINTER_MULTI;
+    return kind >= TYPE_POINTERS_START && kind <= TYPE_POINTERS_END;
 }
 
 static inline bool type_is_int_literal(Type* ty) { return ty == g_type_neg_int_lit || ty == g_type_pos_int_lit; }

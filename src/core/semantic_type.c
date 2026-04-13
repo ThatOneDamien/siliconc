@@ -34,7 +34,8 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_POINTER_SINGLE:
         if(!resolve_single_pointer(type, error_loc)) break;
         return true;
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
         if(!resolve_multi_pointer(type, error_loc)) break;
         return true;
     case TYPE_SLICE: {
@@ -236,7 +237,7 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
     if(inner_ty->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(inner->expr.constant.kind == CONSTANT_STRING);
-        *type_ref = type_apply_qualifiers(type_pointer_to_multi(g_type_char, NULL), qualifiers);
+        *type_ref = type_apply_qualifiers(type_pointer_to_multi_unknown(g_type_char), qualifiers);
         return true;
     }
     *type_ref = type_apply_qualifiers(inner_ty, qualifiers);

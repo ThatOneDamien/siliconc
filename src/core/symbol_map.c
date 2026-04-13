@@ -29,16 +29,18 @@ static Symbol sym_map_internal_get(const char* str, uint32_t len, uint32_t hash,
 
 static SymbolMap s_sym_map;
 
-Symbol g_sym_len;
 Symbol g_sym_main;
+Symbol g_sym_len;
+Symbol g_sym_ptr;
 Symbol g_attr_list[__ATTR_COUNT];
 
 void sym_map_init(void)
 {
-    size_t capacity = SYM_MAP_DEFAULT_CAP * sizeof(SymMapEntry*);
-    s_sym_map.buckets = mmap(NULL, capacity, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    size_t capacity = SYM_MAP_DEFAULT_CAP;
+    size_t capacity_in_bytes = capacity * sizeof(SymMapEntry*);
+    s_sym_map.buckets = mmap(NULL, capacity_in_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     s_sym_map.mask = capacity - 1;
-    memset(s_sym_map.buckets, 0, capacity);
+    memset(s_sym_map.buckets, 0, capacity_in_bytes);
 
     TokenKind kind;
     const char* str;
@@ -51,8 +53,9 @@ void sym_map_init(void)
     }
 
     kind = TOKEN_IDENT;
-    g_sym_len = SYM_ADD("len");
     g_sym_main = SYM_ADD("main");
+    g_sym_len  = SYM_ADD("len");
+    g_sym_ptr  = SYM_ADD("ptr");
     
     kind = TOKEN_ATTRIBUTE_IDENT;
     static_assert(__ATTR_COUNT == 8, "Add Attributes here");
@@ -98,6 +101,7 @@ static Symbol sym_map_internal_add(const char* str, uint32_t len, uint32_t hash,
 
 static Symbol sym_map_internal_get(const char* str, uint32_t len, uint32_t hash, TokenKind* kind)
 {
+    DBG_ASSERT(s_sym_map.buckets != NULL);
     size_t index = hash & s_sym_map.mask;
     SymMapEntry* cur = s_sym_map.buckets[index];
     while(cur != NULL)

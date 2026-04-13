@@ -67,6 +67,7 @@ typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
 typedef struct StructInitList   StructInitList;
 typedef struct ASTExprMAccess   ASTExprMAccess;
+typedef struct ASTExprMBuiltin  ASTExprMBuiltin;
 typedef struct ASTExprMethod    ASTExprMethod;
 typedef struct ASTExprPtrOff    ASTExprPtrOff;
 typedef struct ASTExprRange     ASTExprRange;
@@ -442,6 +443,13 @@ struct ASTExprMAccess
     uint32_t member_idx;
 };
 
+struct ASTExprMBuiltin
+{
+    ASTExpr* parent_expr;
+    Symbol   symbol;
+    uint32_t member_idx;
+};
+
 struct ASTExprMethod
 {
     ASTExpr* parent_expr;
@@ -498,6 +506,7 @@ struct ASTExpr
         ASTExprConstant constant;
         ObjFunc*        function;
         ASTExprMAccess  member_access;
+        ASTExprMBuiltin member_builtin;
         ASTExprMethod   method_access;
         ASTExprPtrOff   pointer_offset;
         ASTExprRange    range;
@@ -774,6 +783,7 @@ struct CompilerContext
 {
     SourceFileDA  sources;
     StringDA      linker_inputs;
+    StringDA      extra_linker_flags;
     ObjModule     top_module;
     const char*   compiler_name;
 

@@ -698,7 +698,7 @@ RETRY:
                 CONSUME_OR_RET(TOKEN_RBRACKET, false);
             }
             ty = parse_type_internal(l);
-            ty = type_pointer_to_multi(ty, size_expr);
+            ty = type_pointer_to_multi_static(ty, size_expr);
             break;
 
         }

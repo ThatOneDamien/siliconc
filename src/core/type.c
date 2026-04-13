@@ -248,15 +248,25 @@ Type* type_pointer_to_single(Type* base)
     return base->cache;
 }
 
-Type* type_pointer_to_multi(Type* base, ASTExpr* size_expr)
+Type* type_pointer_to_multi_static(Type* base, ASTExpr* size_expr)
 {
     DBG_ASSERT(base != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
-    new_type->kind = TYPE_POINTER_MULTI;
+    new_type->kind = TYPE_POINTER_MULTI_STATIC;
     new_type->pointer.base = base;
     new_type->pointer.size_expr = size_expr;
     new_type->canonical = new_type;
-    if(size_expr == NULL && base->status == STATUS_RESOLVED)
+    return new_type;
+}
+
+Type* type_pointer_to_multi_unknown(Type* base)
+{
+    DBG_ASSERT(base != NULL);
+    Type* new_type = CALLOC_STRUCT(Type);
+    new_type->kind = TYPE_POINTER_MULTI_UNKNOWN;
+    new_type->pointer.base = base;
+    new_type->canonical = new_type;
+    if(base->status == STATUS_RESOLVED)
     {
         new_type->status = STATUS_RESOLVED;
         new_type->visibility = base->visibility;
@@ -337,13 +347,16 @@ bool type_equal(const Type* t1, const Type* t2)
     case INT_TYPES:
     case FLOAT_TYPES:
         return true;
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
         if(t1->pointer.static_len != t2->pointer.static_len) return false;
         FALLTHROUGH;
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_POINTER_SINGLE:
-    case TYPE_SLICE:
         return type_equal(t1->pointer.base, t2->pointer.base) && 
                t1->pointer.base->qualifiers == t2->pointer.base->qualifiers;
+    case TYPE_SLICE:
+        return type_equal(t1->slice.base, t2->slice.base) &&
+               t1->slice.base->qualifiers == t2->slice.base->qualifiers;
     case TYPE_FUNC_PTR: {
         FuncSignature* s1 = t1->func_ptr;
         FuncSignature* s2 = t2->func_ptr;
@@ -386,7 +399,8 @@ RETRY:
     case FLOAT_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
@@ -428,7 +442,8 @@ RETRY:
     case NUMERIC_TYPES:
         return ty->builtin.byte_size;
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
@@ -475,11 +490,11 @@ const char* type_to_string(const Type* type)
     case TYPE_POINTER_SINGLE:
         res = str_format("*%s", type_to_string(type->pointer.base));
         break;
-    case TYPE_POINTER_MULTI:
-        if(type->pointer.static_len == 0)
-            res = str_format("*[*]%s", type_to_string(type->pointer.base));
-        else
-            res = str_format("*[%lu]%s", type->pointer.static_len, type_to_string(type->pointer.base));
+    case TYPE_POINTER_MULTI_STATIC:
+        res = str_format("*[%lu]%s", type->pointer.static_len, type_to_string(type->pointer.base));
+        break;
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        res = str_format("*[*]%s", type_to_string(type->pointer.base));
         break;
     case TYPE_FUNC_PTR: {
         FuncSignature* sig = type->func_ptr;

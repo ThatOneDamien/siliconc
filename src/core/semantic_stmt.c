@@ -184,13 +184,11 @@ static void analyze_for(ASTStmt* stmt)
     RETRY:
         switch(ty->kind)
         {
-        case TYPE_POINTER_MULTI:
-            if(ty->pointer.static_len == 0)
-            {
-                sic_error_at(collection->loc, "Cannot loop over multi-pointer type '%s' because it has unknown length.", type_to_string(collection->type));
-                break;
-            }
+        case TYPE_POINTER_MULTI_STATIC:
             ty = ty->pointer.base;
+            break;
+        case TYPE_POINTER_MULTI_UNKNOWN:
+            sic_error_at(collection->loc, "Cannot loop over multi-pointer type '%s' because it has unknown length.", type_to_string(collection->type));
             break;
         case TYPE_STATIC_ARRAY:
             ty = ty->array.elem_type;
@@ -474,7 +472,7 @@ bool analyze_declaration(ObjVar* decl)
         {
             DBG_ASSERT(decl->initial_val->expr.constant.kind == CONSTANT_STRING);
             // TODO: Replace this with actual string type. Most likely a char slice.
-            rhs_type = type_pointer_to_multi(g_type_char, NULL);
+            rhs_type = type_pointer_to_multi_unknown(g_type_char);
         }
         else if(type_is_int_literal(rhs_type))
         {
@@ -496,6 +494,11 @@ bool analyze_declaration(ObjVar* decl)
         {
             sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
                                            "inferrible array size(i.e. an array literal) to be initialized.");
+            goto ERR;
+        }
+        if(decl->binding_kind != VAR_BINDING_MUTABLE)
+        {
+            sic_error_at(decl->header.loc, "Variables marked const or #const must always have an initialized value.");
             goto ERR;
         }
     }

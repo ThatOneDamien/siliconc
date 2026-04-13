@@ -18,6 +18,7 @@ typedef enum
     FLAG_EMIT,
     FLAG_OUT_NAME,
     FLAG_OUT_DIR,
+    FLAG_LINK,
     __FLAG_COUNT,
 } FlagKind;
 
@@ -126,6 +127,12 @@ HANDLE_FLAG:
             i++;
             g_compiler.out_name = argv[i];
             break;
+        case FLAG_LINK:
+            if(i == argc - 1) 
+                sic_fatal_error("Missing linker flag after --link.");
+            i++;
+            da_append(&g_compiler.extra_linker_flags, argv[i]);
+            break;
         default:
             SIC_UNREACHABLE();
         }
@@ -206,4 +213,5 @@ static const Flag s_flags[__FLAG_COUNT] = {
     [FLAG_EMIT]     = { 0, "emit", "<KIND>[,<KIND>]", "Emit all file types in list. KIND can be link,obj,asm,ir."},
     [FLAG_OUT_NAME] = { 0, "out-name", "<NAME>", "Set the name of the final build output (executable or library) to NAME."},
     [FLAG_OUT_DIR]  = { 0, "out-dir", "<DIR>", "Place build components in the directory DIR."},
+    [FLAG_LINK]     = { 0, "link", "<FLAG>", "Add FLAG to the linker sub-process."},
 };

@@ -167,7 +167,7 @@ bool implicit_cast_vararg(ASTExpr* arg)
         sic_error_at(arg->loc, "Cannot pass initializer list as a variadic argument.");
         return false;
     case TYPE_STRING_LITERAL:
-        to = type_pointer_to_multi(g_type_char, NULL);
+        to = type_pointer_to_multi_unknown(g_type_char);
         break;
     default:
         return true;
@@ -236,6 +236,7 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
     TypeKind to_kind = params->toc->kind;
     Type* from_base = params->fromc->pointer.base;
     Type* to_base   = params->toc->pointer.base;
+    bool from_voidptr = from_kind == TYPE_POINTER_SINGLE && from_base->canonical->kind == TYPE_VOID;
     bool to_voidptr = to_kind == TYPE_POINTER_SINGLE && to_base->canonical->kind == TYPE_VOID;
 
     if(from_kind == TYPE_FUNC_PTR)
@@ -245,7 +246,11 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
         CAST_ERROR("Function pointers can only be implicitly cast to *const void.");
     }
     if(to_kind == TYPE_FUNC_PTR)
-        goto ERR;
+    {
+        if(from_voidptr && FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST))
+            return true;
+        CAST_ERROR("Function pointers can only be implicitly casted to from *const void.");
+    }
 
     // Going from *const T to *T is illegal.
     if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && 
@@ -254,11 +259,13 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
         CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
     }
-    if(!to_voidptr && !type_equal(from_base, to_base))
-        goto ERR;
 
-    return true;
-ERR:
+    if(to_voidptr || from_voidptr)
+        return true;
+
+    if(from_kind == TYPE_POINTER_MULTI_STATIC && to_kind == TYPE_POINTER_MULTI_UNKNOWN && type_equal(from_base, to_base))
+        return true;
+
     CAST_ERROR("Unable to implicitly cast between pointer types %s and %s.",
                type_to_string(params->from), type_to_string(params->to));
 }
@@ -592,33 +599,34 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
 static CastGroup s_type_to_group[__TYPE_COUNT] = {
-    [TYPE_VOID]            = CAST_GROUP_VOID + 1,
-    [TYPE_BOOL]            = CAST_GROUP_BOOL + 1,
-    [TYPE_CHAR]            = CAST_GROUP_CHAR + 1,
-    [TYPE_CHAR16]          = CAST_GROUP_CHAR + 1,
-    [TYPE_CHAR32]          = CAST_GROUP_CHAR + 1,
-    [TYPE_BYTE]            = CAST_GROUP_INT + 1,
-    [TYPE_UBYTE]           = CAST_GROUP_INT + 1,
-    [TYPE_SHORT]           = CAST_GROUP_INT + 1,
-    [TYPE_USHORT]          = CAST_GROUP_INT + 1,
-    [TYPE_INT]             = CAST_GROUP_INT + 1,
-    [TYPE_UINT]            = CAST_GROUP_INT + 1,
-    [TYPE_LONG]            = CAST_GROUP_INT + 1,
-    [TYPE_ULONG]           = CAST_GROUP_INT + 1,
-    [TYPE_INT128]          = CAST_GROUP_INT + 1,
-    [TYPE_UINT128]         = CAST_GROUP_INT + 1,
-    [TYPE_FLOAT]           = CAST_GROUP_FLOAT + 1,
-    [TYPE_DOUBLE]          = CAST_GROUP_FLOAT + 1,
-    [TYPE_POINTER_SINGLE]  = CAST_GROUP_PTR + 1,
-    [TYPE_POINTER_MULTI]   = CAST_GROUP_PTR + 1,
-    [TYPE_FUNC_PTR]        = CAST_GROUP_PTR + 1,
-    [TYPE_STATIC_ARRAY]    = CAST_GROUP_ARRAY + 1,
-    [TYPE_ALIAS_DISTINCT]  = CAST_GROUP_DISTINCT + 1,
-    [TYPE_ENUM_DISTINCT]   = CAST_GROUP_DISTINCT + 1,
-    [TYPE_STRUCT]          = CAST_GROUP_STRUCT + 1,
-    [TYPE_UNION]           = CAST_GROUP_STRUCT + 1,
-    [TYPE_INIT_LIST]       = CAST_GROUP_INIT_LIST + 1,
-    [TYPE_STRING_LITERAL]  = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_VOID]                  = CAST_GROUP_VOID + 1,
+    [TYPE_BOOL]                  = CAST_GROUP_BOOL + 1,
+    [TYPE_CHAR]                  = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR16]                = CAST_GROUP_CHAR + 1,
+    [TYPE_CHAR32]                = CAST_GROUP_CHAR + 1,
+    [TYPE_BYTE]                  = CAST_GROUP_INT + 1,
+    [TYPE_UBYTE]                 = CAST_GROUP_INT + 1,
+    [TYPE_SHORT]                 = CAST_GROUP_INT + 1,
+    [TYPE_USHORT]                = CAST_GROUP_INT + 1,
+    [TYPE_INT]                   = CAST_GROUP_INT + 1,
+    [TYPE_UINT]                  = CAST_GROUP_INT + 1,
+    [TYPE_LONG]                  = CAST_GROUP_INT + 1,
+    [TYPE_ULONG]                 = CAST_GROUP_INT + 1,
+    [TYPE_INT128]                = CAST_GROUP_INT + 1,
+    [TYPE_UINT128]               = CAST_GROUP_INT + 1,
+    [TYPE_FLOAT]                 = CAST_GROUP_FLOAT + 1,
+    [TYPE_DOUBLE]                = CAST_GROUP_FLOAT + 1,
+    [TYPE_POINTER_SINGLE]        = CAST_GROUP_PTR + 1,
+    [TYPE_POINTER_MULTI_STATIC]  = CAST_GROUP_PTR + 1,
+    [TYPE_POINTER_MULTI_UNKNOWN] = CAST_GROUP_PTR + 1,
+    [TYPE_FUNC_PTR]              = CAST_GROUP_PTR + 1,
+    [TYPE_STATIC_ARRAY]          = CAST_GROUP_ARRAY + 1,
+    [TYPE_ALIAS_DISTINCT]        = CAST_GROUP_DISTINCT + 1,
+    [TYPE_ENUM_DISTINCT]         = CAST_GROUP_DISTINCT + 1,
+    [TYPE_STRUCT]                = CAST_GROUP_STRUCT + 1,
+    [TYPE_UNION]                 = CAST_GROUP_STRUCT + 1,
+    [TYPE_INIT_LIST]             = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_STRING_LITERAL]        = CAST_GROUP_INIT_LIST + 1,
 };
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)

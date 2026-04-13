@@ -132,6 +132,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_FUNCTION:
     case EXPR_POINTER_OFFSET:
     case EXPR_MEMBER_ACCESS:
+    case EXPR_MEMBER_BUILTIN:
     case EXPR_METHOD:
     case EXPR_TYPE_IDENT:
     case EXPR_VAR:
@@ -164,6 +165,8 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
         return false;
     case EXPR_MEMBER_ACCESS:
         return analyze_rvalue_dispatch(expr->expr.member_access.parent_expr, mutate);
+    case EXPR_MEMBER_BUILTIN:
+        return analyze_rvalue_dispatch(expr->expr.member_builtin.parent_expr, mutate);
     case EXPR_TUPLE:
         SIC_TODO();
     case EXPR_TYPE_IDENT:
@@ -218,6 +221,10 @@ static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
     case EXPR_MEMBER_ACCESS:
         if(!analyze_lvalue_dispatch(expr->expr.member_access.parent_expr, will_write)) return false;
         expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
+        break;
+    case EXPR_MEMBER_BUILTIN:
+        if(!analyze_lvalue_dispatch(expr->expr.member_builtin.parent_expr, will_write)) return false;
+        expr->is_const_eval = expr->expr.member_builtin.parent_expr->is_const_eval;
         break;
     case EXPR_METHOD:
         sic_error_at(expr->loc, will_write ? "Methods are not mutable." : 
@@ -320,12 +327,17 @@ static bool analyze_array_access(ASTExpr* expr)
     case TYPE_POINTER_SINGLE:
         sic_error_at(expr->loc, "Array access syntax is not allowed for pointer to single element. Use *[N]T for pointer to multiple elements.");
         return false;
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
         elem_type = arr_type->pointer.base;
         if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
         if(!analyze_rvalue(arr_expr)) return false;
         bounds_check = arr_type->pointer.static_len;
         break;
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        elem_type = arr_type->pointer.base;
+        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
+        if(!analyze_rvalue(arr_expr)) return false;
+        return true;
     case TYPE_STATIC_ARRAY:
         elem_type = type_apply_qualifiers(arr_type->array.elem_type, arr_expr->type->qualifiers);
         bounds_check = arr_type->array.static_len;
@@ -345,7 +357,7 @@ static bool analyze_array_access(ASTExpr* expr)
     if(index_expr->kind == EXPR_CONSTANT)
     {
         ArrayLength idx = index_expr->expr.constant.i.lo;
-        if(bounds_check != 0 && idx >= bounds_check)
+        if(idx >= bounds_check)
         {
             sic_diagnostic_at(DIAG_WARNING, expr->loc, "Index of access (%lu) will overflow the length of the %s (%lu).",
                               idx, arr_type->kind == TYPE_STATIC_ARRAY ? "array" : "pointer", bounds_check);
@@ -764,15 +776,32 @@ static bool resolve_member(ASTExpr* expr)
             return true;
         }
         break;
-    case TYPE_POINTER_MULTI:
-        if(member.sym == g_sym_len && t->pointer.static_len != 0)
+    case TYPE_POINTER_MULTI_STATIC:
+        if(member.sym == g_sym_len)
         {
             convert_to_const_int(expr, g_type_usize, i128_from_u64(t->pointer.static_len));
             return true;
         }
         break;
     case TYPE_SLICE:
-        SIC_TODO();
+        if(member.sym == g_sym_ptr)
+        {
+            expr->expr.member_builtin.member_idx = 0;
+            expr->type = type_apply_qualifiers(type_pointer_to_multi_unknown(t->slice.base), parent->type->qualifiers);
+        }
+        else if(member.sym == g_sym_len)
+        {
+            expr->expr.member_builtin.member_idx = 1;
+            expr->type = type_apply_qualifiers(g_type_usize, parent->type->qualifiers);
+        }
+        else
+        {
+            break;
+        }
+        expr->kind = EXPR_MEMBER_BUILTIN;
+        expr->expr.member_builtin.parent_expr = parent;
+        expr->expr.member_builtin.symbol = member.sym;
+        return true;
     case TYPE_STRUCT:
     case TYPE_UNION: {
         const ObjVarDA members = obj_as_struct(t->user_def)->members;
@@ -805,6 +834,7 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_VOID:
     case NUMERIC_TYPES:
     case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
@@ -1044,7 +1074,13 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offs
                      type_to_string(pointer->type), type_to_string(offset->type));
         return false;
     }
-    if(ptr_type->kind == TYPE_POINTER_MULTI)
+    if(ptr_type->kind == TYPE_FUNC_PTR)
+    {
+        sic_error_at(expr->loc, "Cannot perform pointer-arithmetic on function pointers.");
+        return false;
+
+    }
+    if(ptr_type->kind != TYPE_POINTER_SINGLE)
     {
         sic_error_at(expr->loc, "Cannot perform pointer-arithmetic on multi-pointer. If you want the "
                                 "address of a specific element do something like '&ptr[elem]'.");
@@ -1496,14 +1532,16 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool i
         if(!type_kind_is_float(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
         if(lt->pointer.base->canonical->kind == TYPE_VOID) return true;
-        if(!type_kind_is_pointer(rkind)) break;
-        if(rt->pointer.base->canonical->kind == TYPE_VOID || type_equal(lt->pointer.base, rt->pointer.base)) return true;
+        if(rkind == TYPE_POINTER_SINGLE && rt->pointer.base->canonical->kind == TYPE_VOID) return true;
+        if(type_equal(lt->pointer.base, rt->pointer.base)) return true;
         break;
     case TYPE_FUNC_PTR:
-        if(type_kind_is_pointer(rkind) && rt->pointer.base->canonical->kind == TYPE_VOID) return true;
-        return type_equal(lt, rt);
+        if(rkind == TYPE_POINTER_SINGLE && rt->pointer.base->canonical->kind == TYPE_VOID) return true;
+        if(type_equal(lt, rt)) return true;
+        break;
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
         if(!type_equal(lt, rt)) break;
@@ -1851,8 +1889,9 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     inner_type = inner_type->canonical;
     if(inner_type->kind == TYPE_STATIC_ARRAY)
     {
-        expr->type = type_pointer_to_multi(inner_type->array.elem_type, NULL);
+        expr->type = type_pointer_to_multi_static(inner_type->array.elem_type, NULL);
         expr->type->pointer.static_len = inner_type->array.static_len;
+        expr->type->status = STATUS_RESOLVED;
     }
     else
     {
@@ -1888,15 +1927,19 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
 {
     if(!analyze_rvalue(inner)) return false;
     Type* ctype = inner->type->canonical;
-    if(ctype->kind == TYPE_POINTER_MULTI)
+    switch(ctype->kind)
     {
-        sic_error_at(expr->loc, "Dereferencing not allowed for pointer to multiple elements. "
+    case TYPE_POINTER_SINGLE:
+        break;
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        sic_error_at(expr->loc, "Cannot dereference pointer to multiple elements. "
                                 "Use array access syntax (e.g. ptr[0]).");
         return false;
-
-    }
-    else if(ctype->kind != TYPE_POINTER_SINGLE)
-    {
+    case TYPE_FUNC_PTR:
+        sic_error_at(expr->loc, "Cannot dereference function pointers.");
+        return false;
+    default:
         sic_error_at(expr->loc, "Cannot dereference non-pointer type %s.",
                      type_to_string(inner->type));
         return false;
@@ -2089,7 +2132,8 @@ RETRY:
         convert_to_const_float(expr, type, 0.0);
         return;
     case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
         convert_to_const_pointer(expr, type, UINT128_MIN);
         return;

@@ -248,6 +248,8 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.member_access.parent_expr, depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_MEMBER_BUILTIN:
+        SIC_TODO();
     case EXPR_METHOD:
         printf("Method Access \'%s\'] (Type: %s)\n", 
                expr->expr.method_access.method->header.sym, 
