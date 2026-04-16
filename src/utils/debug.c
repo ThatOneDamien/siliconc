@@ -265,6 +265,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                debug_type_to_str(expr->type, allow_unresolved));
         return;
     case EXPR_RANGE:
+    case EXPR_SLICE:
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
     case EXPR_TUPLE:

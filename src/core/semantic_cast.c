@@ -24,8 +24,8 @@ struct CastRule
     void (*conversion)(const CastParams* const params);
 };
 
-static CastGroup s_type_to_group[__TYPE_COUNT];
-static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
+static const CastGroup s_type_to_group[__TYPE_COUNT];
+static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind);
 static inline ASTExpr* new_cast(ASTExpr* inner);
@@ -279,26 +279,35 @@ static bool rule_str_to_ptr(const CastParams* const params)
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
-
-    if(kind != TYPE_CHAR && kind != TYPE_UBYTE && kind != TYPE_BYTE)
+    DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
+    if(params->inner->expr.constant.str.kind != kind)
     {
-        CAST_ERROR("String literal can only be casted to char*, ubyte*, or byte*.");
+        CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
     }
     return true;
 }
 
 static bool rule_init_list_to_arr(const CastParams* const params)
 {
-    ArrayLength arr_size = params->toc->array.static_len; 
-    Type* elem_type = params->toc->array.elem_type->canonical;
+    bool is_slice = params->toc->kind == TYPE_SLICE;
     if(params->fromc->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
         const ConstString str = params->inner->expr.constant.str;
+        if(is_slice)
+        {
+            if(params->toc->slice.base->canonical->kind != str.kind)
+            {
+                CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
+            }
+            // TODO: We can make this turn into a constant slice for folding. For right now I don't feel the need to optimize that
+            return true;
+        }
+        ArrayLength arr_size = params->toc->array.static_len; 
+        Type* elem_type = params->toc->array.elem_type->canonical;
         if(elem_type->kind != str.kind)
         {
-            printf("%d %d\n", elem_type->kind, str.kind);
-            CAST_ERROR("String literal cannot be converted to type %s.", type_to_string(params->to));
+            CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
         }
         if(arr_size < str.len)
         {
@@ -308,12 +317,13 @@ static bool rule_init_list_to_arr(const CastParams* const params)
         return true;
     }
 
-    if(params->inner->kind != EXPR_ARRAY_INIT_LIST)
+    if(is_slice || params->inner->kind != EXPR_ARRAY_INIT_LIST)
     {
         CAST_ERROR("Casting from %s to %s is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
 
+    ArrayLength arr_size = params->toc->array.static_len; 
 
     CastParams sub_params;
     sub_params.cast = NULL;
@@ -583,7 +593,7 @@ static void cast_init_list(const CastParams* const params)
 #define ILSSTU { rule_init_list_to_struct, cast_init_list }
 #define DISTIN { rule_distinct           , NULL }
 
-static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
+static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
     [CAST_GROUP_VOID]      = { NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF },
     [CAST_GROUP_BOOL]      = { NOALLW, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
@@ -598,7 +608,7 @@ static CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
 };
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
-static CastGroup s_type_to_group[__TYPE_COUNT] = {
+static const CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_VOID]                  = CAST_GROUP_VOID + 1,
     [TYPE_BOOL]                  = CAST_GROUP_BOOL + 1,
     [TYPE_CHAR]                  = CAST_GROUP_CHAR + 1,
@@ -621,6 +631,7 @@ static CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_POINTER_MULTI_UNKNOWN] = CAST_GROUP_PTR + 1,
     [TYPE_FUNC_PTR]              = CAST_GROUP_PTR + 1,
     [TYPE_STATIC_ARRAY]          = CAST_GROUP_ARRAY + 1,
+    [TYPE_SLICE]                 = CAST_GROUP_ARRAY + 1,
     [TYPE_ALIAS_DISTINCT]        = CAST_GROUP_DISTINCT + 1,
     [TYPE_ENUM_DISTINCT]         = CAST_GROUP_DISTINCT + 1,
     [TYPE_STRUCT]                = CAST_GROUP_STRUCT + 1,

@@ -70,6 +70,7 @@ static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, G
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_slice_expr(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or);
 static void     emit_conditional(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -514,9 +515,34 @@ RETRY:
         append_old_basic_block(c, exit_block);
         break;
     }
-    case TYPE_SLICE:
-        SIC_TODO();
+    case TYPE_SLICE: {
+        for_index = emit_llvm_alloca(c, ".for_index", usize_ref, usize_align);
+        emit_llvm_store(c, LLVMConstInt(usize_ref, 0, false), for_index, usize_align);
+        GenValue slice = emit_rvalue(c, for_stmt->collection);
+        LLVMValueRef ptr = LLVMBuildExtractValue(c->builder, slice.value, 0, "");
+        LLVMValueRef len = LLVMBuildExtractValue(c->builder, slice.value, 1, "");
+        emit_br(c, cond_block);
+        append_old_basic_block(c, cond_block);
+        LLVMValueRef i = emit_llvm_load(c, usize_ref, for_index, usize_align);
+        LLVMBuildCondBr(c->builder, 
+                        LLVMBuildICmp(c->builder, LLVMIntULT, i, len, ""),
+                        body_block,
+                        exit_block);
+        append_old_basic_block(c, body_block);
+        emit_llvm_store(c, emit_llvm_load(c, get_llvm_type(c, ty->slice.base), LLVMBuildGEP2(c->builder, get_llvm_type(c, ty->slice.base), ptr, &i, 1, ""), type_alignment(ty->slice.base)), 
+                        for_stmt->loop_var->header.llvm_ref, 
+                        type_alignment(ty->slice.base));
+        for_stmt->backend.break_block = exit_block;
+        for_stmt->backend.continue_block = loop_block;
+        emit_stmt(c, for_stmt->body);
+        emit_br(c, loop_block);
+        append_old_basic_block(c, loop_block);
+        // TODO: Change this to allow doing increments other than 1.
+        emit_llvm_store(c, LLVMBuildAdd(c->builder, i, LLVMConstInt(usize_ref, 1, false), ""), for_index, usize_align);
+        emit_br(c, cond_block);
+        append_old_basic_block(c, exit_block);
         break;
+    }
     case TYPE_ALIAS:
         ty = ty->canonical;
         goto RETRY;
@@ -729,6 +755,9 @@ static GenValue emit_expr(CodegenContext* c, ASTExpr* expr)
         result.value = LLVMBuildInsertValue(c->builder, result.value, emit_rvalue(c, expr->expr.range.from).value, 0, "");
         result.value = LLVMBuildInsertValue(c->builder, result.value, emit_rvalue(c, expr->expr.range.to).value, 1, "");
         result.kind = GEN_VAL_RVALUE;
+        break;
+    case EXPR_SLICE:
+        emit_slice_expr(c, expr, &result);
         break;
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
@@ -1192,21 +1221,25 @@ static void emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* resul
     GenValue parent_val = emit_expr(c, parent);
     DBG_ASSERT(parent_val.type->kind == TYPE_STRUCT || parent_val.type->kind == TYPE_UNION);
 
-    result->kind = GEN_VAL_ADDRESS;
+    result->kind = parent_val.kind;
     result->alignment = MIN(parent_val.alignment, result->alignment);
-    if(parent_val.type->kind == TYPE_UNION || member_idx == 0)
+    if(parent_val.kind == GEN_VAL_ADDRESS)
     {
-        result->value = parent_val.value;
-        return;
+        if(parent_val.type->kind == TYPE_UNION || member_idx == 0)
+        {
+            result->value = parent_val.value;
+            return;
+        }
+        result->value = LLVMBuildStructGEP2(c->builder, 
+                                            get_llvm_type(c, parent_val.type), 
+                                            parent_val.value, 
+                                            member_idx, 
+                                            "");
     }
-
-    // FIXME: This might not be entirely correct, in the case that parent_val is an RVALUE,
-    //        we probably need to use extractvalue instead of GEP.
-    result->value = LLVMBuildStructGEP2(c->builder, 
-                                        get_llvm_type(c, parent_val.type), 
-                                        parent_val.value, 
-                                        member_idx, 
-                                        "");
+    else
+    {
+        result->value = LLVMBuildExtractValue(c->builder, parent_val.value, member_idx, "");
+    }
 }
 
 static void emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result)
@@ -1239,6 +1272,37 @@ static void emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* resu
     GenValue offset = emit_rvalue(c, expr->expr.pointer_offset.offset);
 
     result->value = LLVMBuildGEP2(c->builder, get_llvm_type(c, pointer.type->pointer.base), pointer.value, &offset.value, 1, "");
+}
+
+static void emit_slice_expr(CodegenContext* c, ASTExpr* expr, GenValue* result)
+{
+    result->kind = GEN_VAL_RVALUE;
+    GenValue range = emit_rvalue(c, expr->expr.array_access.index_expr);
+    GenValue arr = emit_expr(c, expr->expr.array_access.array_expr);
+    switch(arr.type->kind)
+    {
+    case TYPE_POINTER_SINGLE:
+    case TYPE_POINTER_MULTI_STATIC:
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        load_rvalue(c, &arr);
+        break;
+    case TYPE_STATIC_ARRAY:
+        DBG_ASSERT(arr.kind == GEN_VAL_ADDRESS);
+        break;
+    case TYPE_SLICE:
+        load_rvalue(c, &arr);
+        arr.value = LLVMBuildExtractValue(c->builder, arr.value, 0, "");
+        break;
+    default:
+        SIC_UNREACHABLE();
+    }
+
+    // TODO: Do runtime checks at least in debug for slices. Add a panic function
+    LLVMValueRef from = LLVMBuildExtractValue(c->builder, range.value, 0, "");
+    LLVMValueRef to = LLVMBuildExtractValue(c->builder, range.value, 1, "");
+    LLVMValueRef agg = LLVMGetUndef(c->slice_type);
+    agg = LLVMBuildInsertValue(c->builder, agg, LLVMBuildGEP2(c->builder, get_llvm_type(c, expr->type->canonical->slice.base), arr.value, &from, 1, ""), 0, "");
+    result->value = LLVMBuildInsertValue(c->builder, agg, LLVMBuildSub(c->builder, to, from, ""), 1, "");
 }
 
 static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or)
@@ -1721,7 +1785,8 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
         ptr->value = emit_llvm_load(c, get_llvm_type(c, ptr->type), ptr->value, ptr->alignment);
         return;
     case TYPE_SLICE:
-        SIC_TODO();
+        ptr->value = emit_llvm_load(c, c->slice_type, ptr->value, ptr->alignment);
+        return;
     case TYPE_INVALID:
     case TYPE_VOID:
     case TYPE_ALIAS:

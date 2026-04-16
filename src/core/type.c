@@ -303,6 +303,11 @@ Type* type_slice_of(Type* elem_ty)
     new_type->kind = TYPE_SLICE;
     new_type->canonical = new_type;
     new_type->slice.base = elem_ty;
+    if(elem_ty->status == STATUS_RESOLVED)
+    {
+        new_type->status = STATUS_RESOLVED;
+        new_type->visibility = elem_ty->visibility;
+    }
     return new_type;
 }
 

@@ -134,6 +134,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     case EXPR_MEMBER_ACCESS:
     case EXPR_MEMBER_BUILTIN:
     case EXPR_METHOD:
+    case EXPR_SLICE:
     case EXPR_TYPE_IDENT:
     case EXPR_VAR:
     case EXPR_ZEROED_OUT:
@@ -182,6 +183,7 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
     case EXPR_RANGE:
+    case EXPR_SLICE:
     case EXPR_STRUCT_INIT_LIST:
     case EXPR_UNARY:
     case EXPR_ZEROED_OUT:
@@ -316,7 +318,7 @@ static bool analyze_array_access(ASTExpr* expr)
     ASTExpr* arr_expr = expr->expr.array_access.array_expr;
     ASTExpr* index_expr = expr->expr.array_access.index_expr;
     bool valid = analyze_expr(arr_expr);
-    valid &= implicit_cast(index_expr, g_type_usize);
+    valid &= analyze_rvalue(index_expr);
     if(!valid) return false;
     Type* arr_type = type_reduce(arr_expr->type);
     Type* elem_type;
@@ -353,8 +355,28 @@ static bool analyze_array_access(ASTExpr* expr)
         return false;
     }
 
-
-    if(index_expr->kind == EXPR_CONSTANT)
+    Type* index_ty = index_expr->type->canonical;
+    if(index_ty == g_type_range)
+    {
+        if(!analyze_lvalue(arr_expr, false)) return false;
+        expr->kind = EXPR_SLICE;
+        expr->type = type_slice_of(elem_type);
+        if(index_expr->kind == EXPR_RANGE)
+        {
+            ASTExpr* from = index_expr->expr.range.from;
+            ASTExpr* to = index_expr->expr.range.to;
+            if((from->kind == EXPR_CONSTANT && from->expr.constant.i.lo >= bounds_check) ||
+               (to->kind == EXPR_CONSTANT && to->expr.constant.i.lo > bounds_check))
+            {
+                sic_diagnostic_at(DIAG_WARNING, expr->loc, "Range will overflow the length of the %s (%lu).",
+                                  arr_type->kind == TYPE_STATIC_ARRAY ? "array" : "pointer", bounds_check);
+            }
+        }
+        return true;
+    }
+    else if(!implicit_cast(index_expr, g_type_usize))
+        return false;
+    else if(index_expr->kind == EXPR_CONSTANT)
     {
         ArrayLength idx = index_expr->expr.constant.i.lo;
         if(idx >= bounds_check)

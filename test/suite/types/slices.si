@@ -7,3 +7,9 @@ fn test() void
     const _b = _a;
     _b.ptr = nullptr; // #error: cannot be modified
 }
+
+fn test2() void
+{
+    const a: [5]int = [1, 4, 5, 2, 3];
+    var _b: []const int = a[1..3]; // This should be [4, 5]
+}
