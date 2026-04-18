@@ -145,6 +145,26 @@ bool implicit_cast(ASTExpr* expr, Type* desired)
     return cast_params(&params);
 }
 
+bool implicit_cast_silent(ASTExpr* expr, Type* desired)
+{
+    DBG_ASSERT(desired->status == STATUS_RESOLVED);
+    if(!analyze_rvalue(expr) || type_is_bad(desired))
+        return false;
+
+    CastParams params;
+    params.cast      = NULL;
+    params.inner     = expr;
+    params.cast_loc  = expr->loc;
+    params.from      = expr->type;
+    params.to        = desired;
+    params.fromc     = params.from->canonical;
+    params.toc       = params.to->canonical;
+    params.explicit  = false;
+    params.silent    = true;
+
+    return cast_params(&params);
+}
+
 bool implicit_cast_vararg(ASTExpr* arg)
 {
     if(!analyze_rvalue(arg)) return false;

@@ -239,7 +239,6 @@ Int128 i128_lshr64(Int128 lhs, uint64_t amount)
 {
 	if (amount == 0) return lhs;
 	if (amount > 127) return (Int128){ 0, 0 };
-	if (amount == 64) return (Int128){ 0, lhs.hi };
 	if (amount > 64) return (Int128){ 0, lhs.hi >> (amount - 64) };
 	lhs.lo >>= amount;
 	lhs.lo |= lhs.hi << (64 - amount);

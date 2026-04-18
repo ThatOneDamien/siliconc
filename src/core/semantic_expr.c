@@ -322,6 +322,8 @@ static bool analyze_array_access(ASTExpr* expr)
     if(!valid) return false;
     Type* arr_type = type_reduce(arr_expr->type);
     Type* elem_type;
+    bool index_is_range = index_expr->type->canonical == g_type_range;
+    bool has_bounds_check;
     ArrayLength bounds_check;
 
     switch(arr_type->kind)
@@ -331,18 +333,25 @@ static bool analyze_array_access(ASTExpr* expr)
         return false;
     case TYPE_POINTER_MULTI_STATIC:
         elem_type = arr_type->pointer.base;
-        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
         if(!analyze_rvalue(arr_expr)) return false;
         bounds_check = arr_type->pointer.static_len;
+        has_bounds_check = true;
         break;
     case TYPE_POINTER_MULTI_UNKNOWN:
         elem_type = arr_type->pointer.base;
-        if(!resolve_type(&elem_type, TYPE_RES_NORMAL, expr->loc, "Cannot access elements of type %s.")) return false;
         if(!analyze_rvalue(arr_expr)) return false;
-        return true;
+        has_bounds_check = false;
+        break;
     case TYPE_STATIC_ARRAY:
         elem_type = type_apply_qualifiers(arr_type->array.elem_type, arr_expr->type->qualifiers);
         bounds_check = arr_type->array.static_len;
+        has_bounds_check = true;
+        if(index_is_range && !analyze_lvalue(arr_expr, false)) return false;
+        break;
+    case TYPE_SLICE:
+        elem_type = arr_type->slice.base;
+        if(!analyze_rvalue(arr_expr)) return false;
+        has_bounds_check = false;
         break;
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
@@ -355,13 +364,11 @@ static bool analyze_array_access(ASTExpr* expr)
         return false;
     }
 
-    Type* index_ty = index_expr->type->canonical;
-    if(index_ty == g_type_range)
+    if(index_is_range)
     {
-        if(!analyze_lvalue(arr_expr, false)) return false;
         expr->kind = EXPR_SLICE;
         expr->type = type_slice_of(elem_type);
-        if(index_expr->kind == EXPR_RANGE)
+        if(has_bounds_check && index_expr->kind == EXPR_RANGE)
         {
             ASTExpr* from = index_expr->expr.range.from;
             ASTExpr* to = index_expr->expr.range.to;
@@ -376,7 +383,7 @@ static bool analyze_array_access(ASTExpr* expr)
     }
     else if(!implicit_cast(index_expr, g_type_usize))
         return false;
-    else if(index_expr->kind == EXPR_CONSTANT)
+    else if(has_bounds_check && index_expr->kind == EXPR_CONSTANT)
     {
         ArrayLength idx = index_expr->expr.constant.i.lo;
         if(idx >= bounds_check)
@@ -1711,10 +1718,9 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         return false;
     }
 
-    if(type_is_int_literal(lt) && kind == BINARY_ASHR)
+    if(type_is_int_literal(lt))
     {
-        sic_error_at(expr->loc, "You cannot perform an arithmetic shift right on an "
-                                "untyped int literal. Please assign a type first.");
+        sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
         return false;
     }
 
@@ -1740,7 +1746,11 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
             if(kind == BINARY_SHL)
                 new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
             else if(kind == BINARY_LSHR)
-                new_val = i128_lshr(lhs->expr.constant.i, rhs->expr.constant.i);
+            {
+                BitSize shift = 128 - lt->builtin.bit_size;
+                new_val = i128_shl64(lhs->expr.constant.i, shift);
+                new_val = i128_lshr(new_val, i128_add64(rhs->expr.constant.i, shift));
+            }
             else
             {
                 BitSize shift = 128 - lt->builtin.bit_size;
@@ -1748,11 +1758,6 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
                 new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
             }
             convert_to_const_int(expr, expr->type, new_val);
-            if(type_is_int_literal(lt))
-            {
-                expr->type = g_type_pos_int_lit;
-                expr->expr.constant.is_bit_int = true;
-            }
             return true;
         }
     }
@@ -2105,13 +2110,13 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
         {
             // Both expressions should not be literals. This should be handled elsewhere
             DBG_ASSERT(!type_is_int_literal(t2));
-            if(!resolve_int_lit(expr1, t2_signed)) goto INT_ERR;
+            if(!implicit_cast_silent(expr1, t2) && !resolve_int_lit(expr1, t2_signed)) goto INT_ERR;
             t1 = expr1->type;
             k1 = t1->kind;
         }
         else if(type_is_int_literal(t2))
         {
-            if(!resolve_int_lit(expr2, t1_signed)) goto INT_ERR;
+            if(!implicit_cast_silent(expr2, t1) && !resolve_int_lit(expr2, t1_signed)) goto INT_ERR;
             t2 = expr2->type;
             k2 = t2->kind;
         }

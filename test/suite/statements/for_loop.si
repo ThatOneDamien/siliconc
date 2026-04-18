@@ -1,5 +1,10 @@
 fn test() void
 {
+    // Basic
     for i in 0..10 {
+    }
+
+    const arr: [4]int = [1, 4, 2, 3];
+    for i in arr {
     }
 }

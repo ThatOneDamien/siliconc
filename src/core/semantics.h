@@ -52,6 +52,7 @@ bool analyze_explicit_cast(ASTExpr* cast);
 bool can_cast(ASTExpr* expr, Type* to, bool silent);
 void perform_cast(ASTExpr* expr, Type* to);
 bool implicit_cast(ASTExpr* expr, Type* desired);
+bool implicit_cast_silent(ASTExpr* expr, Type* desired);
 bool implicit_cast_vararg(ASTExpr* arg);
 
 // Misc

@@ -31,10 +31,6 @@ static void analyze_module(ObjModule* module)
     g_sema = (SemaContext){0};
     g_sema.module = module;
 
-    // FIXME: Add check that we are compiling an executable. Libraries must NOT
-    //        have a main function.
-    if(module == &g_compiler.top_module && g_compiler.emit_link)
-        analyze_main();
 
     // We do methods first because they have not been added to their types yet.
     // If we ecounter a method call without analyzing them first the compiler will
@@ -50,6 +46,11 @@ static void analyze_module(ObjModule* module)
 
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         analyze_function(module->funcs.data[i]);
+
+    // FIXME: Add check that we are compiling an executable. Libraries must NOT
+    //        have a main function.
+    if(module == &g_compiler.top_module && g_compiler.emit_link)
+        analyze_main();
 
     ASTStmt* assert_ = module->ct_asserts;
     while(assert_ != NULL)
@@ -407,10 +408,8 @@ Attr* get_builtin_attr(Object* obj, AttrKind kind)
 static void check_var_usage(ObjVar* var)
 {
     if(var->header.sym == NULL || var->header.sym[0] == '_') return;
-    const char* kind;
-    switch(var->binding_kind)
+    if(var->binding_kind == VAR_BINDING_MUTABLE)
     {
-    case VAR_BINDING_MUTABLE:
         if(!var->read)
         {
             if(var->written)
@@ -420,19 +419,10 @@ static void check_var_usage(ObjVar* var)
         }
         else if(!var->written)
             sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable is never written to, consider changing it to a const declaration.");
-        return;
-    case VAR_BINDING_RT_CONST:
-        kind = "const";
-        break;
-    case VAR_BINDING_CT_CONST:
-        kind = "#const";
-        break;
-    default:
-        SIC_UNREACHABLE();
     }
-    if(!var->read)
+    else if(!var->read)
     {
-        sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable marked %s is never read.", kind);
+        sic_diagnostic_at(DIAG_WARNING, var->header.loc, "Variable's value is never read.");
     }
 }
 
@@ -659,7 +649,7 @@ static inline void analyze_main()
 {
     Object* main = hashmap_get(&g_compiler.top_module.symbol_ns, g_sym_main);
     if(main == NULL)
-        sic_fatal_error("Root module is missing main function. Declare it as 'fn main()'.");
+        sic_fatal_error("Root module is missing main function. An example declaration is:\nfn main() void\n{\n}");
 
     if(main->kind != OBJ_FUNC)
     {
@@ -669,37 +659,34 @@ static inline void analyze_main()
 
     ObjFunc* func = obj_as_func(main);
     const ObjVarDA params = func->signature.params;
-    TypeKind rt_kind = func->signature.ret_type.type->kind;
-    if(rt_kind != TYPE_INT && rt_kind != TYPE_VOID)
+    TypeKind rt_kind = func->signature.ret_type.type->canonical->kind;
+    if((rt_kind != TYPE_INT && rt_kind != TYPE_VOID) || params.size > 1)
         goto BAD_SIG;
 
-    if(params.size >= 1 && params.data[0]->type_loc.type->kind != TYPE_INT)
-        goto BAD_SIG;
-
-    Type* second;
-    if(params.size >= 2)
+    if(params.size == 1)
     {
-        second = params.data[1]->type_loc.type;
-        if(second->kind != TYPE_POINTER_MULTI_UNKNOWN)
+        Type* param = params.data[0]->type_loc.type->canonical;
+        if(param->kind != TYPE_SLICE)
             goto BAD_SIG;
-        second = second->pointer.base;
-        if(second->kind != TYPE_POINTER_MULTI_UNKNOWN)
+        param = param->slice.base->canonical;
+        if(param->kind != TYPE_POINTER_MULTI_UNKNOWN)
             goto BAD_SIG;
-        second = second->pointer.base;
-        if(second->kind != TYPE_CHAR)
+        param = param->pointer.base->canonical;
+        if(param->kind != TYPE_CHAR)
             goto BAD_SIG;
     }
 
-    func->link_name = main->sym;
+    g_compiler.main_function = func;
     return;
 
 BAD_SIG:
-    // TODO: Fix the look of main. Obviously I know it is disgusting to have *[*]*[*]const char
-    // but I haven't added slices/strings quite yet, and I want to distinguish between single 
-    // and multi pointers.
+    // TODO: Fix the look of main. Obviously I know it is disgusting to have []*[*]const char
+    // but now even with slices, I don't want the startup to take O(n) in terms of length of the input
+    // for no reason if you don't end up using the args. In the future it should be someting like:
+    // [][]const char or []string.
     sic_error_at(main->loc, "The signature of the main function is invalid. "
                             "The return type should be 'int' or 'void', with "
-                            "optional parameters 'int, *[*]*[*]const char'.");
+                            "optional parameter 'args: []*[*]const char'.");
     return;
 }
 

@@ -3,9 +3,14 @@
 #assert(12 * 14 == 168, "Fail");
 #assert(100 / 10 == 10, "Fail");
 #assert(13 % 4 == 1, "Fail");
-#assert((0x5 << 4) == 0x50, "Fail");
-#assert((0xFF00 >> 4) == 0xFF0, "Fail");
-#assert((cast<uint>(0x80000000) >>> 3) == 0xF0000000, "Fail");
+
+#const shift_test1: int = 0xFC0000BA;
+#const shift_test2: int = 0x40000000;
+#assert((shift_test1 << 4) == 0xC0000BA0, "Fail");
+#assert((shift_test1 >> 4) == 0x0FC0000B, "Fail");
+#assert((shift_test1 >>> 4) == 0xFFC0000B, "Fail");
+#assert((shift_test2 >> 4) == 0x04000000, "Fail");
+#assert((shift_test2 >>> 4) == 0x04000000, "Fail");
 #assert((0xC & 0xB) == 0x8, "Fail");
 #assert((0xC ^ 0xB) == 0x7, "Fail");
 #assert((0xC | 0xB) == 0xF, "Fail");
@@ -24,4 +29,4 @@
 #assert(0 < 1, "Fail");
 #assert(1 > 0, "Fail");
 
-const a: int = 1 / 0; // #error: evaluates to 0
+#const a: int = 1 / 0; // #error: evaluates to 0

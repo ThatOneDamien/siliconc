@@ -458,7 +458,7 @@ static bool parse_func_signature(Lexer* l, FuncSignature* sig, bool allow_unname
         p->header.kind = OBJ_VAR;
         p->header.visibility = VIS_PUBLIC;
         p->kind = VAR_PARAM;
-        p->binding_kind = VAR_BINDING_MUTABLE;
+        p->binding_kind = VAR_BINDING_RT_CONST;
 
         if(peek(l)->kind == TOKEN_UNDERSCORE && peek_next(l)->kind == TOKEN_COLON)
         {
@@ -690,15 +690,14 @@ RETRY:
                 // We have an unsized multi-ptr
                 advance(l);
                 advance(l);
-                size_expr = NULL;
+                ty = type_pointer_to_multi_unknown(parse_type_internal(l));
             }
             else
             {
                 ASSIGN_EXPR_OR_RET(size_expr, false);
                 CONSUME_OR_RET(TOKEN_RBRACKET, false);
+                ty = type_pointer_to_multi_static(parse_type_internal(l), size_expr);
             }
-            ty = parse_type_internal(l);
-            ty = type_pointer_to_multi_static(ty, size_expr);
             break;
 
         }

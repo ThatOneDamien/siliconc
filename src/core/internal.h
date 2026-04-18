@@ -171,6 +171,19 @@ static inline bool type_kind_is_pointer(TypeKind kind)
     return kind >= TYPE_POINTERS_START && kind <= TYPE_POINTERS_END;
 }
 
+static inline bool type_kind_is_aggregate(TypeKind kind)
+{
+    switch(kind)
+    {
+    case TYPE_STRUCT:
+    case TYPE_UNION:
+    case TYPE_SLICE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static inline bool type_is_int_literal(Type* ty) { return ty == g_type_neg_int_lit || ty == g_type_pos_int_lit; }
 static inline bool type_is_integer(Type* ty) { return type_kind_is_integer(ty->kind); }
 static inline bool type_is_signed(const Type* ty) { return type_kind_is_signed(ty->kind); }
@@ -180,6 +193,7 @@ static inline bool type_is_float(const Type* ty) { return type_kind_is_float(ty-
 static inline bool type_is_numeric(const Type* ty) { return type_kind_is_numeric(ty->kind); }
 static inline bool type_is_distinct(const Type* ty) { return type_kind_is_distinct(ty->kind); }
 static inline bool type_is_pointer(const Type* ty) { return type_kind_is_pointer(ty->kind); }
+static inline bool type_is_aggregate(const Type* ty) { return type_kind_is_aggregate(ty->kind); }
 static inline bool type_is_trivially_copyable(const Type* ty)
 {
     return type_size(ty) <= 16;

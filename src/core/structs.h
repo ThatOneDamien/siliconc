@@ -785,6 +785,7 @@ struct CompilerContext
     StringDA      linker_inputs;
     StringDA      extra_linker_flags;
     ObjModule     top_module;
+    ObjFunc*      main_function;
     const char*   compiler_name;
 
     // Compiler CLI arguments/flags
