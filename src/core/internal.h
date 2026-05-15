@@ -8,7 +8,7 @@ extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
 extern Type* const g_type_invalid;
-extern Type* const g_type_voidptr;
+extern Type* const g_type_null;
 extern Type* const g_type_void;
 extern Type* const g_type_bool;
 extern Type* const g_type_char;
@@ -124,6 +124,7 @@ Type*       type_pointer_to_multi_unknown(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
 Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind);
 Type*       type_slice_of(Type* elem_ty);
+Type*       type_optional_of(Type* elem_ty);
 Type*       type_reduce(Type* t);
 bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_size(const Type* ty);

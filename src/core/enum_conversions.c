@@ -2,9 +2,9 @@
 
 static const char* const s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = "identifier",
-    [TOKEN_AMP]             = "&",
+    [TOKEN_AMPERSAND]             = "&",
     [TOKEN_ASTERISK]        = "*",
-    [TOKEN_LOG_NOT]         = "!",
+    [TOKEN_EXCLAM]         = "!",
     [TOKEN_BIT_NOT]         = "~",
     [TOKEN_BIT_OR]          = "|",
     [TOKEN_BIT_XOR]         = "^",
@@ -74,7 +74,7 @@ static const char* const s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_IMPORT]          = "import",
     [TOKEN_IN]              = "in",
     [TOKEN_MODULE]          = "mod",
-    [TOKEN_NULLPTR]         = "nullptr",
+    [TOKEN_NULL]            = "null",
     [TOKEN_PRIV]            = "priv",
     [TOKEN_PUB]             = "pub",
     [TOKEN_RETURN]          = "return",
@@ -122,7 +122,7 @@ static const char* const s_tok_strs[__TOKEN_COUNT] = {
 };
 
 static BinaryOpKind s_tok_to_bin_op[] = {
-    [TOKEN_AMP]             = BINARY_BIT_AND,
+    [TOKEN_AMPERSAND]             = BINARY_BIT_AND,
     [TOKEN_ASTERISK]        = BINARY_MUL,
     [TOKEN_BIT_OR]          = BINARY_BIT_OR,
     [TOKEN_BIT_XOR]         = BINARY_BIT_XOR,
@@ -156,12 +156,12 @@ static BinaryOpKind s_tok_to_bin_op[] = {
 };
 
 static UnaryOpKind s_tok_to_unary_op[] = {
-    [TOKEN_AMP]      = UNARY_ADDR_OF,
+    [TOKEN_AMPERSAND]      = UNARY_ADDR_OF,
     [TOKEN_BIT_NOT]  = UNARY_BIT_NOT,
     [TOKEN_DECREM]   = UNARY_DEC,
     [TOKEN_ASTERISK] = UNARY_DEREF,
     [TOKEN_INCREM]   = UNARY_INC,
-    [TOKEN_LOG_NOT]  = UNARY_LOG_NOT,
+    [TOKEN_EXCLAM]  = UNARY_LOG_NOT,
     [TOKEN_SUB]      = UNARY_NEG,
 };
 

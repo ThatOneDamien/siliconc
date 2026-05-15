@@ -59,7 +59,7 @@ static inline ASTExpr* parse_expr(Lexer* l)
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
 static ASTExpr* parse_cast(Lexer* l);
-static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond);
+// static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond);
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
 static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
@@ -76,7 +76,7 @@ static ASTExpr* parse_char_literal(Lexer* l);
 static ASTExpr* parse_float_literal(Lexer* l);
 static ASTExpr* parse_string_literal(Lexer* l);
 static ASTExpr* parse_bool_literal(Lexer* l);
-static ASTExpr* parse_nullptr(Lexer* l);
+static ASTExpr* parse_null(Lexer* l);
 
 // Inline helpers
 static inline Token*   peek_prev(Lexer* l)     { return lexer_prev(l); }
@@ -686,22 +686,26 @@ RETRY:
             advance(l);
             if(peek(l)->kind == TOKEN_ASTERISK && peek_next(l)->kind == TOKEN_RBRACKET)
             {
-
                 // We have an unsized multi-ptr
                 advance(l);
                 advance(l);
-                ty = type_pointer_to_multi_unknown(parse_type_internal(l));
+                ty = parse_type_internal(l);
+                if(ty == NULL) return NULL;
+                ty = type_pointer_to_multi_unknown(ty);
             }
             else
             {
-                ASSIGN_EXPR_OR_RET(size_expr, false);
-                CONSUME_OR_RET(TOKEN_RBRACKET, false);
-                ty = type_pointer_to_multi_static(parse_type_internal(l), size_expr);
+                ASSIGN_EXPR_OR_RET(size_expr, NULL);
+                CONSUME_OR_RET(TOKEN_RBRACKET, NULL);
+                ty = parse_type_internal(l);
+                if(ty == NULL) return NULL;
+                ty = type_pointer_to_multi_static(ty, size_expr);
             }
             break;
 
         }
         ty = parse_type_internal(l);
+        if(ty == NULL) return NULL;
         ty = type_pointer_to_single(ty);
         break;
     case TOKEN_LBRACKET: {
@@ -709,6 +713,7 @@ RETRY:
         if(try_consume(l, TOKEN_RBRACKET)) // Slice
         {
             ty = parse_type_internal(l);
+            if(ty == NULL) return NULL;
             ty = type_slice_of(ty);
             break;
         }
@@ -719,14 +724,16 @@ RETRY:
             advance(l);
             advance(l);
             ty = parse_type_internal(l);
+            if(ty == NULL) return NULL;
             ty = type_array_of(ty, NULL, TYPE_INFERRED_ARRAY);
         }
         else // Static Array
         {
             ASTExpr* size_expr;
-            ASSIGN_EXPR_OR_RET(size_expr, false);
-            CONSUME_OR_RET(TOKEN_RBRACKET, false);
+            ASSIGN_EXPR_OR_RET(size_expr, NULL);
+            CONSUME_OR_RET(TOKEN_RBRACKET, NULL);
             ty = parse_type_internal(l);
+            if(ty == NULL) return NULL;
             ty = type_array_of(ty, size_expr, TYPE_STATIC_ARRAY);
         }
         if(quals != TYPE_QUAL_NONE)
@@ -737,6 +744,12 @@ RETRY:
         }
         break;
     }
+    case TOKEN_QUESTION:
+        advance(l);
+        ty = parse_type_internal(l);
+        if(ty == NULL) return NULL;
+        ty = type_optional_of(ty);
+        break;
     case TOKEN_CONST:
         if(quals & TYPE_QUAL_CONST)
             sic_diagnostic_at(DIAG_WARNING, peek(l)->loc, "Duplicate const qualifier.");
@@ -770,28 +783,28 @@ RETRY:
         break;
     case TOKEN_FN:
         advance(l);
-        CONSUME_OR_RET(TOKEN_LPAREN, false);
+        CONSUME_OR_RET(TOKEN_LPAREN, NULL);
         FuncSignature* sig = CALLOC_STRUCT(FuncSignature);
-        if(!parse_func_signature(l, sig, true)) return false;
+        if(!parse_func_signature(l, sig, true)) return NULL;
         ty = type_func_ptr(sig);
         break;
     case TOKEN_CT_TYPEOF:
         advance(l);
-        CONSUME_OR_RET(TOKEN_LPAREN, false);
+        CONSUME_OR_RET(TOKEN_LPAREN, NULL);
         ty = CALLOC_STRUCT(Type);
         ty->kind = TYPE_TYPEOF;
         ty->canonical = ty;
-        ASSIGN_EXPR_OR_RET(ty->type_of, false);
-        CONSUME_OR_RET(TOKEN_RPAREN, false);
+        ASSIGN_EXPR_OR_RET(ty->type_of, NULL);
+        CONSUME_OR_RET(TOKEN_RPAREN, NULL);
         break;
     case TOKEN_IDENT:
         ty = CALLOC_STRUCT(Type);
         ty->kind = TYPE_UNRESOLVED_USER;
         if(!parse_module_path(l, &ty->unresolved))
-            return false;
+            return NULL;
         break;
     default:
-        ERROR_AND_RET(false, "Expected typename.");
+        ERROR_AND_RET(NULL, "Expected typename.");
     }
 
     if(should_copy)
@@ -1233,6 +1246,15 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     return binary;
 }
 
+static ASTExpr* parse_optional_unwrap(Lexer* l, ASTExpr* lhs)
+{
+    ASTExpr* unwrap = new_expr(EXPR_UNWRAP);
+    advance(l);
+    unwrap->loc = extend_loc(lhs->loc, peek_prev(l)->loc);
+    unwrap->expr.unwrap = lhs;
+    return unwrap;
+}
+
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
 {
     ASTExpr* call = new_expr(EXPR_FUNC_CALL);
@@ -1263,21 +1285,21 @@ static ASTExpr* parse_cast(Lexer* l)
     return cast;
 }
 
-static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond)
-{
-    ASTExpr* tern = new_expr(EXPR_CONDITIONAL);
-    advance(l);
-    ASSIGN_EXPR_OR_RET(tern->expr.conditional.then_expr, BAD_EXPR);
-    CONSUME_OR_RET(TOKEN_COLON, BAD_EXPR);
-
-    tern->expr.conditional.else_expr = parse_expr_with_prec(l, PREC_CONDITIONAL + 1, NULL);
-    if(expr_is_bad(tern->expr.conditional.else_expr))
-        return BAD_EXPR;
-
-    tern->loc = extend_loc(cond->loc, tern->expr.conditional.else_expr->loc);
-    tern->expr.conditional.cond_expr = cond;
-    return tern;
-}
+// static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond)
+// {
+//     ASTExpr* tern = new_expr(EXPR_CONDITIONAL);
+//     advance(l);
+//     ASSIGN_EXPR_OR_RET(tern->expr.conditional.then_expr, BAD_EXPR);
+//     CONSUME_OR_RET(TOKEN_COLON, BAD_EXPR);
+//
+//     tern->expr.conditional.else_expr = parse_expr_with_prec(l, PREC_CONDITIONAL + 1, NULL);
+//     if(expr_is_bad(tern->expr.conditional.else_expr))
+//         return BAD_EXPR;
+//
+//     tern->loc = extend_loc(cond->loc, tern->expr.conditional.else_expr->loc);
+//     tern->expr.conditional.cond_expr = cond;
+//     return tern;
+// }
 
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
 {
@@ -1654,11 +1676,10 @@ static ASTExpr* parse_bool_literal(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_nullptr(Lexer* l)
+static ASTExpr* parse_null(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_POINTER);
-    expr->expr.constant.i = (Int128){ 0, 0 };
-    expr->type = g_type_voidptr;
+    ASTExpr* expr = new_constant(l, CONSTANT_NULL);
+    expr->type = g_type_null;
     advance(l);
     return expr;
 }
@@ -1882,9 +1903,9 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_CHAR_LITERAL]    = { parse_char_literal, NULL, PREC_NONE },
     [TOKEN_FLOAT_LITERAL]   = { parse_float_literal, NULL, PREC_NONE },
     [TOKEN_STRING_LITERAL]  = { parse_string_literal, NULL, PREC_NONE },
-    [TOKEN_AMP]             = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
+    [TOKEN_AMPERSAND]       = { parse_unary_prefix, parse_binary, PREC_BIT_AND },
     [TOKEN_ASTERISK]        = { parse_unary_prefix, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_LOG_NOT]         = { parse_unary_prefix, NULL, PREC_NONE },
+    [TOKEN_EXCLAM]          = { parse_unary_prefix, parse_optional_unwrap, PREC_PRIMARY_POSTFIX },
     [TOKEN_BIT_NOT]         = { parse_unary_prefix, NULL, PREC_NONE },
     [TOKEN_BIT_OR]          = { NULL, parse_binary, PREC_BIT_OR },
     [TOKEN_BIT_XOR]         = { NULL, parse_binary, PREC_BIT_XOR },
@@ -1899,7 +1920,8 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_negation, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_QUESTION]        = { NULL, parse_conditional, PREC_CONDITIONAL },
+    // TODO: Re-add the conditional expression but better.
+    // [TOKEN_QUESTION]        = { NULL, parse_conditional, PREC_CONDITIONAL },
     [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
@@ -1927,7 +1949,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
 
     [TOKEN_CAST]            = { parse_cast, NULL, PREC_NONE },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
-    [TOKEN_NULLPTR]         = { parse_nullptr, NULL, PREC_NONE },
+    [TOKEN_NULL]            = { parse_null, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 
     [TOKEN_CT_ALIGNOF]      = { parse_ct_typearg, NULL, PREC_NONE },

@@ -19,6 +19,7 @@ static bool analyze_struct_init_list(ASTExpr* expr);
 static bool analyze_unary(ASTExpr* expr);
 static bool analyze_unresolved_arrow(ASTExpr* expr);
 static bool analyze_unresolved_dot(ASTExpr* expr);
+static bool analyze_unwrap(ASTExpr* expr);
 static bool analyze_ct_alignof(ASTExpr* expr);
 static bool analyze_ct_offsetof(ASTExpr* expr);
 static bool analyze_ct_sizeof(ASTExpr* expr);
@@ -110,6 +111,8 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
         return analyze_struct_init_list(expr);
     case EXPR_TUPLE:
         SIC_TODO();
+    case EXPR_UNWRAP:
+        return analyze_unwrap(expr);
     case EXPR_POSTFIX:
     case EXPR_UNARY:
         return analyze_unary(expr);
@@ -186,6 +189,7 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_SLICE:
     case EXPR_STRUCT_INIT_LIST:
     case EXPR_UNARY:
+    case EXPR_UNWRAP:
     case EXPR_ZEROED_OUT:
         return true;
     case EXPR_UNRESOLVED_ARROW:
@@ -831,6 +835,7 @@ static bool resolve_member(ASTExpr* expr)
         expr->expr.member_builtin.parent_expr = parent;
         expr->expr.member_builtin.symbol = member.sym;
         return true;
+    case TYPE_OPTIONAL:
     case TYPE_STRUCT:
     case TYPE_UNION: {
         const ObjVarDA members = obj_as_struct(t->user_def)->members;
@@ -861,6 +866,7 @@ static bool resolve_member(ASTExpr* expr)
         break;
     }
     case TYPE_VOID:
+    case TYPE_NULL:
     case NUMERIC_TYPES:
     case TYPE_POINTER_SINGLE:
     case TYPE_POINTER_MULTI_UNKNOWN:
@@ -981,6 +987,21 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     }
 
     if(!resolve_member(expr)) return false;
+    return true;
+}
+
+static bool analyze_unwrap(ASTExpr* expr)
+{
+    ASTExpr* inner = expr->expr.unwrap;
+    if(!analyze_rvalue(inner)) return false;
+    Type* inner_ty = inner->type->canonical;
+    if(inner_ty->kind != TYPE_OPTIONAL)
+    {
+        sic_error_at(expr->loc, "You can only unwrap optional types.");
+        return false;
+    }
+
+    expr->type = inner_ty->optional.base;
     return true;
 }
 
@@ -1571,9 +1592,24 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool i
         if(rkind == TYPE_POINTER_SINGLE && rt->pointer.base->canonical->kind == TYPE_VOID) return true;
         if(type_equal(lt, rt)) return true;
         break;
+    case TYPE_OPTIONAL:
+        if(!is_eq_ne || rkind != TYPE_NULL) break;
+        perform_cast(rhs, lhs->type);
+        return true;
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
         if(!type_equal(lt, rt)) break;
+        return true;
+    case TYPE_NULL:
+        if(rkind == TYPE_NULL)
+        {
+            sic_error_at(expr->loc, "Comparing null and null holds no meaning.");
+            return false;
+        }
+        if(!is_eq_ne || rt->kind != TYPE_OPTIONAL) break;
+        perform_cast(lhs, rhs->type);
+        expr->expr.binary.lhs = rhs;
+        expr->expr.binary.rhs = lhs;
         return true;
     default:
         break;
@@ -2158,10 +2194,7 @@ RETRY:
     case FLOAT_TYPES:
         convert_to_const_float(expr, type, 0.0);
         return;
-    case TYPE_POINTER_SINGLE:
-    case TYPE_POINTER_MULTI_STATIC:
-    case TYPE_POINTER_MULTI_UNKNOWN:
-    case TYPE_FUNC_PTR:
+    case POINTER_TYPES:
         convert_to_const_pointer(expr, type, UINT128_MIN);
         return;
     case TYPE_STATIC_ARRAY:
@@ -2175,12 +2208,12 @@ RETRY:
         goto RETRY;
     case TYPE_STRUCT:
     case TYPE_UNION:
+    case TYPE_SLICE:
+    case TYPE_OPTIONAL:
         expr->type = type;
         expr->kind = EXPR_ZEROED_OUT;
         expr->is_const_eval = true;
         return;
-    case TYPE_SLICE:
-        SIC_TODO();
     case TYPE_INVALID:
     case TYPE_VOID:
     case SEMA_ONLY_TYPES:

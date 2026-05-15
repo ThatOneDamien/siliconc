@@ -65,6 +65,7 @@ typedef enum : int8_t
     CAST_GROUP_PTR,
     CAST_GROUP_ARRAY,
     CAST_GROUP_STRUCT,
+    CAST_GROUP_OPTIONAL,
     CAST_GROUP_INIT_LIST,
     CAST_GROUP_DISTINCT,
     __CAST_GROUP_COUNT,
@@ -87,6 +88,7 @@ typedef enum : uint8_t
     CAST_SINT_WIDEN,
     CAST_UINT_WIDEN,
     CAST_INT_TRUNCATE,
+    CAST_TO_OPTIONAL,
 } CastKind;
 
 // Could be expanded later to support multiple architectures.
@@ -104,6 +106,7 @@ typedef enum : uint8_t
     CONSTANT_INTEGER,
     CONSTANT_POINTER,
     CONSTANT_STRING,
+    CONSTANT_NULL,
 } ConstantKind;
 
 typedef enum : uint8_t
@@ -147,6 +150,7 @@ typedef enum : uint8_t
     EXPR_TUPLE,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
+    EXPR_UNWRAP,
     EXPR_VAR,
     EXPR_ZEROED_OUT,
 
@@ -278,9 +282,9 @@ typedef enum : uint8_t
     TOKEN_STRING_LITERAL,
 
 
-    TOKEN_AMP,              // &
+    TOKEN_AMPERSAND,        // &
     TOKEN_ASTERISK,         // *
-    TOKEN_LOG_NOT,          // !
+    TOKEN_EXCLAM,           // !
     TOKEN_BIT_NOT,          // ~
     TOKEN_BIT_OR,           // |
     TOKEN_BIT_XOR,          // ^
@@ -354,7 +358,7 @@ typedef enum : uint8_t
     TOKEN_IMPORT,
     TOKEN_IN,
     TOKEN_MODULE,
-    TOKEN_NULLPTR,
+    TOKEN_NULL,
     TOKEN_PRIV,
     TOKEN_PUB,
     TOKEN_RETURN,
@@ -453,6 +457,7 @@ typedef enum : uint8_t
     TYPE_STATIC_ARRAY,
     TYPE_INFERRED_ARRAY,
     TYPE_SLICE,
+    TYPE_OPTIONAL,
 
     TYPE_ALIAS,
     TYPE_ALIAS_DISTINCT,
@@ -464,6 +469,7 @@ typedef enum : uint8_t
     // Pre-semantic types. After analyzing the type these should never appear
     TYPE_INIT_LIST, // Anonymous array/struct literals before being casted (i.e. [4, 3])
     TYPE_STRING_LITERAL,
+    TYPE_NULL,
     TYPE_TYPEOF,
     TYPE_UNRESOLVED_USER,
     __TYPE_COUNT,
@@ -473,10 +479,14 @@ typedef enum : uint8_t
 // in a certain context, these are the flags to pass to resolve_type.
 typedef enum : uint8_t
 {
-    TYPE_RES_NORMAL           = 0,
-    TYPE_RES_ALLOW_VOID       = 1 << 0,
-    TYPE_RES_ALLOW_AUTO_ARRAY = 1 << 1,
-    TYPE_RES_ALLOW_ALL        = 0xF,
+    TYPE_RES_ALLOW_NONE       = 0,
+    TYPE_RES_ALLOW_REGULAR    = 1 << 0, // Allow basic types (this is not really used)
+    TYPE_RES_ALLOW_VOID       = 1 << 1, // Allow void
+    TYPE_RES_ALLOW_AUTO_ARRAY = 1 << 2, // Allow inferred arrays
+    TYPE_RES_ALLOW_OPT        = 1 << 3, // Allow optionals
+    TYPE_RES_ALLOW_ALL        = (1 << 4) - 1,
+
+    TYPE_RES_NORMAL           = TYPE_RES_ALLOW_OPT | TYPE_RES_ALLOW_REGULAR
 } TypeResFlags;
 
 typedef enum : uint8_t
@@ -542,6 +552,12 @@ typedef enum : uint8_t
             case CHAR_TYPES:  \
             case INT_TYPES:   \
             case FLOAT_TYPES
+
+#define POINTER_TYPES                           \
+            TYPE_POINTER_SINGLE:                \
+            case TYPE_POINTER_MULTI_STATIC:     \
+            case TYPE_POINTER_MULTI_UNKNOWN:    \
+            case TYPE_FUNC_PTR
                 
 #define SEMA_ONLY_TYPES                 \
             TYPE_INFERRED_ARRAY:        \
@@ -549,6 +565,7 @@ typedef enum : uint8_t
             case TYPE_STRING_LITERAL:   \
             case TYPE_TYPEOF:           \
             case TYPE_UNRESOLVED_USER:  \
+            case TYPE_NULL:             \
             case __TYPE_COUNT
 
 #define SEMA_ONLY_EXPRS                 \

@@ -38,16 +38,6 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_POINTER_MULTI_UNKNOWN:
         if(!resolve_multi_pointer(type, error_loc)) break;
         return true;
-    case TYPE_SLICE: {
-        bool prev = g_sema.type_res_allow_unresolved;
-        g_sema.type_res_allow_unresolved = true;
-        bool valid = resolve_type(&type->slice.base, TYPE_RES_NORMAL, error_loc, "Slice of type %s is not allowed.");
-        g_sema.type_res_allow_unresolved = prev;
-        if(!valid) break;
-        type->status = STATUS_RESOLVED;
-        type->visibility = type->pointer.base->visibility;
-        return true;
-    }
     case TYPE_FUNC_PTR:
         if(!resolve_func_ptr(type)) break;
         return true;
@@ -72,6 +62,21 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
         }
         return true;
     }
+    case TYPE_SLICE: {
+        bool prev = g_sema.type_res_allow_unresolved;
+        g_sema.type_res_allow_unresolved = true;
+        bool valid = resolve_type(&type->slice.base, TYPE_RES_NORMAL, error_loc, "Slice of type %s is not allowed.");
+        g_sema.type_res_allow_unresolved = prev;
+        if(!valid) break;
+        type->status = STATUS_RESOLVED;
+        type->visibility = type->pointer.base->visibility;
+        return true;
+    }
+    case TYPE_OPTIONAL:
+        if(!resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.")) break;
+        type->status = type->array.elem_type->status;
+        type->visibility = type->array.elem_type->visibility;
+        return true;
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT: {
         DBG_ASSERT(type->status == STATUS_RESOLVING);
@@ -102,6 +107,7 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
     case TYPE_STRING_LITERAL:
+    case TYPE_NULL:
     case __TYPE_COUNT:
         SIC_UNREACHABLE();
     }
@@ -111,11 +117,11 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
 
 static bool resolve_array(Type* type, SourceLoc error_loc)
 {
-    bool valid = resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.");
+    if(!resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.")) return false;
 
     ResolveStatus prev_status = type->status;
     type->status = type->array.elem_type->status;
-    if(prev_status == STATUS_RESOLVING) return valid;
+    if(prev_status == STATUS_RESOLVING) return true;
 
     type->visibility = type->array.elem_type->visibility;
     ASTExpr* size_expr = type->array.size_expr;

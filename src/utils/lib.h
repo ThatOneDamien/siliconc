@@ -214,6 +214,7 @@ PRINTF_FMT(1, 2)
 void scratch_appendf(const char* fmt, ...);
 void scratch_append_module_path(const ObjModule* module);
 void scratch_append_obj_link_name(Object* obj);
+void scratch_append_typename(const Type* type);
 void scratch_append_i128(Int128 val, bool is_signed);
 PRINTF_FMT(1, 2)
 char* str_format(const char* fmt, ...);

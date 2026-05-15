@@ -490,13 +490,21 @@ bool analyze_declaration(ObjVar* decl)
     TypeKind kind = decl->type_loc.type->kind;
     if(decl->initial_val == NULL)
     {
-        if(kind == TYPE_INFERRED_ARRAY)
+        if(decl->is_extern)
+        {
+            if(kind == TYPE_INFERRED_ARRAY)
+            {
+                sic_error_at(decl->header.loc, "Extern variables cannot be inferred arrays.");
+                goto ERR;
+            }
+        }
+        else if(kind == TYPE_INFERRED_ARRAY)
         {
             sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
                                            "inferrible array size(i.e. an array literal) to be initialized.");
             goto ERR;
         }
-        if(decl->binding_kind != VAR_BINDING_MUTABLE)
+        else if(decl->binding_kind != VAR_BINDING_MUTABLE)
         {
             sic_error_at(decl->header.loc, "Variables marked const or #const must always have an initialized value.");
             goto ERR;

@@ -32,8 +32,7 @@ static inline ASTExpr* new_cast(ASTExpr* inner);
 
 static inline bool can_cast_params(const CastParams* const params)
 {
-    // The types being equal should be handled before calling this function
-    DBG_ASSERT(!type_equal(params->fromc, params->toc));
+    if(type_equal(params->fromc, params->toc)) return true;
 
     CastRule rule = get_cast_rule(params->fromc->kind, params->toc->kind);
     if(rule.able == NULL)
@@ -283,7 +282,9 @@ static bool rule_ptr_to_ptr(const CastParams* const params)
     if(to_voidptr || from_voidptr)
         return true;
 
-    if(from_kind == TYPE_POINTER_MULTI_STATIC && to_kind == TYPE_POINTER_MULTI_UNKNOWN && type_equal(from_base, to_base))
+    if((to_kind == TYPE_POINTER_MULTI_UNKNOWN) && 
+       (from_kind == TYPE_POINTER_MULTI_STATIC || from_kind == TYPE_POINTER_SINGLE) && 
+       type_equal(from_base, to_base))
         return true;
 
     CAST_ERROR("Unable to implicitly cast between pointer types %s and %s.",
@@ -305,6 +306,34 @@ static bool rule_str_to_ptr(const CastParams* const params)
         CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
     }
     return true;
+}
+
+static bool rule_any_to_opt(const CastParams* const params)
+{
+    if(params->toc->kind == TYPE_NULL) SIC_UNREACHABLE();
+    CastParams sub_params;
+    sub_params.cast = NULL;
+    sub_params.to = params->toc->optional.base;
+    sub_params.toc = sub_params.to->canonical;
+    sub_params.explicit = params->explicit;
+    sub_params.silent = params->silent;
+    sub_params.inner = params->inner;
+    sub_params.cast_loc = params->cast_loc;
+    sub_params.from = params->from;
+    sub_params.fromc = params->fromc;
+    return can_cast_params(&sub_params);
+}
+
+static bool rule_opt_to_opt(const CastParams* const params)
+{
+    if(params->toc->kind == TYPE_NULL) SIC_UNREACHABLE();
+    if(params->fromc->kind == TYPE_NULL)
+    {
+        DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_NULL);
+        return true;
+    }
+
+    CAST_ERROR("Cannot convert between optional types.");
 }
 
 static bool rule_init_list_to_arr(const CastParams* const params)
@@ -369,7 +398,7 @@ static bool rule_init_list_to_arr(const CastParams* const params)
         sub_params.cast_loc = elem->init_value->loc;
         sub_params.from = elem->init_value->type;
         sub_params.fromc = sub_params.from->canonical;
-        if(!cast_params(&sub_params)) return false;
+        if(!can_cast_params(&sub_params)) return false;
     }
 
     return true;
@@ -586,10 +615,48 @@ static void cast_ptr_to_ptr(const CastParams* const params)
     expr_copy(params->cast, params->inner);
 }
 
-static void cast_init_list(const CastParams* const params)
+static void cast_to_optional(const CastParams* const params)
+{
+    CastParams sub_params;
+    sub_params.cast = NULL;
+    sub_params.to = params->toc->optional.base;
+    sub_params.toc = sub_params.to->canonical;
+    sub_params.explicit = params->explicit;
+    sub_params.silent = params->silent;
+    sub_params.inner = params->inner;
+    sub_params.cast_loc = params->cast_loc;
+    sub_params.from = params->from;
+    sub_params.fromc = params->fromc;
+    perform_cast_params(&sub_params);
+    ASTExpr* const cast = params->cast == NULL ? new_cast(params->inner) : params->cast;
+    cast->is_const_eval = params->inner->is_const_eval;
+    cast->expr.cast.kind = CAST_TO_OPTIONAL;
+}
+
+static void cast_copy(const CastParams* const params)
 {
     if(params->cast == NULL) return;
     expr_copy(params->cast, params->inner);
+}
+
+static void cast_init_list(const CastParams* const params)
+{
+    CastParams sub_params;
+    sub_params.cast = NULL;
+    sub_params.to = params->toc->array.elem_type;
+    sub_params.toc = sub_params.to->canonical;
+    sub_params.explicit = false;
+    sub_params.silent = params->silent;
+    ArrInitList* list = &params->inner->expr.array_init;
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        ArrInitEntry* const elem = list->data + i;
+        sub_params.inner = elem->init_value;
+        sub_params.cast_loc = elem->init_value->loc;
+        sub_params.from = elem->init_value->type;
+        sub_params.fromc = sub_params.from->canonical;
+        perform_cast_params(&sub_params);
+    }
 }
 
 #define NOALLW { NULL                    , NULL }
@@ -608,23 +675,26 @@ static void cast_init_list(const CastParams* const params)
 #define PTRBOO { rule_explicit_only      , cast_ptr_to_bool }
 #define PTRINT { rule_explicit_only      , cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr         , cast_ptr_to_ptr }
-#define STRPTR { rule_str_to_ptr         , cast_init_list }
+#define STRPTR { rule_str_to_ptr         , cast_copy }
+#define ATOOPT { rule_any_to_opt         , cast_to_optional }
+#define OPTOPT { rule_opt_to_opt         , cast_copy }
 #define ILSARR { rule_init_list_to_arr   , cast_init_list }
-#define ILSSTU { rule_init_list_to_struct, cast_init_list }
+#define ILSSTU { rule_init_list_to_struct, cast_copy }
 #define DISTIN { rule_distinct           , NULL }
 
 static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
-    // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  INITLS  DIST
-    [CAST_GROUP_VOID]      = { NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF },
-    [CAST_GROUP_BOOL]      = { NOALLW, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_CHAR]      = { NOALLW, CHABOO, INTINT, CHAINT, CHAFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INT]       = { NOALLW, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_FLOAT]     = { NOALLW, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_PTR]       = { NOALLW, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_STRUCT]    = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOTDEF, DISTIN },
-    [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOTDEF, DISTIN },
-    [CAST_GROUP_DISTINCT]  = { NOALLW, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN },
+    // FROM              TO:   VOID    BOOL    CHAR    INT     FLOAT   PTR     ARRAY   STRUCT  OPT     INITLS  DIST
+    [CAST_GROUP_VOID]      = { NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF, NOTDEF },
+    [CAST_GROUP_BOOL]      = { NOALLW, NOTDEF, NOALLW, BOOINT, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_CHAR]      = { NOALLW, CHABOO, INTINT, CHAINT, CHAFLT, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_INT]       = { NOALLW, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_FLOAT]     = { NOALLW, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_PTR]       = { NOALLW, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_STRUCT]    = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_OPTIONAL]  = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, OPTOPT, NOALLW, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_DISTINCT]  = { NOALLW, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, NOALLW, DISTIN, DISTIN },
 };
 
 // We add +1 so that by default all the unspecified types get 0 which is the INVALID group.
@@ -652,12 +722,14 @@ static const CastGroup s_type_to_group[__TYPE_COUNT] = {
     [TYPE_FUNC_PTR]              = CAST_GROUP_PTR + 1,
     [TYPE_STATIC_ARRAY]          = CAST_GROUP_ARRAY + 1,
     [TYPE_SLICE]                 = CAST_GROUP_ARRAY + 1,
+    [TYPE_OPTIONAL]              = CAST_GROUP_OPTIONAL + 1,
     [TYPE_ALIAS_DISTINCT]        = CAST_GROUP_DISTINCT + 1,
     [TYPE_ENUM_DISTINCT]         = CAST_GROUP_DISTINCT + 1,
     [TYPE_STRUCT]                = CAST_GROUP_STRUCT + 1,
     [TYPE_UNION]                 = CAST_GROUP_STRUCT + 1,
     [TYPE_INIT_LIST]             = CAST_GROUP_INIT_LIST + 1,
     [TYPE_STRING_LITERAL]        = CAST_GROUP_INIT_LIST + 1,
+    [TYPE_NULL]                  = CAST_GROUP_OPTIONAL + 1,
 };
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)

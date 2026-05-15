@@ -96,6 +96,112 @@ void scratch_append_obj_link_name(Object* obj)
     scratch_appendn(obj->sym, len);
 }
 
+void scratch_append_typename(const Type* type)
+{
+    DBG_ASSERT(type != NULL);
+    DBG_ASSERT(type->status != STATUS_UNRESOLVED);
+    switch(type->kind)
+    {
+    case TYPE_VOID:
+    case NUMERIC_TYPES:
+        static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID)); // Convert type enum to token enum
+        return;
+    case TYPE_POINTER_SINGLE:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendc('*');
+        scratch_append_typename(type->pointer.base);
+        return;
+    case TYPE_POINTER_MULTI_STATIC:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendf("*[%lu]", type->pointer.static_len);
+        scratch_append_typename(type->pointer.base);
+        return;
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append("*[*]");
+        scratch_append_typename(type->pointer.base);
+        return;
+    case TYPE_FUNC_PTR: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        FuncSignature* sig = type->func_ptr;
+        scratch_append("fn (");
+        if(sig->params.size > 0)
+            scratch_append_typename(sig->params.data[0]->type_loc.type);
+        for(uint32_t i = 1; i < sig->params.size; ++i)
+        {
+            scratch_appendc(',');
+            scratch_append_typename(sig->params.data[i]->type_loc.type);
+        }
+        scratch_append(") -> ");
+        scratch_append_typename(sig->ret_type.type);
+        return;
+    }
+    case TYPE_SLICE:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append("[]");
+        scratch_append_typename(type->slice.base);
+        return;
+    case TYPE_OPTIONAL:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendc('?');
+        scratch_append_typename(type->optional.base);
+        return;
+    case TYPE_STATIC_ARRAY:
+        // Dont print qualifiers for array, they shouldn't have any
+        scratch_appendf("[%lu]", type->array.static_len);
+        scratch_append_typename(type->array.elem_type);
+        return;
+    case TYPE_ALIAS:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
+        // somehow express that it is an alias and not a distinct type.
+        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(" a.k.a (");
+        scratch_append_typename(type->canonical);
+        scratch_appendc(')');
+        return;
+    case TYPE_ALIAS_DISTINCT:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        return;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(obj_as_enum(type->user_def)->header.sym);
+        return;
+    case TYPE_STRUCT: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        scratch_append(s ? s : "anonymous struct");
+        return;
+    }
+    case TYPE_UNION: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        scratch_append(s ? s : "anonymous union");
+        return;
+    }
+    case TYPE_INIT_LIST:
+        scratch_append("initializer list");
+        return;
+    case TYPE_STRING_LITERAL:
+        scratch_append("string");
+        return;
+    case TYPE_NULL:
+        scratch_append("null");
+        return;
+    case TYPE_INVALID:
+    case __TYPE_COUNT:
+    case TYPE_INFERRED_ARRAY:
+    case TYPE_TYPEOF:
+    case TYPE_UNRESOLVED_USER:
+        break;
+    }
+    SIC_UNREACHABLE();
+}
+
 char* str_format(const char* fmt, ...)
 {
     va_list va;
@@ -115,7 +221,6 @@ char* str_format(const char* fmt, ...)
 char* str_dupn(const char* str, size_t len)
 {
     DBG_ASSERT(str != NULL);
-    DBG_ASSERT(len != 0);
     // TODO: Replace this with dedicated string arena allocation
     //       to reduce fragmentation.
     char* res = MALLOC(len + 1, 1);

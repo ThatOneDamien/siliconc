@@ -36,6 +36,7 @@ typedef struct ModulePath       ModulePath;
 // Type Structs
 typedef struct TypeArray        TypeArray;
 typedef struct TypeBuiltin      TypeBuiltin;
+typedef struct TypeOptional     TypeOptional;
 typedef struct TypePointer      TypePointer;
 typedef struct TypeSlice        TypeSlice;
 typedef struct Type             Type;
@@ -224,6 +225,11 @@ struct TypeBuiltin
     ByteSize byte_size;
 };
 
+struct TypeOptional 
+{
+    Type* base;
+};
+
 struct TypePointer
 {
     Type* base;
@@ -254,6 +260,7 @@ struct Type
         TypeArray       array;
         TypeBuiltin     builtin;
         FuncSignature*  func_ptr;
+        TypeOptional    optional;
         TypePointer     pointer;
         TypeSlice       slice;
         ASTExpr*        type_of;
@@ -516,6 +523,7 @@ struct ASTExpr
         ASTExprUnary    unary;
         ASTExprUAccess  unresolved_access;
         ModulePath      unresolved_ident;
+        ASTExpr*        unwrap;
         ObjVar*         var;
 
         TypeLoc         ct_typearg;

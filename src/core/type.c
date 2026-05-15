@@ -11,6 +11,16 @@ static Type name =                  \
     __VA_ARGS__                     \
 }
 
+#define TYPE_UR(name, type, ...)    \
+static Type name =                  \
+{                                   \
+    .kind = type,                   \
+    .status = STATUS_RESOLVING,     \
+    .visibility = VIS_PUBLIC,       \
+    .canonical = &name,             \
+    __VA_ARGS__                     \
+}
+
 #define BUILTIN_TYPE_DEF(name, type, size)  \
 static Type name =                          \
 {                                           \
@@ -43,8 +53,6 @@ static Type name =                      \
     .user_def = &obj_name.header,       \
 }
 
-static Type s_voidptr;
-
 BUILTIN_TYPE_DEF(s_bool   , TYPE_BOOL   , 1);
 BUILTIN_TYPE_DEF(s_char   , TYPE_CHAR   , 1);
 BUILTIN_TYPE_DEF(s_char16 , TYPE_CHAR16 , 2);
@@ -64,18 +72,14 @@ BUILTIN_TYPE_DEF(s_double , TYPE_DOUBLE , 8);
 BUILTIN_TYPE_DEF(s_pos_int_lit, TYPE_UINT128, 16);
 BUILTIN_TYPE_DEF(s_neg_int_lit, TYPE_INT128, 16);
 
-TYPE_DEF(s_invalid    , TYPE_INVALID);
-// Void is a special case
-static Type s_void = {
-    .kind = TYPE_VOID,
-    .status = STATUS_RESOLVING,
-    .visibility = VIS_PUBLIC,
-    .canonical = &s_void,
-    .cache = &s_voidptr,
-};
-TYPE_DEF(s_voidptr    , TYPE_POINTER_SINGLE, .pointer.base = &s_void);
-TYPE_DEF(s_init_list  , TYPE_INIT_LIST);
-TYPE_DEF(s_str_lit    , TYPE_STRING_LITERAL);
+TYPE_DEF(s_invalid   , TYPE_INVALID);
+TYPE_DEF(s_init_list , TYPE_INIT_LIST);
+TYPE_DEF(s_str_lit   , TYPE_STRING_LITERAL);
+
+// Unresolved types
+TYPE_UR(s_void      , TYPE_VOID);
+TYPE_UR(s_null      , TYPE_NULL);
+
 static Type s_range;
 static ObjStruct s_range_obj = {
     .header = {
@@ -98,7 +102,6 @@ ALIAS_TYPE_DEF(s_usize, s_usize_obj);
 
 // Builtin-types
 Type* const g_type_invalid     = &s_invalid;
-Type* const g_type_voidptr     = &s_voidptr;
 Type* const g_type_void        = &s_void;
 Type* const g_type_bool        = &s_bool;
 Type* const g_type_char        = &s_char;
@@ -126,6 +129,7 @@ Type* const g_type_init_list   = &s_init_list;
 Type* const g_type_pos_int_lit = &s_pos_int_lit;
 Type* const g_type_neg_int_lit = &s_neg_int_lit;
 Type* const g_type_str_lit     = &s_str_lit;
+Type* const g_type_null        = &s_null;
 
 static Type* const builtin_type_lookup[TOKEN_TYPENAME_END - TOKEN_TYPENAME_START + 1] = {
     [TOKEN_VOID    - TOKEN_TYPENAME_START] = &s_void,
@@ -311,6 +315,22 @@ Type* type_slice_of(Type* elem_ty)
     return new_type;
 }
 
+Type* type_optional_of(Type* elem_ty)
+{
+    DBG_ASSERT(elem_ty != NULL);
+    Type* new_type = CALLOC_STRUCT(Type);
+    new_type->kind = TYPE_OPTIONAL;
+    new_type->canonical = new_type;
+    new_type->optional.base = elem_ty;
+    if(elem_ty->status == STATUS_RESOLVED)
+    {
+        new_type->status = STATUS_RESOLVED;
+        new_type->visibility = elem_ty->visibility;
+    }
+    return new_type;
+
+}
+
 Type* type_reduce(Type* t)
 {
     DBG_ASSERT(t != NULL);
@@ -362,6 +382,8 @@ bool type_equal(const Type* t1, const Type* t2)
     case TYPE_SLICE:
         return type_equal(t1->slice.base, t2->slice.base) &&
                t1->slice.base->qualifiers == t2->slice.base->qualifiers;
+    case TYPE_OPTIONAL:
+        return type_equal(t1->optional.base, t2->optional.base);
     case TYPE_FUNC_PTR: {
         FuncSignature* s1 = t1->func_ptr;
         FuncSignature* s2 = t2->func_ptr;
@@ -393,6 +415,7 @@ bool type_equal(const Type* t1, const Type* t2)
 
 ByteSize type_size(const Type* ty)
 {
+    // TODO: Make this simpler, or better yet, cache the size/alignment of types somewhere else.
     DBG_ASSERT(ty != NULL);
     DBG_ASSERT(ty->status == STATUS_RESOLVED);
 RETRY:
@@ -411,8 +434,13 @@ RETRY:
     case TYPE_STATIC_ARRAY:
         return type_size(ty->array.elem_type) * ty->array.static_len;
     case TYPE_SLICE:
-        // TODO: Make this simpler, or better yet, cache the size/alignment of types somewhere else.
         return ALIGN_UP(g_compiler.target.ptr_size + type_size(g_type_usize), type_alignment(ty));
+    case TYPE_OPTIONAL: {
+        Type* elem_ty = ty->optional.base->canonical;
+        return type_is_pointer(elem_ty) ? 
+                    g_compiler.target.ptr_size : 
+                    ALIGN_UP(type_size(elem_ty) + type_size(g_type_bool), type_alignment(elem_ty));
+    }
     case TYPE_ALIAS:
     case TYPE_ENUM:
         ty = ty->canonical;
@@ -456,6 +484,8 @@ RETRY:
         goto RETRY;
     case TYPE_SLICE:
         return MAX(g_compiler.target.ptr_size, type_alignment(g_type_usize));
+    case TYPE_OPTIONAL:
+        return type_alignment(ty->optional.base);
     case TYPE_ALIAS:
     case TYPE_ENUM:
         ty = ty->canonical;
@@ -481,78 +511,9 @@ RETRY:
 
 const char* type_to_string(const Type* type)
 {
-    DBG_ASSERT(type != NULL);
-    DBG_ASSERT(type->status != STATUS_UNRESOLVED);
-    // TODO: Improve this
-    const char* res;
-    switch(type->kind)
-    {
-    case TYPE_VOID:
-    case NUMERIC_TYPES:
-        static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
-        res = tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID); // Convert type enum to token enum
-        break;
-    case TYPE_POINTER_SINGLE:
-        res = str_format("*%s", type_to_string(type->pointer.base));
-        break;
-    case TYPE_POINTER_MULTI_STATIC:
-        res = str_format("*[%lu]%s", type->pointer.static_len, type_to_string(type->pointer.base));
-        break;
-    case TYPE_POINTER_MULTI_UNKNOWN:
-        res = str_format("*[*]%s", type_to_string(type->pointer.base));
-        break;
-    case TYPE_FUNC_PTR: {
-        FuncSignature* sig = type->func_ptr;
-        scratch_clear();
-        scratch_append("fn ");
-        scratch_appendc('(');
-        if(sig->params.size > 0)
-            scratch_append(type_to_string(sig->params.data[0]->type_loc.type));
-        for(uint32_t i = 1; i < sig->params.size; ++i)
-        {
-            scratch_appendc(',');
-            scratch_append(type_to_string(sig->params.data[i]->type_loc.type));
-        }
-        scratch_append(") -> ");
-        scratch_append(type_to_string(sig->ret_type.type));
-        res = str_dupn(scratch_string(), g_scratch.len);
-        break;
-    }
-    case TYPE_SLICE:
-        res = str_format("[]%s", type_to_string(type->pointer.base));
-        break;
-    case TYPE_STATIC_ARRAY:
-        // Dont print qualifiers for array, they shouldn't have any
-        return str_format("[%lu]%s", type->array.static_len, type_to_string(type->array.elem_type));
-    case TYPE_ALIAS:
-        // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
-        // somehow express that it is an alias and not a distinct type.
-        res = str_format("%s (a.k.a. %s)", obj_as_typedef(type->user_def)->header.sym, type_to_string(type->canonical));
-        break;
-    case TYPE_ALIAS_DISTINCT:
-        res = obj_as_typedef(type->user_def)->header.sym;
-        break;
-    case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
-        res = obj_as_enum(type->user_def)->header.sym;
-        break;
-    case TYPE_STRUCT: {
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
-        res = s ? s : "anonymous struct";
-        break;
-    }
-    case TYPE_UNION: {
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
-        res = s ? s : "anonymous union";
-        break;
-    }
-    case TYPE_INVALID:
-    case SEMA_ONLY_TYPES:
-        SIC_UNREACHABLE();
-    }
-    if(type->qualifiers & TYPE_QUAL_CONST)
-        res = str_format("const %s", res);
-    return res;
+    scratch_clear();
+    scratch_append_typename(type);
+    return scratch_copy();
 }
 
 bool type_kind_is_signed(TypeKind kind)

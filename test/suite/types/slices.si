@@ -1,7 +1,8 @@
 fn test() void 
 {
+    var i: int;
     var _a: []int;
-    _a.ptr = nullptr;
+    _a.ptr = &i;
     _a.len = 1;
     
     const _b = _a;
