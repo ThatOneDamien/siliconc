@@ -307,9 +307,6 @@ static void analyze_switch(ASTStmt* stmt)
         return;
     }
 
-    if(type_size(swi->expr->type) < 4)
-        implicit_cast(swi->expr, g_type_int);
-
     ASTStmt* prev_break = g_sema.break_target;
     g_sema.break_target = stmt;
     bool always_returns = true;
@@ -541,6 +538,7 @@ bool analyze_declaration(ObjVar* decl)
 
                 decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
                 decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
+                decl->type_loc.type->status = STATUS_RESOLVED;
                 if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
             }
             else

@@ -59,10 +59,11 @@ static void     emit_while(CodegenContext* c, ASTStmt* stmt);
 static GenValue emit_expr(CodegenContext* c, ASTExpr* expr);
 static GenValue emit_rvalue(CodegenContext* c, ASTExpr* expr);
 static void     emit_array_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
-static void     emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* expr, GenValue* result);
+static void     emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* right, GenValue* result);
 static void     emit_binary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_call(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result);
+static void     emit_conditional(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
@@ -73,8 +74,8 @@ static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* r
 static void     emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_pointer_offset(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_slice_expr(CodegenContext* c, ASTExpr* expr, GenValue* result);
+static void     emit_struct_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* right, GenValue* result);
 static void     emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or);
-static void     emit_conditional(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_unary(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_unwrap(CodegenContext* c, ASTExpr* expr, GenValue* result);
 
@@ -680,7 +681,7 @@ static void emit_switch(CodegenContext* c, ASTStmt* stmt)
         }
         if(cas->expr == NULL)
             continue;
-        DBG_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(cas->expr->type));
+        DBG_ASSERT(cas->expr->kind == EXPR_CONSTANT && type_is_integer(type_reduce(cas->expr->type)));
         LLVMAddCase(switch_val, get_llvm_const_int(c, cas->expr->expr.constant.i, cas->expr->type), cas->llvm_block_ref);
     }
     append_old_basic_block(c, exit_block);
@@ -851,28 +852,22 @@ static void emit_array_initialization(CodegenContext* c, GenValue* lhs, ASTExpr*
     }
 
     DBG_ASSERT(lhs->type->kind == TYPE_STATIC_ARRAY);
+    LLVMBuildMemSet(c->builder, lhs->value, 
+                    LLVMConstInt(LLVMInt8TypeInContext(s_context), 0, false), 
+                    LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(lhs->type), false), 
+                    type_alignment(lhs->type));
     ArrInitList* list = &right->expr.array_init;
-    for(ArrayLength i = 0; i < lhs->type->array.static_len; ++i)
+    GenValue index;
+    index.type = type_reduce(lhs->type->array.elem_type);
+    index.kind = GEN_VAL_ADDRESS;
+    index.alignment = type_alignment(index.type);
+    for(ArrayLength i = 0; i < list->size; ++i)
     {
-        LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usize), i, false);
-        GenValue index;
+        ArrInitEntry* entry = list->data + i;
+        LLVMValueRef indval = LLVMConstInt(get_llvm_type(c, g_type_usize), entry->const_index, false);
         GenValue temp;
-        index.type = type_reduce(lhs->type->array.elem_type);
         index.value = LLVMBuildGEP2(c->builder, get_llvm_type(c, index.type), lhs->value, &indval, 1, "");
-        index.kind = GEN_VAL_ADDRESS;
-        index.alignment = type_alignment(index.type);
-        for(uint32_t j = 0; j < list->size; ++j)
-        {
-            if(list->data[j].const_index == i)
-            {
-                emit_assign(c, &index, list->data[j].init_value, &temp);
-                goto NEXT_ENTRY;
-            }
-        }
-        
-        emit_llvm_store(c, LLVMConstNull(get_llvm_type(c, index.type)), index.value, index.alignment);
-
-    NEXT_ENTRY:;
+        emit_assign(c, &index, entry->init_value, &temp);
     }
 
     result->value = lhs->value;
@@ -1103,7 +1098,7 @@ static void emit_cast(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValu
         }
         result->value = LLVMGetUndef(get_llvm_type(c, result->type));
         result->value = LLVMBuildInsertValue(c->builder, result->value, inner->value, 0, "");
-        result->value = LLVMBuildInsertValue(c->builder, result->value, LLVMConstInt(LLVMInt1TypeInContext(s_context), 1, false), 1, "");
+        result->value = LLVMBuildInsertValue(c->builder, result->value, LLVMConstInt(LLVMInt8TypeInContext(s_context), 1, false), 1, "");
         return;
     }
     }
@@ -1349,6 +1344,57 @@ static void emit_slice_expr(CodegenContext* c, ASTExpr* expr, GenValue* result)
     result->value = LLVMBuildInsertValue(c->builder, agg, LLVMBuildSub(c->builder, to, from, ""), 1, "");
 }
 
+static void emit_struct_initialization(CodegenContext* c, GenValue* lhs, ASTExpr* right, GenValue* result)
+{
+    DBG_ASSERT(right->kind == EXPR_STRUCT_INIT_LIST);
+    result->kind = GEN_VAL_ADDRESS;
+    if(right->is_const_eval)
+    {
+        LLVMValueRef global = LLVMAddGlobal(c->llvm_module, get_llvm_type(c, right->type), "__anon.const");
+        LLVMSetGlobalConstant(global, true);
+        LLVMSetLinkage(global, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddress(global, LLVMGlobalUnnamedAddr);
+        LLVMSetInitializer(global, emit_const_struct_init_list(c, right));
+        LLVMBuildMemCpy(c->builder, 
+                        lhs->value, lhs->alignment,
+                        global, type_alignment(right->type), 
+                        LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(right->type), false));
+        result->value = global;
+        return;
+    }
+
+    DBG_ASSERT(lhs->type->kind == TYPE_STRUCT || lhs->type->kind == TYPE_UNION);
+    StructInitList* list = &right->expr.struct_init;
+    GenValue index;
+    GenValue temp;
+    index.kind = GEN_VAL_ADDRESS;
+    result->value = lhs->value;
+
+    if(lhs->type->kind == TYPE_UNION)
+    {
+        index.value = lhs->value;
+        index.type = type_reduce(list->data[0].init_value->type);
+        index.alignment = type_alignment(index.type);
+        emit_assign(c, &index, list->data[0].init_value, &temp);
+        return;
+    }
+
+    // TODO: Change this when we add defaults
+    LLVMBuildMemSet(c->builder, lhs->value, 
+                    LLVMConstInt(LLVMInt8TypeInContext(s_context), 0, false), 
+                    LLVMConstInt(LLVMInt64TypeInContext(s_context), type_size(lhs->type), false), 
+                    type_alignment(lhs->type));
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        StructInitEntry* entry = list->data + i;
+        index.type = type_reduce(entry->init_value->type);
+        index.alignment = type_alignment(index.type);
+        index.value = LLVMBuildStructGEP2(c->builder, get_llvm_type(c, lhs->type), lhs->value, entry->member_idx, "");
+        emit_assign(c, &index, entry->init_value, &temp);
+    }
+
+}
+
 static void emit_logical_andor(CodegenContext* c, GenValue* lhs, ASTExpr* rhs, GenValue* result, bool is_or)
 {
     LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, ".log_rhs");
@@ -1473,6 +1519,11 @@ static void emit_assign(CodegenContext* c, GenValue* lhs, ASTExpr* right, GenVal
     if(right->kind == EXPR_ARRAY_INIT_LIST)
     {
         emit_array_initialization(c, lhs, right, result);
+        return;
+    }
+    else if(right->kind == EXPR_STRUCT_INIT_LIST)
+    {
+        emit_struct_initialization(c, lhs, right, result);
         return;
     }
 
@@ -1803,6 +1854,7 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
 
 static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
 {
+    type = type_reduce(type);
     DBG_ASSERT(type->kind == TYPE_FUNC_PTR);
     FuncSignature* sig = type->func_ptr;
     if(sig->llvm_ref != NULL)

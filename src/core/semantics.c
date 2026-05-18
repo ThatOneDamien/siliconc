@@ -174,6 +174,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         {
             ObjImport* other_import = mod->imports.data[j];
             if(other_import == import) continue;
+            if(other_import->header.visibility == VIS_PRIVATE) continue;
             if((other_import->header.sym == NULL || other_import->header.sym == path.data[i].sym) &&
                !resolve_import(mod, other_import))
             {
@@ -191,7 +192,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         for(uint32_t i = 0; i < mod->imports.size; ++i)
         {
             ObjImport* other_import = mod->imports.data[i];
-            if(!resolve_import(mod, other_import))
+            if(other_import->header.visibility != VIS_PRIVATE && !resolve_import(mod, other_import))
             {
                 check_circular_def(&import->header, import->header.loc);
                 return false;
@@ -201,24 +202,25 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         for(uint32_t i = 0; i < mod->symbol_ns.bucket_cnt; ++i)
         {
             HashEntry* entry = mod->symbol_ns.buckets + i;
-            if(entry->key != NULL)
+            if(entry->key != NULL && entry->value->visibility == VIS_PUBLIC)
             {
+                Object* new = entry->value;
                 Object* old = hashmap_get(&module->symbol_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_error_redef(entry->value, old, "global symbol");
+                    sic_error_redef(new, old, "global symbol");
                     import->header.kind = OBJ_INVALID;
                     return false;
                 }
 
-                ObjImport* new = CALLOC_STRUCT(ObjImport);
-                new->header.sym = entry->key;
-                new->header.loc = import->header.loc;
-                new->header.kind = OBJ_IMPORT;
-                new->header.visibility = import->header.visibility;
-                new->header.status = STATUS_RESOLVED;
-                new->resolved = entry->value->kind == OBJ_IMPORT ? obj_as_import(entry->value)->resolved : entry->value;
-                hashmap_put(&module->symbol_ns, entry->key, &new->header);
+                ObjImport* new_import = CALLOC_STRUCT(ObjImport);
+                new_import->header.sym = entry->key;
+                new_import->header.loc = import->header.loc;
+                new_import->header.kind = OBJ_IMPORT;
+                new_import->header.visibility = import->header.visibility;
+                new_import->header.status = STATUS_RESOLVED;
+                new_import->resolved = new->kind == OBJ_IMPORT ? obj_as_import(new)->resolved : new;
+                hashmap_put(&module->symbol_ns, entry->key, &new_import->header);
             }
         }
 
@@ -227,21 +229,22 @@ bool resolve_import(ObjModule* module, ObjImport* import)
             HashEntry* entry = mod->module_ns.buckets + i;
             if(entry->key != NULL && entry->value->visibility == VIS_PUBLIC)
             {
+                Object* new = entry->value;
                 Object* old = hashmap_get(&module->module_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_error_redef(&import->header, old, "module with name");
+                    sic_error_redef(new, old, "module with name");
                     return false;
                 }
 
-                ObjImport* new = CALLOC_STRUCT(ObjImport);
-                new->header.sym = entry->key;
-                new->header.loc = import->header.loc;
-                new->header.kind = OBJ_IMPORT;
-                new->header.visibility = import->header.visibility;
-                new->header.status = STATUS_RESOLVED;
-                new->resolved = entry->value->kind == OBJ_IMPORT ? obj_as_import(entry->value)->resolved : entry->value;
-                hashmap_put(&module->module_ns, entry->key, &new->header);
+                ObjImport* new_import = CALLOC_STRUCT(ObjImport);
+                new_import->header.sym = entry->key;
+                new_import->header.loc = import->header.loc;
+                new_import->header.kind = OBJ_IMPORT;
+                new_import->header.visibility = import->header.visibility;
+                new_import->header.status = STATUS_RESOLVED;
+                new_import->resolved = new->kind == OBJ_IMPORT ? obj_as_import(new)->resolved : new;
+                hashmap_put(&module->module_ns, entry->key, &new_import->header);
             }
         }
         return true;
