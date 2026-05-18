@@ -46,9 +46,11 @@ static inline bool can_cast_params(const CastParams* const params)
 
 static inline void perform_cast_params(const CastParams* const params)
 {
+    if(type_equal(params->fromc, params->toc)) return;
     CastRule rule = get_cast_rule(params->fromc->kind, params->toc->kind);
+    DBG_ASSERT(rule.conversion != NULL);
     rule.conversion(params);
-    if(params->cast)
+    if(params->cast != NULL)
         params->cast->type = params->to;
     else
         params->inner->type = params->to;
@@ -404,19 +406,6 @@ static bool rule_init_list_to_arr(const CastParams* const params)
     return true;
 }
 
-static bool rule_init_list_to_struct(const CastParams* const params)
-{
-    if(params->inner->kind != EXPR_STRUCT_INIT_LIST)
-    {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
-                   type_to_string(params->from), type_to_string(params->to));
-    }
-
-    SIC_TODO();
-
-    return true;
-}
-
 static bool rule_distinct(const CastParams* const params)
 {
     DBG_ASSERT(!params->explicit);
@@ -679,7 +668,6 @@ static void cast_init_list(const CastParams* const params)
 #define ATOOPT { rule_any_to_opt         , cast_to_optional }
 #define OPTOPT { rule_opt_to_opt         , cast_copy }
 #define ILSARR { rule_init_list_to_arr   , cast_init_list }
-#define ILSSTU { rule_init_list_to_struct, cast_copy }
 #define DISTIN { rule_distinct           , NULL }
 
 static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
@@ -693,7 +681,7 @@ static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_STRUCT]    = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_OPTIONAL]  = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, OPTOPT, NOALLW, DISTIN },
-    [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, ILSSTU, NOALLW, NOTDEF, DISTIN },
+    [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, NOALLW, NOALLW, NOTDEF, DISTIN },
     [CAST_GROUP_DISTINCT]  = { NOALLW, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, DISTIN, NOALLW, DISTIN, DISTIN },
 };
 

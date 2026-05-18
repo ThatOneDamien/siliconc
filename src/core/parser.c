@@ -51,10 +51,14 @@ static ASTStmt* parse_expr_stmt(Lexer* l);
 static ASTStmt* parse_declaration(Lexer* l);
 
 // Expressions
-static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left);
+static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left, bool allow_struct_expr);
 static inline ASTExpr* parse_expr(Lexer* l)
 {
-    return parse_expr_with_prec(l, PREC_ASSIGN, NULL);
+    return parse_expr_with_prec(l, PREC_ASSIGN, NULL, true);
+}
+static inline ASTExpr* parse_condition(Lexer* l)
+{
+    return parse_expr_with_prec(l, PREC_ASSIGN, NULL, false);
 }
 static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
 static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
@@ -63,7 +67,7 @@ static ASTExpr* parse_cast(Lexer* l);
 static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
 static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
 static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
-static ASTExpr* parse_struct_init_list(Lexer* l);
+static ASTExpr* parse_struct_init_list(Lexer* l, ModulePath struct_path);
 static ASTExpr* parse_array_init_list(Lexer* l);
 static ASTExpr* parse_identifier_expr(Lexer* l);
 static ASTExpr* parse_paren_expr(Lexer* l);
@@ -994,7 +998,8 @@ static ASTStmt* parse_for(Lexer* l)
     advance(l);
 
     CONSUME_OR_RET(TOKEN_IN, BAD_STMT);
-    ASSIGN_EXPR_OR_RET(for_stmt->collection, BAD_STMT);
+    for_stmt->collection = parse_condition(l);
+    if(expr_is_bad(for_stmt->collection)) return BAD_STMT;
     EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
     for_stmt->body = parse_stmt_block(l);
     if(stmt_is_bad(for_stmt->body)) return BAD_STMT;
@@ -1007,7 +1012,8 @@ static ASTStmt* parse_if(Lexer* l)
     ASTIf* if_stmt = &stmt->stmt.if_;
     advance(l);
 
-    ASSIGN_EXPR_OR_RET(if_stmt->cond, BAD_STMT);
+    if_stmt->cond = parse_condition(l);
+    if(expr_is_bad(if_stmt->cond)) return BAD_STMT;
     EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
     if_stmt->then_stmt = parse_stmt_block(l);
     if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
@@ -1047,7 +1053,8 @@ static ASTStmt* parse_switch(Lexer* l)
     ASTStmt* cur = &head;
     head.next = NULL;
     advance(l);
-    ASSIGN_EXPR_OR_RET(stmt->stmt.switch_.expr, BAD_STMT);
+    stmt->stmt.switch_.expr = parse_condition(l);
+    if(expr_is_bad(stmt->stmt.switch_.expr)) return BAD_STMT;
     CONSUME_OR_RET(TOKEN_LBRACE, BAD_STMT);
     while(!try_consume(l, TOKEN_RBRACE))
     {
@@ -1091,7 +1098,8 @@ static ASTStmt* parse_while(Lexer* l)
     ASTWhile* while_stmt = &stmt->stmt.while_;
     advance(l);
     
-    ASSIGN_EXPR_OR_RET(while_stmt->cond, BAD_STMT);
+    while_stmt->cond = parse_condition(l);
+    if(expr_is_bad(while_stmt->cond)) return BAD_STMT;
     EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
     while_stmt->body = parse_stmt_block(l);
     if(stmt_is_bad(while_stmt->body)) return BAD_STMT;
@@ -1117,7 +1125,9 @@ static ASTStmt* parse_ct_if(Lexer* l)
     ASTStmt* stmt = new_stmt(l, STMT_CT_IF);
     ASTIf* if_stmt = &stmt->stmt.if_;
     advance(l);
-    ASSIGN_EXPR_OR_RET(if_stmt->cond, BAD_STMT);
+
+    if_stmt->cond = parse_condition(l);
+    if(expr_is_bad(if_stmt->cond)) return BAD_STMT;
     EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
     if_stmt->then_stmt = parse_stmt_block(l);
     if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
@@ -1199,8 +1209,10 @@ static ASTStmt* parse_declaration(Lexer* l)
     return stmt;
 }
 
-static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left)
+static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left, bool allow_struct_expr)
 {
+    bool prev = l->allow_struct_expr;
+    l->allow_struct_expr = allow_struct_expr;
     if(left == NULL)
     {
         ExprPrefixFunc prefix = expr_rules[peek(l)->kind].prefix;
@@ -1221,6 +1233,7 @@ static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr*
         DBG_ASSERT(rule->infix != NULL);
         left = rule->infix(l, left);
     }
+    l->allow_struct_expr = prev;
     return left;
 }
 
@@ -1234,7 +1247,7 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     if(rhs_pref != PREC_ASSIGN)
         rhs_pref++;
 
-    rhs = parse_expr_with_prec(l, rhs_pref, NULL);
+    rhs = parse_expr_with_prec(l, rhs_pref, NULL, l->allow_struct_expr);
     if(expr_is_bad(rhs))
         return BAD_EXPR;
 
@@ -1339,26 +1352,19 @@ static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
     return result;
 }
 
-static ASTExpr* parse_struct_init_list(Lexer* l)
+static ASTExpr* parse_struct_init_list(Lexer* l, ModulePath struct_path)
 {
-    ASTExpr* expr = new_expr(EXPR_STRUCT_INIT_LIST);
-    expr->loc = peek(l)->loc;
-    StructInitList* list = &expr->expr.struct_init;
+    DBG_ASSERT(tok_equal(l, TOKEN_LBRACE));
     advance(l);
+    ASTExpr* expr = new_expr(EXPR_STRUCT_INIT_LIST);
+    StructInitList* list = &expr->expr.struct_init;
+    list->struct_path = struct_path;
     while(true)
     {
-        da_reserve(list, list->size + 1);
-        StructInitEntry* entry = list->data + list->size;
         switch(peek(l)->kind)
         {
         case TOKEN_IDENT:
-            list->size++;
-            if(peek_next(l)->kind != TOKEN_COLON)
-                break;
-            entry->unresolved_member.sym = peek(l)->sym;
-            entry->unresolved_member.loc = peek(l)->loc;
-            advance(l);
-            advance(l);
+            if(peek_next(l)->kind != TOKEN_COLON) goto BAD_PARSE;
             break;
         case TOKEN_RBRACE:
             goto OUTER;
@@ -1366,9 +1372,17 @@ static ASTExpr* parse_struct_init_list(Lexer* l)
             eof_error(l, TOKEN_RBRACE);
             return BAD_EXPR;
         default:
-            list->size++;
-            break;
+        BAD_PARSE:
+            ERROR_AND_RET(BAD_EXPR, "sic does not currently support anonymous struct initializer list members. "
+                                    "Use the syntax Foo{ bar: 'value' } not Foo{ 'value' }.");
         }
+        da_reserve(list, list->size + 1);
+        StructInitEntry* entry = list->data + list->size;
+        list->size++;
+        entry->unresolved_member.sym = peek(l)->sym;
+        entry->unresolved_member.loc = peek(l)->loc;
+        advance(l);
+        advance(l);
         ASSIGN_EXPR_OR_RET(entry->init_value, BAD_EXPR);
 
         if(!try_consume(l, TOKEN_COMMA))
@@ -1377,8 +1391,7 @@ static ASTExpr* parse_struct_init_list(Lexer* l)
 OUTER:
     da_compact(list);
     CONSUME_OR_RET(TOKEN_RBRACE, BAD_EXPR);
-    expr->type = g_type_init_list;
-    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
+    expr->loc = extend_loc(struct_path.data[0].loc, peek_prev(l)->loc);
     return expr;
 }
 
@@ -1389,7 +1402,7 @@ static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
     range->from = from;
     advance(l);
     // range->inclusive = try_consume(l, TOKEN_ASSIGN);
-    range->to = parse_expr_with_prec(l, PREC_CONDITIONAL, NULL);
+    range->to = parse_expr_with_prec(l, PREC_CONDITIONAL, NULL, l->allow_struct_expr);
     if(expr_is_bad(range->to)) return BAD_EXPR;
     expr->loc = extend_loc(from->loc, range->to->loc);
     expr->type = g_type_range;
@@ -1439,11 +1452,16 @@ static ASTExpr* parse_invalid(Lexer* l)
 
 static ASTExpr* parse_identifier_expr(Lexer* l)
 {
+    ModulePath path = {0};
+    if(!parse_module_path(l, &path)) return BAD_EXPR;
+    DBG_ASSERT(path.size > 0);
+
+    if(l->allow_struct_expr && tok_equal(l, TOKEN_LBRACE))
+        return parse_struct_init_list(l, path);
+
     ASTExpr* expr = new_expr(EXPR_UNRESOLVED_IDENT);
-    expr->loc = peek(l)->loc;
-    if(!parse_module_path(l, &expr->expr.unresolved_ident))
-        return BAD_EXPR;
-    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
+    expr->loc = extend_loc(path.data[0].loc, peek_prev(l)->loc);
+    expr->expr.unresolved_ident = path;
     return expr;
 }
 
@@ -1481,9 +1499,9 @@ static ASTExpr* parse_negation(Lexer* l)
     expr->loc = peek(l)->loc;
     expr->expr.unary.kind = UNARY_NEG;
     advance(l);
-    ASTExpr* inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
-    if(expr_is_bad(inner)) return BAD_EXPR;
-    expr->expr.unary.inner = inner;
+    expr->expr.unary.inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL, false);
+    if(expr_is_bad(expr->expr.unary.inner)) return BAD_EXPR;
+    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
     return expr;
 }
 
@@ -1493,9 +1511,8 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
     expr->loc = peek(l)->loc;
     TokenKind kind = peek(l)->kind;
     advance(l);
-    expr->expr.unary.inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL);
-    if(expr_is_bad(expr->expr.unary.inner))
-        return BAD_EXPR;
+    expr->expr.unary.inner = parse_expr_with_prec(l, PREC_PRIMARY_POSTFIX, NULL, false);
+    if(expr_is_bad(expr->expr.unary.inner)) return BAD_EXPR;
     expr->expr.unary.kind = tok_to_unary_op(kind);
     expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
     return expr;
@@ -1809,6 +1826,7 @@ static inline bool consume(Lexer* l, TokenKind kind)
 
 static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
 {
+    printf("here\n");
     while(true)
     {
         TokenKind kind = peek(l)->kind;
@@ -1914,7 +1932,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
     [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
-    [TOKEN_LBRACE]          = { parse_struct_init_list, NULL, PREC_NONE },
+    // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
     [TOKEN_LBRACKET]        = { parse_array_init_list, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },

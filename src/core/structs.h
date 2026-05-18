@@ -190,10 +190,11 @@ struct Lexer
 {
     ObjModule*  module;
     const char* src;
+    LookAhead   la_buf;
     uint32_t    line_num;
     uint32_t    line_start;
     uint32_t    pos;
-    LookAhead   la_buf;
+    bool        allow_struct_expr;
 };
 
 struct SymbolLoc
@@ -415,6 +416,7 @@ struct StructInitEntry
 
 struct StructInitList
 {
+    ModulePath       struct_path;
     StructInitEntry* data;
     uint32_t         capacity;
     uint32_t         size;

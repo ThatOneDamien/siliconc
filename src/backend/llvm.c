@@ -67,6 +67,7 @@ static void     emit_constant(CodegenContext* c, ASTExpr* expr, GenValue* result
 static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr);
+static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, ASTExpr* expr);
 static void     emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, ASTExpr* expr, GenValue* result);
 static void     emit_member_builtin(CodegenContext* c, ASTExpr* expr, GenValue* result);
@@ -1223,7 +1224,7 @@ static LLVMValueRef emit_const_initializer(CodegenContext* c, ASTExpr* expr)
         return v.value;
     }
     case EXPR_STRUCT_INIT_LIST:
-        SIC_TODO();
+        return emit_const_struct_init_list(c, expr);
     default:
         return emit_expr(c, expr).value;
     }
@@ -1234,14 +1235,15 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
     DBG_ASSERT(expr->type != g_type_init_list);
     DBG_ASSERT(expr->is_const_eval);
     ArrInitList* list = &expr->expr.array_init;
-    Type* arr_type = expr->type->canonical;
+    Type* arr_type = type_reduce(expr->type);
     if(list->size == 0)
         return LLVMConstNull(get_llvm_type(c, arr_type));
 
     LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, arr_type->array.static_len);
     for(uint32_t i = 0; i < list->size; ++i)
     {
-        values[list->data[i].const_index] = emit_const_initializer(c, list->data[i].init_value);
+        ArrInitEntry* entry = list->data + i;
+        values[entry->const_index] = emit_const_initializer(c, entry->init_value);
     }
     for(ArrayLength i = 0; i < arr_type->array.static_len; ++i)
     {
@@ -1249,6 +1251,25 @@ static LLVMValueRef emit_const_array_init_list(CodegenContext* c, ASTExpr* expr)
             values[i] = LLVMConstNull(get_llvm_type(c, arr_type->array.elem_type));
     }
     return LLVMConstArray2(get_llvm_type(c, arr_type->array.elem_type), values, arr_type->array.static_len);
+}
+
+static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, ASTExpr* expr)
+{
+    Type* struct_type = type_reduce(expr->type);
+    StructInitList* list = &expr->expr.struct_init;
+    ObjStruct* struct_ = obj_as_struct(struct_type->user_def);
+    LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, struct_->members.size);
+    for(uint32_t i = 0; i < list->size; ++i)
+    {
+        StructInitEntry* entry = list->data + i;
+        values[entry->member_idx] = emit_const_initializer(c, entry->init_value);
+    }
+    for(uint32_t i = 0; i < struct_->members.size; ++i)
+    {
+        if(values[i] == NULL)
+            values[i] = LLVMConstNull(get_llvm_type(c, struct_->members.data[0]->type_loc.type));
+    }
+    return LLVMConstNamedStruct(get_llvm_type(c, struct_type), values, struct_->members.size);
 }
 
 static void emit_incdec(CodegenContext* c, ASTExpr* expr, GenValue* inner, GenValue* result, bool is_post)

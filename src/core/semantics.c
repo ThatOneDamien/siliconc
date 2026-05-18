@@ -173,6 +173,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         for(uint32_t j = 0; j < mod->imports.size; ++j)
         {
             ObjImport* other_import = mod->imports.data[j];
+            if(other_import == import) continue;
             if((other_import->header.sym == NULL || other_import->header.sym == path.data[i].sym) &&
                !resolve_import(mod, other_import))
             {
@@ -205,7 +206,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
                 Object* old = hashmap_get(&module->symbol_ns, entry->key);
                 if(old != NULL)
                 {
-                    sic_error_redef(&import->header, old, "global symbol");
+                    sic_error_redef(entry->value, old, "global symbol");
                     import->header.kind = OBJ_INVALID;
                     return false;
                 }

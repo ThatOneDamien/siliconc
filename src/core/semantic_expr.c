@@ -712,40 +712,58 @@ static bool analyze_range(ASTExpr* expr)
 static bool analyze_struct_init_list(ASTExpr* expr)
 {
     const StructInitList list = expr->expr.struct_init;
+    Object* obj = find_obj(&list.struct_path);
+    if(obj == NULL) return false;
+
+    if(obj->kind != OBJ_STRUCT && obj->kind != OBJ_UNION)
+    {
+        SourceLoc loc = extend_loc(list.struct_path.data[0].loc, list.struct_path.data[list.struct_path.size - 1].loc);
+        sic_error_at(loc, "Object does not refer to a struct or union. You can only have an initializer list for those types.");
+        return false;
+    }
+
+    ObjStruct* struct_ = obj_as_struct(obj);
+    expr->type = struct_->type_ref;
+    if(!resolve_type(&expr->type, TYPE_RES_NORMAL, LOC_NULL, NULL)) return false;
+
     bool valid = true;
-    bool is_named = list.size > 0 && list.data[0].unresolved_member.sym != NULL;
-    bool errored = false;
     bool is_const_eval = true;
     for(uint32_t i = 0; i < list.size; ++i)
     {
         StructInitEntry* entry = list.data + i;
         if(!analyze_rvalue(entry->init_value)) valid = false;
-        else if(!entry->init_value->is_const_eval)
-            is_const_eval = false;
-        if(!errored)
+        if(obj->kind == OBJ_UNION && i > 0)
         {
-            if(is_named == (entry->unresolved_member.sym == NULL))
-            {
-                sic_error_at(entry->init_value->loc, "Unnamed members of initializer list cannot be combined with named members.");
-                errored = true;
-                valid = false;
-                continue;
-            }
-            if(is_named)
-            {
-                for(uint32_t j = 0; j < i; ++j)
-                {
-                    if(list.data[j].unresolved_member.sym == entry->unresolved_member.sym)
-                    {
-                        sic_error_at(entry->unresolved_member.loc, "Duplicate initializer list member \'%s\'.",
-                                     entry->unresolved_member.sym);
-                        sic_diagnostic_at(DIAG_NOTE, list.data[j].unresolved_member.loc, "Previous definition here.");
-                        valid = false;
-                    }
-                }
-            }
-
+            sic_error_at(entry->unresolved_member.loc, "You cannot assign to multiple members of a union in an initializer list.");
+            return false;
         }
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            if(list.data[j].unresolved_member.sym == entry->unresolved_member.sym)
+            {
+                sic_error_at(entry->unresolved_member.loc, "Duplicate initializer list member \'%s\'.",
+                                entry->unresolved_member.sym);
+                sic_diagnostic_at(DIAG_NOTE, list.data[j].unresolved_member.loc, "Previous definition here.");
+                valid = false;
+            }
+        }
+
+        is_const_eval = is_const_eval & entry->init_value->is_const_eval;
+        for(uint32_t j = 0; j < struct_->members.size; ++j)
+        {
+            ObjVar* member = struct_->members.data[j];
+            if(entry->unresolved_member.sym == member->header.sym)
+            {
+                entry->member_idx = j;
+                if(!implicit_cast(entry->init_value, member->type_loc.type)) valid = false;
+                goto NEXT_ENTRY;
+            }
+        }
+
+        sic_error_at(entry->unresolved_member.loc, "Type %s has no member '%s'.", 
+                type_to_string(expr->type), entry->unresolved_member.sym);
+        valid = false;
+NEXT_ENTRY:;
     }
     expr->is_const_eval = is_const_eval;
     return valid;
