@@ -331,6 +331,7 @@ static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolv
 static void print_constant(const ASTExpr* expr, bool allow_unresolved)
 {
     const ASTExprConstant* constant = &expr->expr.constant;
+    const char* type_str = debug_type_to_str(expr->type, allow_unresolved);
     switch(constant->kind)
     {
     case CONSTANT_INVALID:
@@ -338,26 +339,26 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
     case CONSTANT_BOOL:
         printf("Constant Bool val: %s ] (Type: %s)\n",
                constant->b ? "true" : "false", 
-               debug_type_to_str(expr->type, allow_unresolved));
+               type_str);
         return;
     case CONSTANT_FLOAT:
         printf("Constant Float val: %lf ] (Type: %s)\n",
-               constant->f, debug_type_to_str(expr->type, allow_unresolved));
+               constant->f, type_str);
         return;
     case CONSTANT_INTEGER:
         printf("Constant Integer val: %s ] (Type: %s)\n",
                i128_to_string(constant->i, type_is_signed(expr->type->canonical)), 
-               debug_type_to_str(expr->type, allow_unresolved));
+               type_str);
         return;
     case CONSTANT_POINTER:
         printf("Constant Pointer val: 0x%lX] (Type: %s)\n",
-               constant->i.lo, debug_type_to_str(expr->type, allow_unresolved));
+               constant->i.lo, type_str);
         return;
     case CONSTANT_STRING:
-        printf("Constant String ]\n");
+        printf("Constant String ] (Type: %s)\n", type_str);
         return;
     case CONSTANT_NULL:
-        printf("Constant null ]\n");
+        printf("Constant null ] (Type: %s)\n", type_str);
         return;
     }
     SIC_UNREACHABLE();

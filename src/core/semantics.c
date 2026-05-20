@@ -1,6 +1,7 @@
 #include "semantics.h"
 #include "utils/da.h"
 
+static void resolve_all_imports(ObjModule* module);
 static void analyze_module(ObjModule* module);
 static void analyze_function(ObjFunc* function);
 static void analyze_method(ObjFunc* method);
@@ -17,7 +18,25 @@ SemaContext g_sema = {0};
 void semantic_analysis()
 {
     // TODO: Add the other stages like checking for conditional compilation of symbols, and other things
+    resolve_all_imports(&g_compiler.top_module);
     analyze_module(&g_compiler.top_module);
+}
+
+static void resolve_all_imports(ObjModule* module)
+{
+    g_sema.module = module;
+    g_sema.in_global_init = true;
+    for(uint32_t i = 0; i < module->imports.size; ++i)
+        resolve_import(module, module->imports.data[i]);
+
+    // We do methods first because they have not been added to their types yet.
+    // If we ecounter a method call without analyzing them first the compiler will
+    // throw an error saying it isn't a member.
+    for(uint32_t i = 0; i < module->methods.size; ++i)
+        analyze_method(module->methods.data[i]);
+
+    for(uint32_t i = 0; i < module->submodules.size; ++i)
+        resolve_all_imports(module->submodules.data[i]);
 }
 
 static void analyze_module(ObjModule* module)
@@ -25,18 +44,11 @@ static void analyze_module(ObjModule* module)
     for(uint32_t i = 0; i < module->submodules.size; ++i)
         analyze_module(module->submodules.data[i]);
 
-    for(uint32_t i = 0; i < module->imports.size; ++i)
-        resolve_import(module, module->imports.data[i]);
     const SemaContext sema = g_sema;
     g_sema = (SemaContext){0};
     g_sema.module = module;
 
 
-    // We do methods first because they have not been added to their types yet.
-    // If we ecounter a method call without analyzing them first the compiler will
-    // throw an error saying it isn't a member.
-    for(uint32_t i = 0; i < module->methods.size; ++i)
-        analyze_method(module->methods.data[i]);
 
     for(uint32_t i = 0; i < module->types.size; ++i)
         analyze_type_obj(module->types.data[i]);
@@ -46,6 +58,9 @@ static void analyze_module(ObjModule* module)
 
     for(uint32_t i = 0; i < module->funcs.size; ++i)
         analyze_function(module->funcs.data[i]);
+
+    for(uint32_t i = 0; i < module->methods.size; ++i)
+        analyze_function(module->methods.data[i]);
 
     // FIXME: Add check that we are compiling an executable. Libraries must NOT
     //        have a main function.
@@ -80,6 +95,9 @@ bool analyze_function_signature(ObjFunc* func)
 
     bool prev = g_sema.in_global_init;
     g_sema.in_global_init = true;
+
+    ObjModule* prev_mod = g_sema.module;
+    g_sema.module = func->header.module;
 
     if(!analyze_attributes(&func->header)) success = false;
 
@@ -139,6 +157,7 @@ bool analyze_function_signature(ObjFunc* func)
     }
 
     g_sema.in_global_init = prev;
+    g_sema.module = prev_mod;
     func->header.status = STATUS_RESOLVED;
     func->func_type->status = STATUS_RESOLVED;
 
@@ -192,7 +211,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         for(uint32_t i = 0; i < mod->imports.size; ++i)
         {
             ObjImport* other_import = mod->imports.data[i];
-            if(other_import->header.visibility != VIS_PRIVATE && !resolve_import(mod, other_import))
+            if(other_import->header.visibility == VIS_PUBLIC && !resolve_import(mod, other_import))
             {
                 check_circular_def(&import->header, import->header.loc);
                 return false;
@@ -252,11 +271,13 @@ bool resolve_import(ObjModule* module, ObjImport* import)
 
     const Symbol actual = path.data[path.size - 1].sym;
 
-    for(uint32_t i = 0; i < mod->imports.size; ++i)
+    for(uint32_t j = 0; j < mod->imports.size; ++j)
     {
-        ObjImport* other_import = mod->imports.data[i];
+        ObjImport* other_import = mod->imports.data[j];
+        if(other_import == import) continue;
+        if(other_import->header.visibility == VIS_PRIVATE) continue;
         if((other_import->header.sym == NULL || other_import->header.sym == actual) &&
-           !resolve_import(mod, other_import))
+            !resolve_import(mod, other_import))
         {
             check_circular_def(&import->header, import->header.loc);
             return false;
@@ -264,11 +285,13 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     }
 
     bool used = false;
+    bool is_private = false;
     import->header.status = STATUS_RESOLVED;
 
     Object* o = hashmap_get(&mod->module_ns, actual);
     if(o != NULL)
     {
+        is_private = o->visibility == VIS_PRIVATE;
         Object* old = hashmap_get(&module->module_ns, import->header.sym);
         if(old != NULL)
         {
@@ -284,6 +307,7 @@ bool resolve_import(ObjModule* module, ObjImport* import)
     o = hashmap_get(&mod->symbol_ns, actual);
     if(o != NULL)
     {
+        is_private = o->visibility |= VIS_PRIVATE;
         Object* prev = hashmap_get(&module->symbol_ns, import->header.sym);
         if(prev != NULL)
         {
@@ -300,6 +324,15 @@ bool resolve_import(ObjModule* module, ObjImport* import)
         }
         import->resolved = o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
         hashmap_put(&module->symbol_ns, import->header.sym, &import->header);
+        used = true;
+    }
+    if(!used)
+    {
+        if(is_private)
+            sic_error_at(import->header.loc, "Failed to import object with name \'%s\'. Is the path correct?", import->header.sym);
+        else
+            sic_error_at(import->header.loc, "Object \'%s\' is declared as private.", import->header.sym);
+        return false;
     }
 
     return true;
@@ -316,6 +349,12 @@ bool analyze_global_var(ObjVar* var)
 
     bool prev = g_sema.in_global_init;
     g_sema.in_global_init = true;
+
+    ObjModule* prev_mod = g_sema.module;
+    g_sema.module = var->header.module;
+
+    bool success = true;
+
     var->header.status = STATUS_RESOLVING;
     DBG_ASSERT(!var->uninitialized);
 
@@ -339,26 +378,27 @@ bool analyze_global_var(ObjVar* var)
 
     if(!analyze_declaration(var))
     {
-        g_sema.in_global_init = prev;
         check_circular_def(&var->header, var->header.loc);
-        return false;
+        success = false;
     }
-    g_sema.in_global_init = prev;
-
-    if(var->initial_val != NULL && !var->initial_val->is_const_eval)
+    else
     {
-        sic_error_at(var->initial_val->loc, "Global variable must be initialized with a compile-time evaluable value.");
-        var->header.kind = OBJ_INVALID;
-        var->header.status = STATUS_RESOLVED;
-        return false;
+        if(var->initial_val != NULL && !var->initial_val->is_const_eval)
+        {
+            sic_error_at(var->initial_val->loc, "Global variable must be initialized with a compile-time evaluable value.");
+            invalidate_obj(&var->header);
+            success = false;
+        }
+
+        if(var->type_loc.type->visibility < var->header.visibility)
+            // TODO: Make this error print the actual visibility of both.
+            sic_error_at(var->header.loc, "Global variable's type has less visibility than the object itself.");
     }
 
-    if(var->type_loc.type->visibility < var->header.visibility)
-        // TODO: Make this error print the actual visibility of both.
-        sic_error_at(var->header.loc, "Global variable's type has less visibility than the object itself.");
-
+    g_sema.in_global_init = prev;
+    g_sema.module = prev_mod;
     var->header.status = STATUS_RESOLVED;
-    return true;
+    return success;
 }
 
 bool analyze_type_obj(Object* type_obj)
@@ -375,28 +415,43 @@ bool analyze_type_obj(Object* type_obj)
         return !obj_is_bad(type_obj);
     }
 
+    bool prev = g_sema.in_global_init;
+    g_sema.in_global_init = true;
+
+    ObjModule* prev_mod = g_sema.module;
+    g_sema.module = type_obj->module;
+
+    bool success;
+
     switch(type_obj->kind)
     {
     case OBJ_BITFIELD:
         SIC_TODO();
     case OBJ_ENUM:
-        return analyze_enum(obj_as_enum(type_obj));
+        success = analyze_enum(obj_as_enum(type_obj));
+        break;
     case OBJ_STRUCT:
-        return analyze_struct(obj_as_struct(type_obj));
+        success = analyze_struct(obj_as_struct(type_obj));
+        break;
     case OBJ_TYPEDEF:
-        return analyze_typedef(obj_as_typedef(type_obj));
+        success = analyze_typedef(obj_as_typedef(type_obj));
+        break;
     case OBJ_UNION:
-        return analyze_union(obj_as_struct(type_obj));
+        success = analyze_union(obj_as_struct(type_obj));
+        break;
     case OBJ_INVALID:
-        return false;
+        success = false;
+        break;
     case OBJ_ENUM_VALUE:
     case OBJ_FUNC:
     case OBJ_IMPORT:
     case OBJ_MODULE:
     case OBJ_VAR:
-        break;
+        SIC_UNREACHABLE();
     }
-    SIC_UNREACHABLE();
+    g_sema.in_global_init = prev;
+    g_sema.module = prev_mod;
+    return success;
 }
 
 Attr* get_builtin_attr(Object* obj, AttrKind kind)
@@ -525,7 +580,6 @@ static void analyze_method(ObjFunc* method)
 
     da_append(&struct_->methods, method);
 
-    analyze_function(method);
     return;
 ERR:
     invalidate_obj(&method->header);

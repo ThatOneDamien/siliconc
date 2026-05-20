@@ -140,8 +140,8 @@ static bool parse_top_level(Lexer* l)
     if(try_consume(l, TOKEN_SEMI)) return true; // Ignore semicolons
     AttrDA attrs = {0};
     if(!parse_attributes(l, &attrs)) return false;
-    bool is_extern = try_consume(l, TOKEN_EXTERN);
     Visibility vis = parse_visibility(l);
+    bool is_extern = try_consume(l, TOKEN_EXTERN);
     ObjKind kind = OBJ_UNION;
     switch(peek(l)->kind)
     {
@@ -836,6 +836,7 @@ static ObjVar* parse_var_declaration(Lexer* l, VarKind kind, Visibility vis)
     var->header.loc = peek(l)->loc;
     var->header.kind = OBJ_VAR;
     var->header.visibility = vis;
+    var->header.module = l->module;
     var->kind = kind;
     switch(peek_prev(l)->kind)
     {

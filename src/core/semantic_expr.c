@@ -676,6 +676,7 @@ static bool analyze_ident(ASTExpr* expr)
         return true;
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
+        if(var->kind == VAR_GLOBAL && !analyze_global_var(var)) return false; 
         expr->type = var->type_loc.type;
         expr->kind = EXPR_VAR;
         expr->expr.var = var;
@@ -853,7 +854,6 @@ static bool resolve_member(ASTExpr* expr)
         expr->expr.member_builtin.parent_expr = parent;
         expr->expr.member_builtin.symbol = member.sym;
         return true;
-    case TYPE_OPTIONAL:
     case TYPE_STRUCT:
     case TYPE_UNION: {
         const ObjVarDA members = obj_as_struct(t->user_def)->members;
@@ -889,6 +889,7 @@ static bool resolve_member(ASTExpr* expr)
     case TYPE_POINTER_SINGLE:
     case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
+    case TYPE_OPTIONAL:
     case TYPE_ALIAS_DISTINCT:
     case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
@@ -1772,14 +1773,14 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
         return false;
     }
 
-    if(type_is_int_literal(lt))
-    {
-        sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
-        return false;
-    }
 
     if(rhs->kind == EXPR_CONSTANT)
     {
+        if(lt == g_type_neg_int_lit || (kind != BINARY_SHL && lt == g_type_pos_int_lit))
+        {
+            sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
+            return false;
+        }
         Int128 r = rhs->expr.constant.i;
         if(type_is_signed(rt) && i128_is_neg(r))
         {
@@ -1814,6 +1815,12 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
             convert_to_const_int(expr, expr->type, new_val);
             return true;
         }
+    }
+
+    if(type_is_int_literal(lt))
+    {
+        sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
+        return false;
     }
 
     if(!implicit_cast(rhs, type_to_unsigned(lt))) return false;
