@@ -1,5 +1,9 @@
 #include "semantics.h"
 
+// FIXME: Major bug when resolving types regarding circular definitions.
+// Something like var i: #typeof(i) crashes the compiler instead of erroring.
+// Right now I am not fixing it because it is somewhat niche but this is in need
+// of a fix for sure.
 static bool resolve_array(Type* arr_ty, SourceLoc error_loc);
 static bool resolve_func_ptr(Type* func_ty);
 static bool resolve_multi_pointer(Type* pointer, SourceLoc error_loc);
@@ -73,9 +77,9 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
         return true;
     }
     case TYPE_OPTIONAL:
-        if(!resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.")) break;
-        type->status = type->array.elem_type->status;
-        type->visibility = type->array.elem_type->visibility;
+        if(!resolve_type(&type->optional.base, TYPE_RES_NORMAL, error_loc, "You cannot have optionals of type %s.")) break;
+        type->status = type->optional.base->status;
+        type->visibility = type->optional.base->visibility;
         return true;
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT: {
@@ -165,7 +169,7 @@ static bool resolve_func_ptr(Type* type)
             type->visibility = param->type_loc.type->visibility;
     }
     g_sema.type_res_allow_unresolved = prev;
-
+    type->status = STATUS_RESOLVED;
     return valid;
 }
 
