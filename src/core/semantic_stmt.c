@@ -299,7 +299,7 @@ static void analyze_switch(ASTStmt* stmt)
     bool prev_unreachable = g_sema.code_is_unreachable;
     bool prev_errored = g_sema.has_errored_unreachable;
 
-    analyze_rvalue(swi->expr);
+    if(!analyze_rvalue(swi->expr)) return;
     TypeKind kind = swi->expr->type->canonical->kind;
     if(!type_kind_is_integer(kind) && !type_kind_is_char(kind) && kind != TYPE_ENUM_DISTINCT)
     {

@@ -299,6 +299,37 @@ static bool rule_ptr_to_ptr(CastParams* const params)
                type_to_string(params->from), type_to_string(params->to));
 }
 
+static bool rule_arr_to_arr(CastParams* const params)
+{
+    // TODO: For slices maybe allow same size bases to be casted? E.g. []int -> []uint
+    // Going from *const T to *T is illegal.
+    if(params->fromc->kind != TYPE_SLICE || params->toc->kind != TYPE_SLICE)
+    {
+        CAST_ERROR("Casting from %s to %s is not allowed.",
+                   type_to_string(params->from), type_to_string(params->to));
+    }
+
+    Type* const from_base = params->fromc->slice.base;
+    Type* const to_base = params->toc->slice.base;
+    if(type_size(from_base) != type_size(to_base))
+    {
+        CAST_ERROR("Cannot cast from %s to %s, the base types have different sizes.",
+                   type_to_string(params->from), type_to_string(params->to));
+    }
+
+    if(params->explicit) return true;
+
+    if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && FLAG_IS_NOT_SET(to_base->qualifiers, TYPE_QUAL_CONST))
+    {
+        CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
+                   type_to_string(params->from), type_to_string(params->to));
+    }
+
+    if(type_equal(from_base, to_base)) return true;
+    CAST_ERROR("Unable to implicitly cast between slice types %s and %s.",
+               type_to_string(params->from), type_to_string(params->to));
+}
+
 static bool rule_str_to_ptr(CastParams* const params)
 {
     TypeKind kind = params->toc->pointer.base->canonical->kind;
@@ -670,6 +701,7 @@ static void cast_init_list(CastParams* const params)
 #define PTRBOO { rule_explicit_only      , cast_ptr_to_bool }
 #define PTRINT { rule_explicit_only      , cast_ptr_to_int }
 #define PTRPTR { rule_ptr_to_ptr         , cast_ptr_to_ptr }
+#define ARRARR { rule_arr_to_arr         , cast_copy }
 #define STRPTR { rule_str_to_ptr         , cast_copy }
 #define ATOOPT { rule_any_to_opt         , cast_to_optional }
 #define OPTOPT { rule_opt_to_opt         , cast_copy }
@@ -684,7 +716,7 @@ static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT] = {
     [CAST_GROUP_INT]       = { NOALLW, INTBOO, CHAINT, INTINT, INTFLT, INTPTR, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_FLOAT]     = { NOALLW, FLTBOO, FLTINT, FLTINT, FLTFLT, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_PTR]       = { NOALLW, PTRBOO, NOALLW, PTRINT, NOALLW, PTRPTR, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
-    [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
+    [CAST_GROUP_ARRAY]     = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ARRARR, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_STRUCT]    = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, ATOOPT, NOTDEF, DISTIN },
     [CAST_GROUP_OPTIONAL]  = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, OPTOPT, NOALLW, DISTIN },
     [CAST_GROUP_INIT_LIST] = { NOALLW, NOALLW, NOALLW, NOALLW, NOALLW, STRPTR, ILSARR, NOALLW, ATOOPT, NOTDEF, DISTIN },

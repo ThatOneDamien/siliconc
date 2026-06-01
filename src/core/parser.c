@@ -544,11 +544,12 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     else
         enum_->underlying.type = g_type_int;
 
-    CONSUME_OR_RET(TOKEN_LBRACE, NULL);
-    if(tok_equal(l, TOKEN_RBRACE))
+    if(!consume(l, TOKEN_LBRACE)) goto BAD_PARSE;
+    if(try_consume(l, TOKEN_RBRACE))
     {
         sic_error_at(enum_->header.loc, "Enum declaration is empty.");
-        return NULL;
+        invalidate_obj(&enum_->header);
+        return true;
     }
 
     while(!try_consume(l, TOKEN_RBRACE))

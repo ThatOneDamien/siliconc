@@ -213,6 +213,7 @@ static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
         return false;
     case EXPR_ARRAY_ACCESS: {
         ASTExprAAccess* access = &expr->expr.array_access;
+        if(access->array_expr->type->canonical->kind != TYPE_STATIC_ARRAY) break;
         if(!analyze_lvalue_dispatch(access->array_expr, will_write)) return false;
         expr->is_const_eval = access->array_expr->is_const_eval && access->index_expr->is_const_eval;
         break;

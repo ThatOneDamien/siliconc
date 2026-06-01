@@ -20,6 +20,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
 static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolved);
 static void print_constant(const ASTExpr* expr, bool allow_unresolved);
 static inline const char* debug_type_to_str(Type* type, bool allow_unresolved);
+static inline void scratch_append_debug_typename(const Type* type);
 
 void print_token(const Token* tok)
 {
@@ -155,7 +156,8 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         print_expr_at_depth(stmt->stmt.expr, depth + 1, NULL, allow_unresolved);
         return;
     case STMT_FOR:
-        SIC_TODO();
+        print_expr_at_depth(stmt->stmt.for_.collection, depth + 1, "collection", allow_unresolved);
+        print_stmt_at_depth(stmt->stmt.for_.body, depth + 1, "body", allow_unresolved);
         return;
     case STMT_IF:
         print_expr_at_depth(stmt->stmt.if_.cond, depth + 1, "cond", allow_unresolved);
@@ -199,7 +201,7 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     switch(expr->kind)
     {
     case EXPR_INVALID:
-        printf(HL_BLUE "Invalid" HL_STOP " ]\n");
+        printf(HL_BLUE "Invalid Expression" HL_STOP " ]\n");
         return;
     case EXPR_ARRAY_ACCESS:
         printf("Array Access ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
@@ -265,7 +267,16 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
                debug_type_to_str(expr->type, allow_unresolved));
         return;
     case EXPR_RANGE:
+        printf("Range ] (Type: %s)\n",
+                debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.range.from, depth + 1, "from", allow_unresolved);
+        print_expr_at_depth(expr->expr.range.to, depth + 1, "to", allow_unresolved);
+        return;
     case EXPR_SLICE:
+        printf("Slice ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.array_access.array_expr, depth + 1, NULL, allow_unresolved);
+        print_expr_at_depth(expr->expr.array_access.index_expr, depth + 1, NULL, allow_unresolved);
+        return;
     case EXPR_STRUCT_INIT_LIST:
         SIC_TODO();
     case EXPR_TUPLE:
@@ -367,7 +378,7 @@ static void print_constant(const ASTExpr* expr, bool allow_unresolved)
 static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
 {
     if(type == NULL)
-        return allow_unresolved ? HL_YELLOW "<Null>" HL_STOP : HL_RED "<Null>" HL_STOP;
+        return allow_unresolved ? HL_YELLOW "<NULL>" HL_STOP : HL_RED "<NULL>" HL_STOP;
 
     const char* type_string;
     ResolveStatus status = type->status;
@@ -375,24 +386,10 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
     {
     case TYPE_INVALID:
         return HL_BLUE "<Invalid>" HL_STOP;
-    case TYPE_TYPEOF:
-        type_string = "<typeof(...)>";
-        break;
-    case TYPE_UNRESOLVED_USER:
-        scratch_clear();
-        scratch_append(type->unresolved.data[0].sym);
-        for(uint32_t i = 1; i < type->unresolved.size; ++i)
-        {
-            scratch_append("::");
-            scratch_append(type->unresolved.data[i].sym);
-        }
-        type_string = scratch_string();
-        break;
     default:
-        // Hack to get past assert. I dont want to remove the check from type_to_string
-        type->status = STATUS_RESOLVED;
-        type_string = type_to_string(type);
-        type->status = status;
+        scratch_clear();
+        scratch_append_debug_typename(type);
+        type_string = scratch_string();
         break;
     }
 
@@ -402,8 +399,128 @@ static inline const char* debug_type_to_str(Type* type, bool allow_unresolved)
     return str_format(HL_GREEN "%s" HL_STOP, type_string);
 }
 
+static inline void scratch_append_debug_typename(const Type* type)
+{
+    DBG_ASSERT(type != NULL);
+    switch(type->kind)
+    {
+    case TYPE_VOID:
+    case NUMERIC_TYPES:
+        static_assert(TYPE_INT - TYPE_VOID + TOKEN_VOID == TOKEN_INT, "Check enum conversion");
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(tok_kind_to_str(type->kind - TYPE_VOID + TOKEN_VOID)); // Convert type enum to token enum
+        return;
+    case TYPE_POINTER_SINGLE:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendc('*');
+        scratch_append_debug_typename(type->pointer.base);
+        return;
+    case TYPE_POINTER_MULTI_STATIC:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendf("*[%lu]", type->pointer.static_len);
+        scratch_append_debug_typename(type->pointer.base);
+        return;
+    case TYPE_POINTER_MULTI_UNKNOWN:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append("*[*]");
+        scratch_append_debug_typename(type->pointer.base);
+        return;
+    case TYPE_FUNC_PTR: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        FuncSignature* sig = type->func_ptr;
+        scratch_append("fn (");
+        if(sig->params.size > 0)
+            scratch_append_debug_typename(sig->params.data[0]->type_loc.type);
+        for(uint32_t i = 1; i < sig->params.size; ++i)
+        {
+            scratch_appendc(',');
+            scratch_append_debug_typename(sig->params.data[i]->type_loc.type);
+        }
+        scratch_append(") -> ");
+        scratch_append_debug_typename(sig->ret_type.type);
+        return;
+    }
+    case TYPE_SLICE:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append("[]");
+        scratch_append_debug_typename(type->slice.base);
+        return;
+    case TYPE_OPTIONAL:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_appendc('?');
+        scratch_append_debug_typename(type->optional.base);
+        return;
+    case TYPE_STATIC_ARRAY:
+        // Dont print qualifiers for array, they shouldn't have any
+        if(type->status == STATUS_RESOLVED)
+            scratch_appendf("[%lu]", type->array.static_len);
+        else
+            scratch_append("[???]");
+        scratch_append_debug_typename(type->array.elem_type);
+        return;
+    case TYPE_ALIAS:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(" a.k.a (");
+        scratch_append_debug_typename(type->canonical);
+        scratch_appendc(')');
+        return;
+    case TYPE_ALIAS_DISTINCT:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        return;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        scratch_append(obj_as_enum(type->user_def)->header.sym);
+        return;
+    case TYPE_STRUCT: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        scratch_append(s ? s : "anonymous struct");
+        return;
+    }
+    case TYPE_UNION: {
+        if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
+        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        scratch_append(s ? s : "anonymous union");
+        return;
+    }
+    case TYPE_INIT_LIST:
+        scratch_append("initializer list");
+        return;
+    case TYPE_STRING_LITERAL:
+        scratch_append("string");
+        return;
+    case TYPE_NULL:
+        scratch_append("null");
+        return;
+    case TYPE_INVALID:
+        scratch_append("<Invalid>");
+        return;
+    case TYPE_INFERRED_ARRAY:
+        scratch_append("[*]");
+        scratch_append_debug_typename(type->array.elem_type);
+        return;
+    case TYPE_TYPEOF:
+        scratch_append("typeof(...)");
+        return;
+    case TYPE_UNRESOLVED_USER:
+        scratch_append(type->unresolved.data[0].sym);
+        for(uint32_t i = 1; i < type->unresolved.size; ++i)
+        {
+            scratch_append("::");
+            scratch_append(type->unresolved.data[i].sym);
+        }
+        return;
+    case __TYPE_COUNT:
+        break;
+    }
+    SIC_UNREACHABLE();
+}
+
 static const char* s_stmt_type_strs[] = {
-    [STMT_INVALID]     = (HL_BLUE "Invalid" HL_STOP),
+    [STMT_INVALID]     = (HL_BLUE "Invalid Statement" HL_STOP),
     [STMT_BLOCK]       = "Block",
     [STMT_BREAK]       = "Break",
     [STMT_CONTINUE]    = "Continue",

@@ -1278,7 +1278,7 @@ static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, ASTExpr* expr
     for(uint32_t i = 0; i < struct_->members.size; ++i)
     {
         if(values[i] == NULL)
-            values[i] = LLVMConstNull(get_llvm_type(c, struct_->members.data[0]->type_loc.type));
+            values[i] = LLVMConstNull(get_llvm_type(c, struct_->members.data[i]->type_loc.type));
     }
     return LLVMConstNamedStruct(get_llvm_type(c, struct_type), values, struct_->members.size);
 }
