@@ -57,6 +57,7 @@ class TestMeta:
         lines = proc_res.stderr.splitlines()
         unexpected: list[str] = []
         i = 0
+        expected_count = len(self.expected)
         prev_success = True
         while i < len(lines):
             line = lines[i]
@@ -86,6 +87,12 @@ class TestMeta:
         has_more_expected = len(self.expected) > 0
         has_unexpected = len(unexpected) > 0
         if not has_more_expected and not has_unexpected:
+            if expected_count > 0 and proc_res.returncode == 0:
+                self.print_fail('Compiler exited with 0 exit code despite errors.')
+                return False
+            elif expected_count == 0 and proc_res.returncode != 0:
+                self.print_fail(f'Compiler exited with nonzero exit code({proc_res.returncode}) despite no errors.')
+                return False
             print(color_str(f'[PASS] {self.name}', StatusColor.PASS))
             return True
 
@@ -150,7 +157,6 @@ class TestRunner:
                     print(color_str('    Extra stderr: ', StatusColor.INFO))
                     for line in proc_res.stderr.splitlines():
                         print(f'        {line}')
-
             elif test.check_result(proc_res):
                 self.tests_passed += 1
         except subprocess.TimeoutExpired:

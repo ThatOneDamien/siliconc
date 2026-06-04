@@ -67,7 +67,7 @@ static void analyze_module(ObjModule* module)
     if(module == &g_compiler.top_module && g_compiler.emit_link)
         analyze_main();
 
-    ASTStmt* assert_ = module->ct_asserts;
+    Stmt* assert_ = module->ct_asserts;
     while(assert_ != NULL)
     {
         analyze_ct_assert(assert_);
@@ -640,7 +640,7 @@ static bool analyze_attributes(Object* obj)
             continue;
         case ATTR_LINK_NAME: {
             if(!check_attribute_args(attr, 1)) break;
-            ASTExpr* expr = attr->args.data[0];
+            Expr* expr = attr->args.data[0];
             if(!analyze_expr(expr)) break;
             if(expr->kind != EXPR_CONSTANT || expr->expr.constant.kind != CONSTANT_STRING)
             {
@@ -853,7 +853,7 @@ bool analyze_enum_value(ObjEnum* parent, uint32_t index)
 
     bool enum_valid = analyze_enum_underlying(parent);
     Type* underlying = parent->underlying.type;
-    ASTExpr* value_expr = value->raw_value;
+    Expr* value_expr = value->raw_value;
 
     value->header.status = STATUS_RESOLVING;
 

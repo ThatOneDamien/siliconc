@@ -158,9 +158,6 @@ void lexer_advance(Lexer* l)
     case '^':
         t->kind = consume(l, '=') ? TOKEN_BIT_XOR_ASSIGN : TOKEN_BIT_XOR;
         break;
-    case '=':
-        t->kind = consume(l, '=') ? TOKEN_EQ : TOKEN_ASSIGN;
-        break;
     case '%':
         t->kind = consume(l, '=') ? TOKEN_MOD_ASSIGN : TOKEN_MODULO;
         break;
@@ -169,6 +166,14 @@ void lexer_advance(Lexer* l)
             t->kind = TOKEN_DIV_ASSIGN;
         else
             t->kind = TOKEN_DIV;
+        break;
+    case '=':
+        if(consume(l, '='))
+            t->kind = TOKEN_EQ;
+        else if(consume(l, '>'))
+            t->kind = TOKEN_FAT_ARROW;
+        else
+            t->kind = TOKEN_ASSIGN;
         break;
     case '&':
         if(consume(l, '&'))

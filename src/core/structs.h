@@ -50,45 +50,44 @@ typedef struct ObjFuncDA        ObjFuncDA;
 typedef struct ObjImportDA      ObjImportDA;
 typedef struct ObjModuleDA      ObjModuleDA;
 typedef struct ObjVarDA         ObjVarDA;
-typedef struct ASTExprDA        ASTExprDA;
-typedef struct ASTCaseDA        ASTCaseDA;
+typedef struct ExprDA           ExprDA;
+typedef struct StmtCaseDA       StmtCaseDA;
 typedef struct SourceFileDA     SourceFileDA;
 typedef struct AttrDA           AttrDA;
 
 // AST Structs
+// Switch and If are special because they can be expressions+stmts
+typedef struct ASTIf            ASTIf;
+typedef struct ASTSwitch        ASTSwitch;
 typedef struct Attr             Attr;
-typedef struct ASTExprAAccess   ASTExprAAccess;
-typedef struct ASTExprBinary    ASTExprBinary;
-typedef struct ASTExprCall      ASTExprCall;
-typedef struct ASTExprCast      ASTExprCast;
-typedef struct ASTExprCond      ASTExprCond;
-typedef struct ASTExprConstant  ASTExprConstant;
+typedef struct ExprAAccess      ExprArrayAccess;
+typedef struct ExprBinary       ExprBinary;
+typedef struct ExprCall         ExprCall;
+typedef struct ExprCast         ExprCast;
+typedef struct ExprCond         ExprCond;
+typedef struct ExprConstant     ExprConstant;
 typedef struct ArrInitEntry     ArrInitEntry;
 typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
 typedef struct StructInitList   StructInitList;
-typedef struct ASTExprMAccess   ASTExprMAccess;
-typedef struct ASTExprMBuiltin  ASTExprMBuiltin;
-typedef struct ASTExprMethod    ASTExprMethod;
-typedef struct ASTExprPtrOff    ASTExprPtrOff;
-typedef struct ASTExprRange     ASTExprRange;
-typedef struct ASTExprPreIdent  ASTExprPreIdent;
-typedef struct ASTExprTuple     ASTExprTuple;
-typedef struct ASTExprUnary     ASTExprUnary;
-typedef struct ASTExprUAccess   ASTExprUAccess;
-typedef struct ASTExprCTOffset  ASTExprCTOffset;
-typedef struct ASTExpr          ASTExpr;
-typedef struct ASTBlock         ASTBlock;
-typedef struct ASTBreakCont     ASTBreakCont;
-typedef struct ASTCase          ASTCase;
-typedef struct ASTFor           ASTFor;
-typedef struct ASTIf            ASTIf;
-typedef struct ASTReturn        ASTReturn;
-typedef struct ASTSwap          ASTSwap;
-typedef struct ASTSwitch        ASTSwitch;
-typedef struct ASTWhile         ASTWhile;
-typedef struct ASTCtAssert      ASTCtAssert;
-typedef struct ASTStmt          ASTStmt;
+typedef struct ExprMAccess      ExprMemberAccess;
+typedef struct ExprMBuiltin     ExprMemberBuiltin;
+typedef struct ExprMethod       ExprMethod;
+typedef struct ExprPtrOff       ExprPtrOffset;
+typedef struct ExprRange        ExprRange;
+typedef struct ExprTuple        ExprTuple;
+typedef struct ExprUnary        ExprUnary;
+typedef struct ExprUAccess      ExprUnresAccess;
+typedef struct ExprCTOffset     ExprCTOffset;
+typedef struct Expr             Expr;
+typedef struct StmtBreakCont    StmtBreakCont;
+typedef struct StmtCase         StmtCase;
+typedef struct StmtFor          StmtFor;
+typedef struct StmtReturn       StmtReturn;
+typedef struct StmtSwap         StmtSwap;
+typedef struct StmtWhile        StmtWhile;
+typedef struct StmtCtAssert     StmtCTAssert;
+typedef struct Stmt             Stmt;
 
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
@@ -215,7 +214,7 @@ struct TypeArray
     Type* elem_type;
     union
     {
-        ASTExpr*    size_expr;
+        Expr*    size_expr;
         ArrayLength static_len;
     };
 };
@@ -236,7 +235,7 @@ struct TypePointer
     Type* base;
     union
     {
-        ASTExpr*    size_expr;
+        Expr*    size_expr;
         ArrayLength static_len;
     };
 };
@@ -258,15 +257,15 @@ struct Type
 
     union
     {
-        TypeArray       array;
-        TypeBuiltin     builtin;
-        FuncSignature*  func_ptr;
-        TypeOptional    optional;
-        TypePointer     pointer;
-        TypeSlice       slice;
-        ASTExpr*        type_of;
-        ModulePath      unresolved;
-        Object*         user_def;
+        TypeArray      array;
+        TypeBuiltin    builtin;
+        FuncSignature* func_ptr;
+        TypeOptional   optional;
+        TypePointer    pointer;
+        TypeSlice      slice;
+        Expr*          type_of;
+        ModulePath     unresolved;
+        Object*        user_def;
     };
 };
 
@@ -325,16 +324,16 @@ struct ObjVarDA
     uint32_t  size;
 };
 
-struct ASTExprDA
+struct ExprDA
 {
-    ASTExpr** data;
+    Expr** data;
     uint32_t  capacity;
     uint32_t  size;
 };
 
-struct ASTCaseDA
+struct StmtCaseDA
 {
-    ASTCase* data;
+    StmtCase* data;
     uint32_t capacity;
     uint32_t size;
 };
@@ -353,36 +352,70 @@ struct AttrDA
     uint32_t size;
 };
 
+struct ASTIf
+{
+    union
+    {
+        struct
+        {
+            Expr* cond;
+            Stmt* then_stmt;
+            Stmt* else_stmt;
+        };
+        
+        void* backend;
+    };
+};
+
+struct ASTSwitch
+{
+    SymbolLoc label;
+    union
+    {
+        struct
+        {
+            Expr*  expr;
+            StmtCaseDA cases;
+        };
+
+        struct
+        {
+            void* break_block;
+            // TODO: Add retry for use in goto case
+        } backend;
+    };
+};
+
 struct Attr
 {
     Symbol    symbol;
     SourceLoc loc;
     AttrKind  kind;
-    ASTExprDA args;
+    ExprDA args;
 };
 
-struct ASTExprAAccess
+struct ExprAAccess
 {
-    ASTExpr* array_expr;
-    ASTExpr* index_expr;
+    Expr* array_expr;
+    Expr* index_expr;
 };
 
-struct ASTExprBinary
+struct ExprBinary
 {
-    ASTExpr*     lhs;
-    ASTExpr*     rhs;
+    Expr*     lhs;
+    Expr*     rhs;
     BinaryOpKind kind;
 };
 
-struct ASTExprCall
+struct ExprCall
 {
-    ASTExpr*  func_expr;
-    ASTExprDA args;
+    Expr*  func_expr;
+    ExprDA args;
 };
 
-struct ASTExprCast
+struct ExprCast
 {
-    ASTExpr* inner;
+    Expr* inner;
     CastKind kind;
 };
 
@@ -390,10 +423,10 @@ struct ArrInitEntry
 {
     union
     {
-        ASTExpr* arr_index;
+        Expr* arr_index;
         uint64_t const_index;
     };
-    ASTExpr* init_value;
+    Expr* init_value;
 };
 
 struct ArrInitList
@@ -411,7 +444,7 @@ struct StructInitEntry
         SymbolLoc unresolved_member;
         uint32_t  member_idx;
     };
-    ASTExpr*  init_value;
+    Expr*  init_value;
 };
 
 struct StructInitList
@@ -424,7 +457,7 @@ struct StructInitList
 };
 
 
-struct ASTExprConstant
+struct ExprConstant
 {
     ConstantKind  kind;
     bool          is_bit_int; // For integer. I put it here to conserve space. This is true for binary, octal, and hex literals
@@ -437,66 +470,66 @@ struct ASTExprConstant
     };
 };
 
-struct ASTExprCond
+struct ExprCond
 {
-    ASTExpr* cond_expr;
-    ASTExpr* then_expr;
-    ASTExpr* else_expr;
+    Expr* cond_expr;
+    Expr* then_expr;
+    Expr* else_expr;
 };
 
 
-struct ASTExprMAccess
+struct ExprMAccess
 {
-    ASTExpr* parent_expr;
+    Expr* parent_expr;
     ObjVar*  member;
     uint32_t member_idx;
 };
 
-struct ASTExprMBuiltin
+struct ExprMBuiltin
 {
-    ASTExpr* parent_expr;
+    Expr* parent_expr;
     Symbol   symbol;
     uint32_t member_idx;
 };
 
-struct ASTExprMethod
+struct ExprMethod
 {
-    ASTExpr* parent_expr;
+    Expr* parent_expr;
     ObjFunc* method;
 };
 
-struct ASTExprPtrOff
+struct ExprPtrOff
 {
-    ASTExpr* pointer;
-    ASTExpr* offset;
+    Expr* pointer;
+    Expr* offset;
 };
 
-struct ASTExprRange
+struct ExprRange
 {
-    ASTExpr* from;
-    ASTExpr* to;
+    Expr* from;
+    Expr* to;
     // bool     inclusive;
 };
 
-struct ASTExprUnary
+struct ExprUnary
 {
-    ASTExpr*    inner;
+    Expr*    inner;
     UnaryOpKind kind;
 };
 
-struct ASTExprUAccess
+struct ExprUAccess
 {
-    ASTExpr*  parent_expr;
+    Expr*  parent_expr;
     SymbolLoc member;
 };
 
-struct ASTExprCTOffset
+struct ExprCTOffset
 {
     TypeLoc   struct_;
     SymbolLoc member;
 };
 
-struct ASTExpr
+struct Expr
 {
     Type*     type;
     SourceLoc loc;
@@ -506,50 +539,52 @@ struct ASTExpr
 
     union
     {
-        ASTExprAAccess  array_access;
-        ArrInitList     array_init;
-        ASTExprBinary   binary;
-        ASTExprCall     call;
-        ASTExprCast     cast;
-        ASTExprCond     conditional;
-        ASTExprConstant constant;
-        ObjFunc*        function;
-        ASTExprMAccess  member_access;
-        ASTExprMBuiltin member_builtin;
-        ASTExprMethod   method_access;
-        ASTExprPtrOff   pointer_offset;
-        ASTExprRange    range;
-        StructInitList  struct_init;
-        ASTExprDA       tuple;
-        Object*         type_ident;
-        ASTExprUnary    unary;
-        ASTExprUAccess  unresolved_access;
-        ModulePath      unresolved_ident;
-        ASTExpr*        unwrap;
-        ObjVar*         var;
+        ExprArrayAccess   array_access;
+        ArrInitList       array_init;
+        ExprBinary        binary;
+        ExprCall          call;
+        ExprCast          cast;
+        ExprCond          conditional;
+        ExprConstant      constant;
+        ObjFunc*          function;
+        ASTIf             if_;
+        ExprMemberAccess  member_access;
+        ExprMemberBuiltin member_builtin;
+        ExprMethod        method_access;
+        ExprPtrOffset     pointer_offset;
+        ExprRange         range;
+        StructInitList    struct_init;
+        ASTSwitch         switch_;
+        ExprDA            tuple;
+        Object*           type_ident;
+        ExprUnary         unary;
+        ExprUnresAccess   unresolved_access;
+        ModulePath        unresolved_ident;
+        Expr*             unwrap;
+        ObjVar*           var;
 
-        TypeLoc         ct_typearg;
-        ASTExprCTOffset ct_offsetof;
+        TypeLoc           ct_typearg;
+        ExprCTOffset      ct_offsetof;
     } expr;
 };
 
-struct ASTBreakCont
+struct StmtBreakCont
 {
     union
     {
         SymbolLoc label;
-        ASTStmt*  target;
+        Stmt*  target;
     };
 };
 
-struct ASTCase
+struct StmtCase
 {
-    ASTExpr* expr;
-    ASTStmt* body;
+    Expr* expr;
+    Stmt* body;
     void*    llvm_block_ref;
 };
 
-struct ASTFor
+struct StmtFor
 {
     SymbolLoc label;
     union
@@ -557,8 +592,8 @@ struct ASTFor
         struct
         {
             ObjVar*  loop_var;
-            ASTExpr* collection;
-            ASTStmt* body;
+            Expr* collection;
+            Stmt* body;
         };
 
         struct
@@ -569,52 +604,21 @@ struct ASTFor
     };
 };
 
-struct ASTIf
+struct StmtSwap
 {
-    ASTExpr* cond;
-    ASTStmt* then_stmt;
-    ASTStmt* else_stmt;
+    Expr* left;
+    Expr* right;
 };
 
-struct ASTReturn
-{
-    ASTExpr* ret_expr;
-};
-
-struct ASTSwap
-{
-    ASTExpr* left;
-    ASTExpr* right;
-};
-
-struct ASTSwitch
+struct StmtWhile
 {
     SymbolLoc label;
     union
     {
         struct
         {
-            ASTExpr*  expr;
-            ASTCaseDA cases;
-        };
-
-        struct
-        {
-            void* break_block;
-            // TODO: Add retry for use in goto case
-        } backend;
-    };
-};
-
-struct ASTWhile
-{
-    SymbolLoc label;
-    union
-    {
-        struct
-        {
-            ASTExpr* cond;
-            ASTStmt* body;
+            Expr* cond;
+            Stmt* body;
         };
 
         struct
@@ -625,33 +629,34 @@ struct ASTWhile
     };
 };
 
-struct ASTCtAssert
+struct StmtCtAssert
 {
-    ASTExpr* cond;
-    ASTExpr* err_msg;
+    Expr* cond;
+    Expr* err_msg;
 };
 
-struct ASTStmt
+struct Stmt
 {
     StmtKind  kind;
     bool      always_returns : 1;
-    ASTStmt*  next;
+    Stmt*  next;
     SourceLoc loc;
 
     union
     {
-        ASTStmt*  block;
-        ASTBreakCont break_cont;
-        ObjVar*   declaration;
-        ASTExpr*  expr;
-        ASTFor    for_;
-        ASTIf     if_;
-        ASTReturn return_;
-        ASTSwap   swap;
-        ASTSwitch switch_;
-        ASTWhile  while_;
+        Stmt*      block;
+        StmtBreakCont break_cont;
+        ObjVar*    declaration;
+        Expr*      expr;
+        StmtFor    for_;
+        ASTIf      if_;
+        Expr*      result_val;
+        Expr*      return_val;
+        StmtSwap   swap;
+        ASTSwitch  switch_;
+        StmtWhile  while_;
 
-        ASTCtAssert ct_assert;
+        StmtCTAssert ct_assert;
     } stmt;
 };
 
@@ -690,7 +695,7 @@ struct ObjEnumValue
     Object   header;
     union
     {
-        ASTExpr* raw_value;
+        Expr* raw_value;
         Int128   const_value;
     };
 };
@@ -702,7 +707,7 @@ struct ObjFunc
     FuncSignature  signature;
     SymbolLoc      method_parent;
     Type*          func_type;
-    ASTStmt*       body;
+    Stmt*       body;
     ByteSize       swap_stmt_align;
     ByteSize       swap_stmt_size;
     bool           is_extern;
@@ -732,7 +737,7 @@ struct ObjModule
     ObjImportDA imports;
     ObjectDA    types;
     ObjVarDA    vars;
-    ASTStmt*    ct_asserts;
+    Stmt*    ct_asserts;
     HashMap     module_ns; // Namespace of modules
     HashMap     symbol_ns; // Namespace of types, functions, variables
 };
@@ -766,7 +771,7 @@ struct ObjVar
     Object          header;
     Symbol          link_name;
     TypeLoc         type_loc;
-    ASTExpr*        initial_val;
+    Expr*        initial_val;
     bool            uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
     bool            written;
     bool            read;

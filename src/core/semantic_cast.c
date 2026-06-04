@@ -7,8 +7,8 @@ typedef struct CastRule   CastRule;
 
 struct CastParams
 {
-    ASTExpr*     cast;
-    ASTExpr*     inner;
+    Expr*     cast;
+    Expr*     inner;
     SourceLoc    cast_loc;
     Type*        from;
     Type*        to;
@@ -28,7 +28,7 @@ static const CastGroup s_type_to_group[__TYPE_COUNT];
 static const CastRule s_rule_table[__CAST_GROUP_COUNT][__CAST_GROUP_COUNT];
 
 static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind);
-static inline ASTExpr* get_cast_or_create(CastParams* const params);
+static inline Expr* get_cast_or_create(CastParams* const params);
 
 static inline bool can_cast_params(CastParams* const params)
 {
@@ -60,7 +60,7 @@ static inline bool cast_params(CastParams* const params)
 {
     if(type_equal(params->fromc, params->toc))
     {
-        ASTExpr* to_set;
+        Expr* to_set;
         if(params->cast)
         {
             // Essentially delete the cast expression if it does nothing.
@@ -77,7 +77,7 @@ static inline bool cast_params(CastParams* const params)
     return true;
 }
 
-bool can_cast(ASTExpr* expr, Type* to, bool silent)
+bool can_cast(Expr* expr, Type* to, bool silent)
 {
     CastParams params;
     params.cast = NULL;
@@ -92,7 +92,7 @@ bool can_cast(ASTExpr* expr, Type* to, bool silent)
     return can_cast_params(&params);
 }
 
-void perform_cast(ASTExpr* expr, Type* to)
+void perform_cast(Expr* expr, Type* to)
 {
     // We only need to fill out the required parts of the params needed for conversion.
     CastParams params;
@@ -106,9 +106,9 @@ void perform_cast(ASTExpr* expr, Type* to)
     perform_cast_params(&params);
 }
 
-bool analyze_explicit_cast(ASTExpr* cast)
+bool analyze_explicit_cast(Expr* cast)
 {
-    ASTExpr* inner = cast->expr.cast.inner;
+    Expr* inner = cast->expr.cast.inner;
     if(!analyze_rvalue(inner) || !resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
         return false;
 
@@ -126,7 +126,7 @@ bool analyze_explicit_cast(ASTExpr* cast)
     return cast_params(&params);
 }
 
-bool implicit_cast(ASTExpr* expr, Type* desired)
+bool implicit_cast(Expr* expr, Type* desired)
 {
     DBG_ASSERT(desired->status == STATUS_RESOLVED);
     if(!analyze_rvalue(expr) || type_is_bad(desired))
@@ -146,7 +146,7 @@ bool implicit_cast(ASTExpr* expr, Type* desired)
     return cast_params(&params);
 }
 
-bool implicit_cast_silent(ASTExpr* expr, Type* desired)
+bool implicit_cast_silent(Expr* expr, Type* desired)
 {
     DBG_ASSERT(desired->status == STATUS_RESOLVED);
     if(!analyze_rvalue(expr) || type_is_bad(desired))
@@ -166,7 +166,7 @@ bool implicit_cast_silent(ASTExpr* expr, Type* desired)
     return cast_params(&params);
 }
 
-bool implicit_cast_vararg(ASTExpr* arg)
+bool implicit_cast_vararg(Expr* arg)
 {
     if(!analyze_rvalue(arg)) return false;
     Type* to;
@@ -460,7 +460,7 @@ static void cast_bool_to_int(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_UINT_WIDEN;
 }
@@ -475,7 +475,7 @@ static void cast_int_to_bool(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_INT_TO_BOOL;
 }
@@ -487,7 +487,7 @@ static void cast_int_to_int(CastParams* const params)
     if(params->inner->kind == EXPR_CONSTANT)
     {
         Int128 val = params->inner->expr.constant.i;
-        ASTExpr* const cast = params->cast == NULL ? params->inner : params->cast;
+        Expr* const cast = params->cast == NULL ? params->inner : params->cast;
         convert_to_constant(cast, params->to, CONSTANT_INTEGER);
         if(to_bit_width == 128)
         {
@@ -526,7 +526,7 @@ static void cast_int_to_int(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
 
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = kind;
@@ -541,7 +541,7 @@ static void cast_int_to_float(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = type_is_signed(params->fromc) ? CAST_SINT_TO_FLOAT : CAST_UINT_TO_FLOAT;
 }
@@ -554,7 +554,7 @@ static void cast_int_to_ptr(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_INT_TO_PTR;
 }
@@ -568,7 +568,7 @@ static void cast_float_to_float(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = type_size(params->fromc) < type_size(params->toc) ? CAST_FLOAT_WIDEN : CAST_FLOAT_TRUNCATE;
 }
@@ -582,7 +582,7 @@ static void cast_float_to_bool(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_FLOAT_TO_BOOL;
 }
@@ -596,7 +596,7 @@ static void cast_float_to_int(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = type_is_signed(params->toc) ? CAST_FLOAT_TO_SINT : CAST_FLOAT_TO_UINT;
 }
@@ -610,7 +610,7 @@ static void cast_ptr_to_bool(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_PTR_TO_BOOL;
 }
@@ -623,7 +623,7 @@ static void cast_ptr_to_int(CastParams* const params)
         return;
     }
 
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_PTR_TO_INT;
 }
@@ -654,7 +654,7 @@ static void cast_to_optional(CastParams* const params)
     sub_params.from = params->from;
     sub_params.fromc = params->fromc;
     perform_cast_params(&sub_params);
-    ASTExpr* const cast = get_cast_or_create(params);
+    Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
     cast->expr.cast.kind = CAST_TO_OPTIONAL;
 }
@@ -766,11 +766,11 @@ static inline CastRule get_cast_rule(TypeKind from_kind, TypeKind to_kind)
     return s_rule_table[from][to];
 }
 
-static inline ASTExpr* get_cast_or_create(CastParams* const params)
+static inline Expr* get_cast_or_create(CastParams* const params)
 {
     if(params->cast != NULL) return params->cast;
     params->cast = params->inner;
-    params->inner = MALLOC_STRUCT(ASTExpr);
+    params->inner = MALLOC_STRUCT(Expr);
     *params->inner = *params->cast;
     params->cast->kind = EXPR_CAST;
     params->cast->expr.cast.inner = params->inner;

@@ -1,62 +1,62 @@
 #include "semantics.h"
 #include <float.h>
 
-static bool analyze_expr_dispatch(ASTExpr* expr);
-static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate);
-static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write);
+static bool analyze_expr_dispatch(Expr* expr);
+static bool analyze_rvalue_dispatch(Expr* expr, bool mutate);
+static bool analyze_lvalue_dispatch(Expr* expr, bool will_write);
 
-static bool analyze_var_rvalue(ASTExpr* expr);
+static bool analyze_var_rvalue(Expr* expr);
 
 // Expr kind functions
-static bool analyze_array_access(ASTExpr* expr);
-static bool analyze_array_init_list(ASTExpr* expr);
-static bool analyze_binary(ASTExpr* expr);
-static bool analyze_call(ASTExpr* expr);
-static bool analyze_conditional(ASTExpr* expr);
-static bool analyze_ident(ASTExpr* expr);
-static bool analyze_range(ASTExpr* expr);
-static bool analyze_struct_init_list(ASTExpr* expr);
-static bool analyze_unary(ASTExpr* expr);
-static bool analyze_unresolved_arrow(ASTExpr* expr);
-static bool analyze_unresolved_dot(ASTExpr* expr);
-static bool analyze_unwrap(ASTExpr* expr);
-static bool analyze_ct_alignof(ASTExpr* expr);
-static bool analyze_ct_offsetof(ASTExpr* expr);
-static bool analyze_ct_sizeof(ASTExpr* expr);
-static bool analyze_ct_type_max(ASTExpr* expr);
-static bool analyze_ct_type_min(ASTExpr* expr);
+static bool analyze_array_access(Expr* expr);
+static bool analyze_array_init_list(Expr* expr);
+static bool analyze_binary(Expr* expr);
+static bool analyze_call(Expr* expr);
+static bool analyze_conditional(Expr* expr);
+static bool analyze_ident(Expr* expr);
+static bool analyze_range(Expr* expr);
+static bool analyze_struct_init_list(Expr* expr);
+static bool analyze_unary(Expr* expr);
+static bool analyze_unresolved_arrow(Expr* expr);
+static bool analyze_unresolved_dot(Expr* expr);
+static bool analyze_unwrap(Expr* expr);
+static bool analyze_ct_alignof(Expr* expr);
+static bool analyze_ct_offsetof(Expr* expr);
+static bool analyze_ct_sizeof(Expr* expr);
+static bool analyze_ct_type_max(Expr* expr);
+static bool analyze_ct_type_min(Expr* expr);
 
 // Binary functions
-static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne);
-static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
-static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
-static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
-static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind);
-static bool analyze_bit_op(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
-static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs);
+static bool analyze_add(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_sub(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_mul(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_div(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_mod(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_logical(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne);
+static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
+static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
+static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
+static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
+static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs);
 
 // Unary functions
-static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_bit_not(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_deref(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner);
-static bool analyze_negate(ASTExpr* expr, ASTExpr* inner);
+static bool analyze_addr_of(Expr* expr, Expr* inner);
+static bool analyze_bit_not(Expr* expr, Expr* inner);
+static bool analyze_deref(Expr* expr, Expr* inner);
+static bool analyze_incdec(Expr* expr, Expr* inner);
+static bool analyze_log_not(Expr* expr, Expr* inner);
+static bool analyze_negate(Expr* expr, Expr* inner);
 
-static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc);
-static void convert_to_const_zero(ASTExpr* expr, Type* type);
+static bool basic_arith_type_conv(Expr* expr1, Expr* expr2, SourceLoc loc);
+static void convert_to_const_zero(Expr* expr, Type* type);
 
-bool analyze_expr(ASTExpr* expr)
+bool analyze_expr(Expr* expr)
 {
     DBG_ASSERT(expr != NULL);
     if(expr->is_evaluated) return !expr_is_bad(expr);
@@ -67,25 +67,25 @@ bool analyze_expr(ASTExpr* expr)
     return success;
 }
 
-bool analyze_rvalue(ASTExpr* expr)
+bool analyze_rvalue(Expr* expr)
 {
     DBG_ASSERT(expr != NULL);
     return analyze_expr(expr) && analyze_rvalue_dispatch(expr, true);
 }
 
-bool analyze_rvalue_no_mutate(ASTExpr* expr)
+bool analyze_rvalue_no_mutate(Expr* expr)
 {
     DBG_ASSERT(expr != NULL);
     return analyze_expr(expr) && analyze_rvalue_dispatch(expr, false);
 }
 
-bool analyze_lvalue(ASTExpr* expr, bool will_write)
+bool analyze_lvalue(Expr* expr, bool will_write)
 {
     DBG_ASSERT(expr != NULL);
     return analyze_expr(expr) && analyze_lvalue_dispatch(expr, will_write);
 }
 
-static bool analyze_expr_dispatch(ASTExpr* expr)
+static bool analyze_expr_dispatch(Expr* expr)
 {
     switch(expr->kind)
     {
@@ -105,10 +105,14 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
         return true;
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
+    case EXPR_IF:
+        SIC_TODO();
     case EXPR_RANGE:
         return analyze_range(expr);
     case EXPR_STRUCT_INIT_LIST:
         return analyze_struct_init_list(expr);
+    case EXPR_SWITCH:
+        SIC_TODO();
     case EXPR_TUPLE:
         SIC_TODO();
     case EXPR_UNWRAP:
@@ -146,7 +150,7 @@ static bool analyze_expr_dispatch(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
+static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
 {
     // The expressions must always be evaluated prior to calling this function.
     DBG_ASSERT(expr->is_evaluated);
@@ -183,11 +187,13 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     case EXPR_CAST:
     case EXPR_CONDITIONAL:
     case EXPR_CONSTANT:
+    case EXPR_IF:
     case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
     case EXPR_RANGE:
     case EXPR_SLICE:
     case EXPR_STRUCT_INIT_LIST:
+    case EXPR_SWITCH:
     case EXPR_UNARY:
     case EXPR_UNWRAP:
     case EXPR_ZEROED_OUT:
@@ -205,14 +211,14 @@ static bool analyze_rvalue_dispatch(ASTExpr* expr, bool mutate)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_lvalue_dispatch(ASTExpr* expr, bool will_write)
+static bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
 {
     switch(expr->kind)
     {
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS: {
-        ASTExprAAccess* access = &expr->expr.array_access;
+        ExprArrayAccess* access = &expr->expr.array_access;
         if(access->array_expr->type->canonical->kind != TYPE_STATIC_ARRAY) break;
         if(!analyze_lvalue_dispatch(access->array_expr, will_write)) return false;
         expr->is_const_eval = access->array_expr->is_const_eval && access->index_expr->is_const_eval;
@@ -289,7 +295,7 @@ ERR:
     return false;
 }
 
-static bool analyze_var_rvalue(ASTExpr* expr)
+static bool analyze_var_rvalue(Expr* expr)
 {
     ObjVar* var = expr->expr.var;
     var->read = true;
@@ -320,10 +326,10 @@ static bool analyze_var_rvalue(ASTExpr* expr)
 }
 
 
-static bool analyze_array_access(ASTExpr* expr)
+static bool analyze_array_access(Expr* expr)
 {
-    ASTExpr* arr_expr = expr->expr.array_access.array_expr;
-    ASTExpr* index_expr = expr->expr.array_access.index_expr;
+    Expr* arr_expr = expr->expr.array_access.array_expr;
+    Expr* index_expr = expr->expr.array_access.index_expr;
     bool valid = analyze_expr(arr_expr);
     valid &= analyze_rvalue(index_expr);
     if(!valid) return false;
@@ -377,8 +383,8 @@ static bool analyze_array_access(ASTExpr* expr)
         expr->type = type_slice_of(elem_type);
         if(has_bounds_check && index_expr->kind == EXPR_RANGE)
         {
-            ASTExpr* from = index_expr->expr.range.from;
-            ASTExpr* to = index_expr->expr.range.to;
+            Expr* from = index_expr->expr.range.from;
+            Expr* to = index_expr->expr.range.to;
             if((from->kind == EXPR_CONSTANT && from->expr.constant.i.lo >= bounds_check) ||
                (to->kind == EXPR_CONSTANT && to->expr.constant.i.lo > bounds_check))
             {
@@ -419,7 +425,7 @@ static bool analyze_array_access(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_array_init_list(ASTExpr* expr)
+static bool analyze_array_init_list(Expr* expr)
 {
     ArrInitList* list = &expr->expr.array_init;
     bool valid = true;
@@ -479,10 +485,10 @@ static bool analyze_array_init_list(ASTExpr* expr)
     return valid;
 }
 
-static inline bool analyze_binary(ASTExpr* expr)
+static inline bool analyze_binary(Expr* expr)
 {
-    ASTExpr* lhs = expr->expr.binary.lhs;
-    ASTExpr* rhs = expr->expr.binary.rhs;
+    Expr* lhs = expr->expr.binary.lhs;
+    Expr* rhs = expr->expr.binary.rhs;
 
     BinaryOpKind kind = expr->expr.binary.kind;
     switch(kind)
@@ -539,10 +545,10 @@ static inline bool analyze_binary(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_call(ASTExpr* expr)
+static bool analyze_call(Expr* expr)
 {
-    ASTExpr* func_expr = expr->expr.call.func_expr;
-    ASTExprDA* args = &expr->expr.call.args;
+    Expr* func_expr = expr->expr.call.func_expr;
+    ExprDA* args = &expr->expr.call.args;
     if(!analyze_expr(func_expr)) return false;
     Type* func_type;
 
@@ -553,7 +559,7 @@ static bool analyze_call(ASTExpr* expr)
         DBG_ASSERT(func_type->kind == TYPE_FUNC_PTR);
         break;
     case EXPR_METHOD: {
-        ASTExpr* parent = func_expr->expr.method_access.parent_expr;
+        Expr* parent = func_expr->expr.method_access.parent_expr;
         ObjFunc* method = func_expr->expr.method_access.method;
         func_type = func_expr->type;
         const ObjVarDA params = method->signature.params;
@@ -566,8 +572,8 @@ static bool analyze_call(ASTExpr* expr)
         }
         if(params.data[0]->type_loc.type->canonical->kind == TYPE_POINTER_SINGLE)
         {
-            ASTExpr* inner = parent;
-            parent = CALLOC_STRUCT(ASTExpr);
+            Expr* inner = parent;
+            parent = CALLOC_STRUCT(Expr);
             parent->kind = EXPR_UNARY;
             parent->loc = inner->loc;
             parent->expr.unary.inner = inner;
@@ -575,7 +581,7 @@ static bool analyze_call(ASTExpr* expr)
         }
 
         da_reserve(args, args->size + 1);
-        memcpy(&args->data[1], &args->data[0], sizeof(ASTExpr*) * args->size);
+        memcpy(&args->data[1], &args->data[0], sizeof(Expr*) * args->size);
         args->size++;
         args->data[0] = parent;
         func_expr->kind = EXPR_FUNCTION;
@@ -632,7 +638,7 @@ static bool analyze_call(ASTExpr* expr)
     return valid;
 }
 
-static bool analyze_ident(ASTExpr* expr)
+static bool analyze_ident(Expr* expr)
 {
     const ModulePath path = expr->expr.unresolved_ident;
     if(g_sema.cur_enum != NULL && path.size == 1)
@@ -695,10 +701,10 @@ static bool analyze_ident(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_range(ASTExpr* expr)
+static bool analyze_range(Expr* expr)
 {
-    ASTExpr* from = expr->expr.range.from;
-    ASTExpr* to = expr->expr.range.to;
+    Expr* from = expr->expr.range.from;
+    Expr* to = expr->expr.range.to;
     bool valid = implicit_cast(from, g_type_usize);
     valid &= implicit_cast(to, g_type_usize);
     if(!valid) return false;
@@ -713,7 +719,7 @@ static bool analyze_range(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_struct_init_list(ASTExpr* expr)
+static bool analyze_struct_init_list(Expr* expr)
 {
     const StructInitList list = expr->expr.struct_init;
     Object* obj = find_obj(&list.struct_path);
@@ -773,9 +779,9 @@ NEXT_ENTRY:;
     return valid;
 }
 
-static bool analyze_conditional(ASTExpr* expr)
+static bool analyze_conditional(Expr* expr)
 {
-    ASTExprCond* cond= &expr->expr.conditional;
+    ExprCond* cond= &expr->expr.conditional;
     bool valid = true;
     valid &= analyze_rvalue(cond->cond_expr);
     valid &= analyze_rvalue(cond->then_expr);
@@ -791,9 +797,9 @@ static bool analyze_conditional(ASTExpr* expr)
     return implicit_cast(cond->cond_expr, g_type_bool);
 }
 
-static bool analyze_unary(ASTExpr* expr)
+static bool analyze_unary(Expr* expr)
 {
-    ASTExpr* inner = expr->expr.unary.inner;
+    Expr* inner = expr->expr.unary.inner;
 
     switch(expr->expr.unary.kind)
     {
@@ -816,10 +822,10 @@ static bool analyze_unary(ASTExpr* expr)
     SIC_UNREACHABLE();
 }
 
-static bool resolve_member(ASTExpr* expr)
+static bool resolve_member(Expr* expr)
 {
     SymbolLoc member = expr->expr.unresolved_access.member;
-    ASTExpr* parent = expr->expr.unresolved_access.parent_expr;
+    Expr* parent = expr->expr.unresolved_access.parent_expr;
     DBG_ASSERT(parent->type->status == STATUS_RESOLVED);
     Type* t = parent->type->canonical;
     switch(t->kind)
@@ -913,9 +919,9 @@ static bool resolve_member(ASTExpr* expr)
     return NULL;
 }
 
-static bool analyze_unresolved_arrow(ASTExpr* expr)
+static bool analyze_unresolved_arrow(Expr* expr)
 {
-    ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
+    Expr* deref = CALLOC_STRUCT(Expr);
     deref->loc = expr->loc;
     deref->kind = EXPR_UNARY;
     deref->expr.unary.kind = UNARY_DEREF;
@@ -926,10 +932,10 @@ static bool analyze_unresolved_arrow(ASTExpr* expr)
     return resolve_member(expr);
 }
 
-static bool analyze_unresolved_dot(ASTExpr* expr)
+static bool analyze_unresolved_dot(Expr* expr)
 {
-    ASTExprUAccess* uaccess = &expr->expr.unresolved_access;
-    ASTExpr* parent = uaccess->parent_expr;
+    ExprUnresAccess* uaccess = &expr->expr.unresolved_access;
+    Expr* parent = uaccess->parent_expr;
     if(!analyze_expr(parent)) return false;
 
     if(parent->kind == EXPR_TYPE_IDENT)
@@ -999,7 +1005,7 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
 
     if(parent->type->canonical->kind == TYPE_POINTER_SINGLE)
     {
-        ASTExpr* deref = CALLOC_STRUCT(ASTExpr);
+        Expr* deref = CALLOC_STRUCT(Expr);
         deref->loc = expr->loc;
         deref->kind = EXPR_UNARY;
         deref->expr.unary.kind = UNARY_DEREF;
@@ -1012,9 +1018,9 @@ static bool analyze_unresolved_dot(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_unwrap(ASTExpr* expr)
+static bool analyze_unwrap(Expr* expr)
 {
-    ASTExpr* inner = expr->expr.unwrap;
+    Expr* inner = expr->expr.unwrap;
     if(!analyze_expr(inner)) return false;
     Type* inner_ty = inner->type->canonical;
     if(inner_ty->kind != TYPE_OPTIONAL)
@@ -1027,7 +1033,7 @@ static bool analyze_unwrap(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_ct_alignof(ASTExpr* expr)
+static bool analyze_ct_alignof(Expr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get alignment of type"))
         return false;
@@ -1037,9 +1043,9 @@ static bool analyze_ct_alignof(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_ct_offsetof(ASTExpr* expr)
+static bool analyze_ct_offsetof(Expr* expr)
 {
-    ASTExprCTOffset* off = &expr->expr.ct_offsetof;
+    ExprCTOffset* off = &expr->expr.ct_offsetof;
     if(!resolve_type(&off->struct_.type, TYPE_RES_NORMAL, off->struct_.loc, "Cannot get offsetof member with base type %s."))
         return false;
     if(off->struct_.type->canonical->kind != TYPE_STRUCT)
@@ -1049,7 +1055,7 @@ static bool analyze_ct_offsetof(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_ct_sizeof(ASTExpr* expr)
+static bool analyze_ct_sizeof(Expr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get size of type %s."))
         return false;
@@ -1059,7 +1065,7 @@ static bool analyze_ct_sizeof(ASTExpr* expr)
     return true;
 }
 
-static bool analyze_ct_type_max(ASTExpr* expr)
+static bool analyze_ct_type_max(Expr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get max of type %s."))
         return false;
@@ -1097,7 +1103,7 @@ RETRY:
     }
 }
 
-static bool analyze_ct_type_min(ASTExpr* expr)
+static bool analyze_ct_type_min(Expr* expr)
 {
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get min of type %s."))
         return false;
@@ -1135,7 +1141,7 @@ RETRY:
     }
 }
 
-static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offset, BinaryOpKind kind)
+static bool analyze_pointer_arith(Expr* expr, Expr* pointer, Expr* offset, BinaryOpKind kind)
 {
     Type* ptr_type = pointer->type->canonical;
     Type* offset_type = offset->type->canonical;
@@ -1179,7 +1185,7 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offs
     if(pointer->kind == EXPR_POINTER_OFFSET)
     {
         expr_copy(expr, pointer);
-        *pointer = (ASTExpr) {
+        *pointer = (Expr) {
             .kind = EXPR_BINARY,
             .loc = expr->loc,
             .expr.binary = {
@@ -1202,7 +1208,7 @@ static bool analyze_pointer_arith(ASTExpr* expr, ASTExpr* pointer, ASTExpr* offs
     return true;
 }
 
-static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_add(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1278,7 +1284,7 @@ static bool analyze_add(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_sub(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1349,7 +1355,7 @@ static bool analyze_sub(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_mul(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1415,7 +1421,7 @@ static bool analyze_mul(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_div(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1483,7 +1489,7 @@ static bool analyze_div(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_mod(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1543,7 +1549,7 @@ static bool analyze_mod(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_logical(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= implicit_cast(lhs, g_type_bool);
@@ -1570,7 +1576,7 @@ static bool analyze_logical(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool is_eq_ne)
+static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
 {
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
@@ -1642,7 +1648,7 @@ static bool analyze_comparison(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, bool i
     return false;
 }
 
-static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
+static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1679,7 +1685,7 @@ static bool analyze_eq_ne(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
     return true;
 }
 
-static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
+static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1719,7 +1725,7 @@ static bool analyze_lt_ge(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
     return true;
 }
 
-static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
+static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1759,7 +1765,7 @@ static bool analyze_le_gt(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
     return true;
 }
 
-static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKind kind)
+static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1833,7 +1839,7 @@ static bool analyze_shift(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs, BinaryOpKin
     return true;
 }
 
-static bool analyze_bit_op(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs)
 {
     Type* lhs_type = lhs->type;
     Type* rhs_type = rhs->type;
@@ -1850,7 +1856,7 @@ static bool analyze_bit_op(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
 
 }
 
-static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1877,7 +1883,7 @@ static bool analyze_bit_or(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1903,7 +1909,7 @@ static bool analyze_bit_xor(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
-static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1930,14 +1936,14 @@ static bool analyze_bit_and(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return true;
 }
 
-static bool analyze_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs)
 {
     if(!analyze_lvalue(lhs, true)) return false;
     expr->type = lhs->type;
     return implicit_cast(rhs, lhs->type);
 }
 
-static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
+static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs)
 {
     static BinaryOpKind conversion[BINARY_OP_ASSIGN_END - BINARY_OP_ASSIGN_START + 1] = {
         [BINARY_ADD_ASSIGN     - BINARY_OP_ASSIGN_START] = BINARY_ADD,
@@ -1954,7 +1960,7 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     };
 
     // FIXME: Not sure if this works. We might need to make a deep copy of lhs here
-    ASTExpr* new_rhs = CALLOC_STRUCT(ASTExpr);
+    Expr* new_rhs = CALLOC_STRUCT(Expr);
     new_rhs->kind = EXPR_BINARY;
     new_rhs->loc = expr->loc;
     new_rhs->expr.binary.kind = conversion[expr->expr.binary.kind - BINARY_OP_ASSIGN_START];
@@ -1965,7 +1971,7 @@ static bool analyze_op_assign(ASTExpr* expr, ASTExpr* lhs, ASTExpr* rhs)
     return analyze_assign(expr, lhs, new_rhs);
 }
 
-static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_addr_of(Expr* expr, Expr* inner)
 {
     if(!analyze_lvalue(inner, false)) return false;
     expr->is_const_eval = inner->is_const_eval;
@@ -1991,7 +1997,7 @@ static bool analyze_addr_of(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_bit_not(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_bit_not(Expr* expr, Expr* inner)
 {
     if(!analyze_rvalue(inner)) return false;
     Type* type = inner->type;
@@ -2014,7 +2020,7 @@ static bool analyze_bit_not(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_deref(Expr* expr, Expr* inner)
 {
     if(!analyze_rvalue(inner)) return false;
     Type* ctype = inner->type->canonical;
@@ -2040,7 +2046,7 @@ static bool analyze_deref(ASTExpr* expr, ASTExpr* inner)
     return resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s.");
 }
 
-static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_incdec(Expr* expr, Expr* inner)
 {
     if(!analyze_lvalue(inner, true) || !analyze_rvalue_no_mutate(inner))
         return false;
@@ -2057,7 +2063,7 @@ static bool analyze_incdec(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_log_not(Expr* expr, Expr* inner)
 {
     if(!implicit_cast(inner, g_type_bool)) 
         return false;
@@ -2074,7 +2080,7 @@ static bool analyze_log_not(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
+static bool analyze_negate(Expr* expr, Expr* inner)
 {
     if(!analyze_rvalue(inner)) return false;
     Type* type = inner->type;
@@ -2110,7 +2116,7 @@ static bool analyze_negate(ASTExpr* expr, ASTExpr* inner)
     return true;
 }
 
-static bool resolve_int_lit(ASTExpr* lit, bool to_signed)
+static bool resolve_int_lit(Expr* lit, bool to_signed)
 {
     Type* type = lit->type;
     DBG_ASSERT(type_is_int_literal(type));
@@ -2152,7 +2158,7 @@ static bool resolve_int_lit(ASTExpr* lit, bool to_signed)
 }
 
 // For add/sub/mult/div/mod
-static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
+static bool basic_arith_type_conv(Expr* expr1, Expr* expr2, SourceLoc loc)
 {
     Type* t1  = expr1->type->canonical;
     Type* t2  = expr2->type->canonical;
@@ -2190,7 +2196,7 @@ static bool basic_arith_type_conv(ASTExpr* expr1, ASTExpr* expr2, SourceLoc loc)
 
     if(k1 < k2)
     {
-        ASTExpr* temp = expr1;
+        Expr* temp = expr1;
         expr1 = expr2;
         expr2 = temp;
         t1 = t2;
@@ -2206,7 +2212,7 @@ INT_ERR:
     return false;
 }
 
-static void convert_to_const_zero(ASTExpr* expr, Type* type)
+static void convert_to_const_zero(Expr* expr, Type* type)
 {
     Type* t = type;
 RETRY:

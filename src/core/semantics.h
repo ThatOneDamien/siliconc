@@ -17,8 +17,8 @@ struct SemaContext
     ObjEnum*     cur_enum; // Used when analyzing enums to find members
     Type*        inferred_type;
     
-    ASTStmt*     break_target;
-    ASTStmt*     continue_target;
+    Stmt*     break_target;
+    Stmt*     continue_target;
     bool         type_res_allow_unresolved;
     bool         in_global_init;
     bool         code_is_unreachable;
@@ -37,23 +37,23 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
 bool resolve_import(ObjModule* module, ObjImport* import);
 
 // Statements
-bool analyze_stmt_block(ASTStmt* stmt);
-void analyze_ct_assert(ASTStmt* stmt);
+bool analyze_stmt_block(Stmt* stmt);
+void analyze_ct_assert(Stmt* stmt);
 bool analyze_declaration(ObjVar* decl);
 
 // Expressions
-bool analyze_expr(ASTExpr* expr);
-bool analyze_rvalue(ASTExpr* expr);
-bool analyze_rvalue_no_mutate(ASTExpr* expr);
-bool analyze_lvalue(ASTExpr* expr, bool will_write);
-bool analyze_explicit_cast(ASTExpr* cast);
+bool analyze_expr(Expr* expr);
+bool analyze_rvalue(Expr* expr);
+bool analyze_rvalue_no_mutate(Expr* expr);
+bool analyze_lvalue(Expr* expr, bool will_write);
+bool analyze_explicit_cast(Expr* cast);
 
 // Casting
-bool can_cast(ASTExpr* expr, Type* to, bool silent);
-void perform_cast(ASTExpr* expr, Type* to);
-bool implicit_cast(ASTExpr* expr, Type* desired);
-bool implicit_cast_silent(ASTExpr* expr, Type* desired);
-bool implicit_cast_vararg(ASTExpr* arg);
+bool can_cast(Expr* expr, Type* to, bool silent);
+void perform_cast(Expr* expr, Type* to);
+bool implicit_cast(Expr* expr, Type* desired);
+bool implicit_cast_silent(Expr* expr, Type* desired);
+bool implicit_cast_vararg(Expr* arg);
 
 // Misc
 void       push_obj(Object* obj);
@@ -62,11 +62,11 @@ Object*    find_obj(const ModulePath* path);
 Object*    find_struct_member(ObjStruct* struct_, Symbol sym);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
-void       push_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
-void       pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label);
-ASTStmt*   find_labeled_stmt(SymbolLoc label);
+void       push_labeled_stmt(Stmt* stmt, SymbolLoc label);
+void       pop_labeled_stmt(Stmt* stmt, SymbolLoc label);
+Stmt*   find_labeled_stmt(SymbolLoc label);
 
-static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
+static inline void expr_copy(Expr* dst, const Expr* src)
 {
     if(dst == src) return;
     SourceLoc loc = dst->loc;
@@ -74,7 +74,7 @@ static inline void expr_copy(ASTExpr* dst, const ASTExpr* src)
     dst->loc = loc;
 }
 
-static inline void const_int_correct(ASTExpr* expr)
+static inline void const_int_correct(Expr* expr)
 {
     Type* ctype = type_reduce(expr->type);
     DBG_ASSERT(type_is_integer(ctype));
@@ -121,7 +121,7 @@ static inline Type* flatten_type(Type* type)
     }
 }
 
-static inline void convert_to_constant(ASTExpr* expr, Type* to, ConstantKind kind)
+static inline void convert_to_constant(Expr* expr, Type* to, ConstantKind kind)
 {
     expr->kind = EXPR_CONSTANT;
     expr->is_const_eval = true;
@@ -129,21 +129,21 @@ static inline void convert_to_constant(ASTExpr* expr, Type* to, ConstantKind kin
     expr->type = to;
 }
 
-static inline void convert_to_const_bool(ASTExpr* expr, Type* to, bool value)
+static inline void convert_to_const_bool(Expr* expr, Type* to, bool value)
 {
     DBG_ASSERT(to->canonical->kind == TYPE_BOOL);
     convert_to_constant(expr, to, CONSTANT_BOOL);
     expr->expr.constant.b = value;
 }
 
-static inline void convert_to_const_float(ASTExpr* expr, Type* to, double value)
+static inline void convert_to_const_float(Expr* expr, Type* to, double value)
 {
     DBG_ASSERT(type_is_float(to->canonical));
     convert_to_constant(expr, to, CONSTANT_FLOAT);
     expr->expr.constant.f = value;
 }
 
-static inline void convert_to_const_int(ASTExpr* expr, Type* to, Int128 value)
+static inline void convert_to_const_int(Expr* expr, Type* to, Int128 value)
 {
     DBG_ASSERT(type_is_integer(type_reduce(to)));
     convert_to_constant(expr, to, CONSTANT_INTEGER);
@@ -151,7 +151,7 @@ static inline void convert_to_const_int(ASTExpr* expr, Type* to, Int128 value)
     const_int_correct(expr);
 }
 
-static inline void convert_to_const_pointer(ASTExpr* expr, Type* to, Int128 value)
+static inline void convert_to_const_pointer(Expr* expr, Type* to, Int128 value)
 {
     convert_to_constant(expr, to, CONSTANT_POINTER);
     expr->expr.constant.i = value;

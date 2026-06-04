@@ -28,6 +28,7 @@ static const char* const s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_QUESTION]        = "?",
     [TOKEN_UNDERSCORE]      = "_",
     [TOKEN_ARROW]           = "->",
+    [TOKEN_FAT_ARROW]       = "=>",
     [TOKEN_ASHR]            = ">>",
     [TOKEN_LSHR]            = ">>>",
     [TOKEN_SHL]             = "<<",

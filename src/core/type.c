@@ -252,7 +252,7 @@ Type* type_pointer_to_single(Type* base)
     return base->cache;
 }
 
-Type* type_pointer_to_multi_static(Type* base, ASTExpr* size_expr)
+Type* type_pointer_to_multi_static(Type* base, Expr* size_expr)
 {
     DBG_ASSERT(base != NULL);
     Type* new_type = CALLOC_STRUCT(Type);
@@ -288,7 +288,7 @@ Type* type_func_ptr(FuncSignature* signature)
     return new_type;
 }
 
-Type* type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind)
+Type* type_array_of(Type* elem_ty, Expr* size_expr, TypeKind kind)
 {
     DBG_ASSERT(elem_ty != NULL);
     Type* new_type = CALLOC_STRUCT(Type);

@@ -5,8 +5,8 @@
 
 #include <float.h>
 
-typedef ASTExpr* (*ExprPrefixFunc)(Lexer*);
-typedef ASTExpr* (*ExprInfixFunc)(Lexer*, ASTExpr*);
+typedef Expr* (*ExprPrefixFunc)(Lexer*);
+typedef Expr* (*ExprInfixFunc)(Lexer*, Expr*);
 typedef struct ExprParseRule ExprParseRule;
 struct ExprParseRule
 {
@@ -18,7 +18,7 @@ struct ExprParseRule
 // Top-level grammar
 static bool parse_top_level(Lexer* l);
 static bool parse_attributes(Lexer* l, AttrDA* attrs);
-static bool parse_expr_arguments(Lexer* l, ASTExprDA* args);
+static bool parse_expr_arguments(Lexer* l, ExprDA* args);
 static bool parse_function_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 static bool parse_global_var_decl(Lexer* l, Visibility vis, AttrDA attrs, bool is_extern);
 static bool parse_import(Lexer* l, Visibility vis);
@@ -35,52 +35,58 @@ static bool       parse_typedef(Lexer* l, Visibility vis, AttrDA attrs);
 static bool       parse_type(Lexer* l, TypeLoc* type_loc);
 static ObjVar*    parse_var_declaration(Lexer* l, VarKind kind, Visibility vis);
 
+// Special
+static bool parse_if(Lexer* l, ASTIf* if_, bool is_expr);
+static bool parse_switch(Lexer* l, ASTSwitch* switch_, bool is_expr);
+
+
 // Statements
-static ASTStmt* parse_stmt(Lexer* l);
-static ASTStmt* parse_stmt_block(Lexer* l);
-static ASTStmt* parse_break_continue(Lexer* l, StmtKind kind);
-static ASTStmt* parse_for(Lexer* l);
-static ASTStmt* parse_if(Lexer* l);
-static ASTStmt* parse_return(Lexer* l);
-static ASTStmt* parse_switch(Lexer* l);
-static ASTStmt* parse_while(Lexer* l);
-static ASTStmt* parse_ct_assert(Lexer* l);
-static ASTStmt* parse_ct_if(Lexer* l);
-static ASTStmt* parse_labeled_stmt(Lexer* l);
-static ASTStmt* parse_expr_stmt(Lexer* l);
-static ASTStmt* parse_declaration(Lexer* l);
+static Stmt* parse_stmt(Lexer* l);
+static Stmt* parse_stmt_block(Lexer* l);
+static Stmt* parse_break_continue(Lexer* l, StmtKind kind);
+static Stmt* parse_if_stmt(Lexer* l);
+static Stmt* parse_result_stmt(Lexer* l);
+static Stmt* parse_for(Lexer* l);
+static Stmt* parse_return(Lexer* l);
+static Stmt* parse_switch_stmt(Lexer* l);
+static Stmt* parse_while(Lexer* l);
+static Stmt* parse_ct_assert(Lexer* l);
+static Stmt* parse_ct_if(Lexer* l);
+static Stmt* parse_labeled_stmt(Lexer* l);
+static Stmt* parse_expr_stmt(Lexer* l);
+static Stmt* parse_declaration(Lexer* l);
 
 // Expressions
-static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left, bool allow_struct_expr);
-static inline ASTExpr* parse_expr(Lexer* l)
+static Expr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, Expr* left, bool allow_struct_expr);
+static inline Expr* parse_expr(Lexer* l)
 {
     return parse_expr_with_prec(l, PREC_ASSIGN, NULL, true);
 }
-static inline ASTExpr* parse_condition(Lexer* l)
+static inline Expr* parse_condition(Lexer* l)
 {
     return parse_expr_with_prec(l, PREC_ASSIGN, NULL, false);
 }
-static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs);
-static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr);
-static ASTExpr* parse_cast(Lexer* l);
+static Expr* parse_binary(Lexer* l, Expr* lhs);
+static Expr* parse_call(Lexer* l, Expr* func_expr);
+static Expr* parse_cast(Lexer* l);
 // static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond);
-static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr);
-static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr);
-static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left);
-static ASTExpr* parse_struct_init_list(Lexer* l, ModulePath struct_path);
-static ASTExpr* parse_array_init_list(Lexer* l);
-static ASTExpr* parse_identifier_expr(Lexer* l);
-static ASTExpr* parse_paren_expr(Lexer* l);
-static ASTExpr* parse_unary_prefix(Lexer* l);
-static ASTExpr* parse_binary_literal(Lexer* l);
-static ASTExpr* parse_octal_literal(Lexer* l);
-static ASTExpr* parse_decimal_literal(Lexer* l);
-static ASTExpr* parse_hexadecimal_literal(Lexer* l);
-static ASTExpr* parse_char_literal(Lexer* l);
-static ASTExpr* parse_float_literal(Lexer* l);
-static ASTExpr* parse_string_literal(Lexer* l);
-static ASTExpr* parse_bool_literal(Lexer* l);
-static ASTExpr* parse_null(Lexer* l);
+static Expr* parse_array_access(Lexer* l, Expr* array_expr);
+static Expr* parse_member_access(Lexer* l, Expr* struct_expr);
+static Expr* parse_incdec_postfix(Lexer* l, Expr* left);
+static Expr* parse_struct_init_list(Lexer* l, ModulePath struct_path);
+static Expr* parse_array_init_list(Lexer* l);
+static Expr* parse_identifier_expr(Lexer* l);
+static Expr* parse_paren_expr(Lexer* l);
+static Expr* parse_unary_prefix(Lexer* l);
+static Expr* parse_binary_literal(Lexer* l);
+static Expr* parse_octal_literal(Lexer* l);
+static Expr* parse_decimal_literal(Lexer* l);
+static Expr* parse_hexadecimal_literal(Lexer* l);
+static Expr* parse_char_literal(Lexer* l);
+static Expr* parse_float_literal(Lexer* l);
+static Expr* parse_string_literal(Lexer* l);
+static Expr* parse_bool_literal(Lexer* l);
+static Expr* parse_null(Lexer* l);
 
 // Inline helpers
 static inline Token*   peek_prev(Lexer* l)     { return lexer_prev(l); }
@@ -99,16 +105,16 @@ static inline bool     consume(Lexer* l, TokenKind kind);
 static inline void     recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count);
 static inline void     recover_top_level(Lexer* l, uint32_t prev_col);
 
-static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind);
-static inline ASTExpr* new_expr(ExprKind kind);
-static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind);
+static inline Stmt* new_stmt(Lexer* l, StmtKind kind);
+static inline Expr* new_expr(ExprKind kind);
+static inline Expr* new_constant(Lexer* l, ConstantKind kind);
 static inline void     declare_obj(Lexer* l, Object* global);
 
-static ASTStmt s_bad_stmt = {0};
-static ASTExpr s_bad_expr = {0};
-ASTStmt* g_bad_stmt = &s_bad_stmt;
-ASTExpr* g_bad_expr = &s_bad_expr;
-static ASTStmt s_nop_stmt = { .kind = STMT_NOP };
+static Stmt s_bad_stmt = {0};
+static Expr s_bad_expr = {0};
+Stmt* g_bad_stmt = &s_bad_stmt;
+Expr* g_bad_expr = &s_bad_expr;
+static Stmt s_nop_stmt = { .kind = STMT_NOP };
 static ExprParseRule expr_rules[__TOKEN_COUNT];
 
 #define ERROR_AND_RET(ret_val, ...)         do { parser_error(l, __VA_ARGS__); return ret_val; } while(0)
@@ -175,7 +181,7 @@ static bool parse_top_level(Lexer* l)
         return parse_typedef(l, vis, attrs);
     case TOKEN_CT_ASSERT: {
         if(is_extern) goto BAD_EXTERN;
-        ASTStmt* res = parse_ct_assert(l);
+        Stmt* res = parse_ct_assert(l);
         if(stmt_is_bad(res)) return false;
         res->next = l->module->ct_asserts;
         l->module->ct_asserts = res;
@@ -219,7 +225,7 @@ FOUND:
     return true;
 }
 
-static bool parse_expr_arguments(Lexer* l, ASTExprDA* args)
+static bool parse_expr_arguments(Lexer* l, ExprDA* args)
 {
     DBG_ASSERT(peek(l)->kind == TOKEN_LPAREN);
     advance(l);
@@ -687,7 +693,7 @@ RETRY:
         advance(l);
         if(peek(l)->kind == TOKEN_LBRACKET)
         {
-            ASTExpr* size_expr;
+            Expr* size_expr;
             advance(l);
             if(peek(l)->kind == TOKEN_ASTERISK && peek_next(l)->kind == TOKEN_RBRACKET)
             {
@@ -734,7 +740,7 @@ RETRY:
         }
         else // Static Array
         {
-            ASTExpr* size_expr;
+            Expr* size_expr;
             ASSIGN_EXPR_OR_RET(size_expr, NULL);
             CONSUME_OR_RET(TOKEN_RBRACKET, NULL);
             ty = parse_type_internal(l);
@@ -878,12 +884,82 @@ BAD_PARSE:
     return var;
 }
 
+static bool parse_if(Lexer* l, ASTIf* if_, UNUSED bool is_expr)
+{
+    advance(l);
+
+    if_->cond = parse_condition(l);
+    if(expr_is_bad(if_->cond)) return false;
+    EXPECT_OR_RET(TOKEN_LBRACE, false);
+    if_->then_stmt = parse_stmt_block(l);
+    if(stmt_is_bad(if_->then_stmt)) return false;
+    if(try_consume(l, TOKEN_ELSE))
+    {
+        if(tok_equal(l, TOKEN_IF))
+            if_->else_stmt = parse_if_stmt(l);
+        else
+        {
+            EXPECT_OR_RET(TOKEN_LBRACE, false);
+            if_->else_stmt = parse_stmt_block(l);
+        }
+        if(stmt_is_bad(if_->else_stmt)) return false;
+    }
+
+    return true;
+
+}
+
+static bool parse_switch(Lexer* l, ASTSwitch* switch_, UNUSED bool is_expr)
+{
+    advance(l);
+    StmtCaseDA* cases = &switch_->cases;
+    Stmt  head;
+    Stmt* cur = &head;
+    head.next = NULL;
+    switch_->expr = parse_condition(l);
+    if(expr_is_bad(switch_->expr)) return false;
+    CONSUME_OR_RET(TOKEN_LBRACE, false);
+    while(!try_consume(l, TOKEN_RBRACE))
+    {
+        switch(peek(l)->kind)
+        {
+        case TOKEN_CASE: 
+            advance(l);
+            da_resize(cases, cases->size + 1);
+            ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, false);
+            break;
+        case TOKEN_DEFAULT:
+            advance(l);
+            da_resize(cases, cases->size + 1);
+            break;
+        case TOKEN_EOF:
+            eof_error(l, TOKEN_RBRACE);
+            return false;
+        default:
+            if(cases->size == 0)
+                ERROR_AND_RET(false, "Statement in switch must fall under a case.");
+            cur->next = parse_stmt(l);
+            if(!stmt_is_bad(cur->next) && cur->next != NOP_STMT)
+                cur = cur->next;
+            continue;
+        }
+
+        CONSUME_OR_RET(TOKEN_COLON, false);
+        if(cases->size > 1)
+            cases->data[cases->size - 2].body = head.next;
+        head.next = false;
+        cur = &head;
+    }
+    if(head.next != NULL)
+        cases->data[cases->size - 1].body = head.next;
+    return true;
+}
 
 static const TokenKind s_stmt_recover_list[] = { TOKEN_SEMI, TOKEN_RBRACE };
 
-static ASTStmt* parse_stmt(Lexer* l)
+static Stmt* parse_stmt(Lexer* l)
 {
-    ASTStmt* stmt;
+    Stmt* stmt;
     switch(peek(l)->kind)
     {
     case TOKEN_IDENT:
@@ -895,6 +971,10 @@ static ASTStmt* parse_stmt(Lexer* l)
     case TOKEN_LBRACE:
         stmt = parse_stmt_block(l);
         return stmt; // If stmt is invalid, we know we hit the EOF, see parse_stmt_block
+    case TOKEN_FAT_ARROW:
+        stmt = parse_result_stmt(l);
+        if(!consume(l, TOKEN_SEMI)) stmt = BAD_STMT;
+        break;
     case TOKEN_BREAK:
         stmt = parse_break_continue(l, STMT_BREAK);
         break;
@@ -915,13 +995,13 @@ static ASTStmt* parse_stmt(Lexer* l)
         stmt = parse_for(l);
         break;
     case TOKEN_IF:
-        stmt = parse_if(l);
+        stmt = parse_if_stmt(l);
         break;
     case TOKEN_RETURN:
         stmt = parse_return(l);
         break;
     case TOKEN_SWITCH:
-        stmt = parse_switch(l);
+        stmt = parse_switch_stmt(l);
         break;
     case TOKEN_WHILE:
         stmt = parse_while(l);
@@ -945,13 +1025,13 @@ static ASTStmt* parse_stmt(Lexer* l)
     return stmt;
 }
 
-static ASTStmt* parse_stmt_block(Lexer* l)
+static Stmt* parse_stmt_block(Lexer* l)
 {
-    ASTStmt* block = new_stmt(l, STMT_BLOCK);
+    Stmt* block = new_stmt(l, STMT_BLOCK);
     advance(l);
-    ASTStmt head;
+    Stmt head;
     head.next = NULL;
-    ASTStmt* cur_stmt = &head;
+    Stmt* cur_stmt = &head;
 
     while(!try_consume(l, TOKEN_RBRACE))
     {
@@ -969,9 +1049,9 @@ static ASTStmt* parse_stmt_block(Lexer* l)
     return block;
 }
 
-static ASTStmt* parse_break_continue(Lexer* l, StmtKind kind)
+static Stmt* parse_break_continue(Lexer* l, StmtKind kind)
 {
-    ASTStmt* stmt = new_stmt(l, kind);
+    Stmt* stmt = new_stmt(l, kind);
     advance(l);
     if(try_consume(l, TOKEN_IDENT))
     {
@@ -982,10 +1062,10 @@ static ASTStmt* parse_break_continue(Lexer* l, StmtKind kind)
     return stmt;
 }
 
-static ASTStmt* parse_for(Lexer* l)
+static Stmt* parse_for(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_FOR);
-    ASTFor* for_stmt = &stmt->stmt.for_;
+    Stmt* stmt = new_stmt(l, STMT_FOR);
+    StmtFor* for_stmt = &stmt->stmt.for_;
     advance(l);
 
     EXPECT_IDENT_OR_RET(BAD_STMT);
@@ -1008,96 +1088,43 @@ static ASTStmt* parse_for(Lexer* l)
     return stmt;
 }
 
-static ASTStmt* parse_if(Lexer* l)
+static Stmt* parse_if_stmt(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_IF);
-    ASTIf* if_stmt = &stmt->stmt.if_;
-    advance(l);
-
-    if_stmt->cond = parse_condition(l);
-    if(expr_is_bad(if_stmt->cond)) return BAD_STMT;
-    EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
-    if_stmt->then_stmt = parse_stmt_block(l);
-    if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
-    if(try_consume(l, TOKEN_ELSE))
-    {
-        if(tok_equal(l, TOKEN_IF))
-            if_stmt->else_stmt = parse_if(l);
-        else
-        {
-            EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
-            if_stmt->else_stmt = parse_stmt_block(l);
-        }
-        if(stmt_is_bad(if_stmt->else_stmt)) return BAD_STMT;
-    }
-
-    return stmt;
-
+    Stmt* stmt = new_stmt(l, STMT_IF);
+    return parse_if(l, &stmt->stmt.if_, false) ? stmt : BAD_STMT;
 }
 
-static ASTStmt* parse_return(Lexer* l)
+// We don't parse the semi because this can be reused for shortened versions.
+static Stmt* parse_result_stmt(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_RETURN);
+    Stmt* stmt = new_stmt(l, STMT_RESULT);
+    advance(l);
+    ASSIGN_EXPR_OR_RET(stmt->stmt.result_val, BAD_STMT);
+    return stmt;
+}
+
+static Stmt* parse_return(Lexer* l)
+{
+    Stmt* stmt = new_stmt(l, STMT_RETURN);
     advance(l);
     if(!try_consume(l, TOKEN_SEMI))
     {
-        ASSIGN_EXPR_OR_RET(stmt->stmt.return_.ret_expr, BAD_STMT);
+        ASSIGN_EXPR_OR_RET(stmt->stmt.return_val, BAD_STMT);
         CONSUME_OR_RET(TOKEN_SEMI, BAD_STMT);
     }
     return stmt;
 }
 
-static ASTStmt* parse_switch(Lexer* l)
+static Stmt* parse_switch_stmt(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_SWITCH);
-    ASTCaseDA* cases = &stmt->stmt.switch_.cases;
-    ASTStmt  head;
-    ASTStmt* cur = &head;
-    head.next = NULL;
-    advance(l);
-    stmt->stmt.switch_.expr = parse_condition(l);
-    if(expr_is_bad(stmt->stmt.switch_.expr)) return BAD_STMT;
-    CONSUME_OR_RET(TOKEN_LBRACE, BAD_STMT);
-    while(!try_consume(l, TOKEN_RBRACE))
-    {
-        switch(peek(l)->kind)
-        {
-        case TOKEN_CASE: 
-            advance(l);
-            da_resize(cases, cases->size + 1);
-            ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, BAD_STMT);
-            break;
-        case TOKEN_DEFAULT:
-            advance(l);
-            da_resize(cases, cases->size + 1);
-            break;
-        case TOKEN_EOF:
-            eof_error(l, TOKEN_RBRACE);
-            return false;
-        default:
-            if(cases->size == 0)
-                ERROR_AND_RET(BAD_STMT, "Statement in switch must fall under a case.");
-            cur->next = parse_stmt(l);
-            if(!stmt_is_bad(cur->next) && cur->next != NOP_STMT)
-                cur = cur->next;
-            continue;
-        }
-
-        CONSUME_OR_RET(TOKEN_COLON, BAD_STMT);
-        if(cases->size > 1)
-            cases->data[cases->size - 2].body = head.next;
-        head.next = NULL;
-        cur = &head;
-    }
-    if(head.next != NULL)
-        cases->data[cases->size - 1].body = head.next;
-    return stmt;
+    Stmt* stmt = new_stmt(l, STMT_RETURN);
+    return parse_switch(l, &stmt->stmt.switch_, false) ? stmt : BAD_STMT;
 }
 
-static ASTStmt* parse_while(Lexer* l)
+static Stmt* parse_while(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_WHILE);
-    ASTWhile* while_stmt = &stmt->stmt.while_;
+    Stmt* stmt = new_stmt(l, STMT_WHILE);
+    StmtWhile* while_stmt = &stmt->stmt.while_;
     advance(l);
     
     while_stmt->cond = parse_condition(l);
@@ -1109,10 +1136,10 @@ static ASTStmt* parse_while(Lexer* l)
     return stmt;
 }
 
-static ASTStmt* parse_ct_assert(Lexer* l)
+static Stmt* parse_ct_assert(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_CT_ASSERT);
-    ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
+    Stmt* stmt = new_stmt(l, STMT_CT_ASSERT);
+    StmtCTAssert* assert_ = &stmt->stmt.ct_assert;
     advance(l);
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_STMT);
     ASSIGN_EXPR_OR_RET(assert_->cond, BAD_STMT);
@@ -1122,34 +1149,34 @@ static ASTStmt* parse_ct_assert(Lexer* l)
     return stmt;
 }
 
-static ASTStmt* parse_ct_if(Lexer* l)
+static Stmt* parse_ct_if(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_CT_IF);
-    ASTIf* if_stmt = &stmt->stmt.if_;
+    Stmt* stmt = new_stmt(l, STMT_CT_IF);
+    ASTIf* if_ = &stmt->stmt.if_;
     advance(l);
 
-    if_stmt->cond = parse_condition(l);
-    if(expr_is_bad(if_stmt->cond)) return BAD_STMT;
+    if_->cond = parse_condition(l);
+    if(expr_is_bad(if_->cond)) return BAD_STMT;
     EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
-    if_stmt->then_stmt = parse_stmt_block(l);
-    if(stmt_is_bad(if_stmt->then_stmt)) return BAD_STMT;
+    if_->then_stmt = parse_stmt_block(l);
+    if(stmt_is_bad(if_->then_stmt)) return BAD_STMT;
     if(try_consume(l, TOKEN_CT_ELSE))
     {
         if(tok_equal(l, TOKEN_IF))
-            if_stmt->else_stmt = parse_ct_if(l);
+            if_->else_stmt = parse_ct_if(l);
         else
         {
             EXPECT_OR_RET(TOKEN_LBRACE, BAD_STMT);
-            if_stmt->else_stmt = parse_stmt_block(l);
+            if_->else_stmt = parse_stmt_block(l);
         }
-        if(stmt_is_bad(if_stmt->else_stmt)) return BAD_STMT;
+        if(stmt_is_bad(if_->else_stmt)) return BAD_STMT;
     }
 
     return stmt;
     
 }
 
-static ASTStmt* parse_labeled_stmt(Lexer* l)
+static Stmt* parse_labeled_stmt(Lexer* l)
 {
     DBG_ASSERT(tok_equal(l, TOKEN_IDENT));
     SymbolLoc label;
@@ -1158,7 +1185,7 @@ static ASTStmt* parse_labeled_stmt(Lexer* l)
     advance(l);
     advance(l);
 
-    ASTStmt* stmt = parse_stmt(l);
+    Stmt* stmt = parse_stmt(l);
     switch(stmt->kind)
     {
     case STMT_INVALID:
@@ -1178,10 +1205,10 @@ static ASTStmt* parse_labeled_stmt(Lexer* l)
     }
 }
 
-static ASTStmt* parse_expr_stmt(Lexer* l)
+static Stmt* parse_expr_stmt(Lexer* l)
 {
-    ASTStmt* stmt;
-    ASTExpr* expr;
+    Stmt* stmt;
+    Expr* expr;
     ASSIGN_EXPR_OR_RET(expr, BAD_STMT);
 
     if(tok_equal(l, TOKEN_SWAP))
@@ -1203,15 +1230,15 @@ static ASTStmt* parse_expr_stmt(Lexer* l)
 }
 
 
-static ASTStmt* parse_declaration(Lexer* l)
+static Stmt* parse_declaration(Lexer* l)
 {
-    ASTStmt* stmt = new_stmt(l, STMT_DECLARATION);
+    Stmt* stmt = new_stmt(l, STMT_DECLARATION);
     stmt->stmt.declaration = parse_var_declaration(l, VAR_LOCAL, VIS_PUBLIC);
     if(stmt->stmt.declaration == NULL) return BAD_STMT;
     return stmt;
 }
 
-static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr* left, bool allow_struct_expr)
+static Expr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, Expr* left, bool allow_struct_expr)
 {
     bool prev = l->allow_struct_expr;
     l->allow_struct_expr = allow_struct_expr;
@@ -1239,12 +1266,12 @@ static ASTExpr* parse_expr_with_prec(Lexer* l, OpPrecedence precedence, ASTExpr*
     return left;
 }
 
-static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
+static Expr* parse_binary(Lexer* l, Expr* lhs)
 {
     TokenKind kind = peek(l)->kind;
     advance(l);
 
-    ASTExpr* rhs;
+    Expr* rhs;
     OpPrecedence rhs_pref = expr_rules[kind].precedence;
     if(rhs_pref != PREC_ASSIGN)
         rhs_pref++;
@@ -1253,7 +1280,7 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     if(expr_is_bad(rhs))
         return BAD_EXPR;
 
-    ASTExpr* binary = new_expr(EXPR_BINARY);
+    Expr* binary = new_expr(EXPR_BINARY);
     binary->loc = extend_loc(lhs->loc, rhs->loc);
     binary->expr.binary.lhs = lhs;
     binary->expr.binary.rhs = rhs;
@@ -1261,27 +1288,27 @@ static ASTExpr* parse_binary(Lexer* l, ASTExpr* lhs)
     return binary;
 }
 
-static ASTExpr* parse_optional_unwrap(Lexer* l, ASTExpr* lhs)
+static Expr* parse_optional_unwrap(Lexer* l, Expr* lhs)
 {
-    ASTExpr* unwrap = new_expr(EXPR_UNWRAP);
+    Expr* unwrap = new_expr(EXPR_UNWRAP);
     advance(l);
     unwrap->loc = extend_loc(lhs->loc, peek_prev(l)->loc);
     unwrap->expr.unwrap = lhs;
     return unwrap;
 }
 
-static ASTExpr* parse_call(Lexer* l, ASTExpr* func_expr)
+static Expr* parse_call(Lexer* l, Expr* func_expr)
 {
-    ASTExpr* call = new_expr(EXPR_FUNC_CALL);
+    Expr* call = new_expr(EXPR_FUNC_CALL);
     call->expr.call.func_expr = func_expr;
     if(!parse_expr_arguments(l, &call->expr.call.args)) return BAD_EXPR;
     call->loc = extend_loc(func_expr->loc, peek_prev(l)->loc);
     return call;
 }
 
-static ASTExpr* parse_cast(Lexer* l)
+static Expr* parse_cast(Lexer* l)
 {
-    ASTExpr* cast = new_expr(EXPR_CAST);
+    Expr* cast = new_expr(EXPR_CAST);
     cast->loc = peek(l)->loc;
     advance(l);
 
@@ -1316,13 +1343,13 @@ static ASTExpr* parse_cast(Lexer* l)
 //     return tern;
 // }
 
-static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
+static Expr* parse_array_access(Lexer* l, Expr* array_expr)
 {
-    ASTExpr* access = new_expr(EXPR_ARRAY_ACCESS);
+    Expr* access = new_expr(EXPR_ARRAY_ACCESS);
     access->expr.array_access.array_expr = array_expr;
     advance(l);
 
-    ASTExpr* index_expr = parse_expr(l);
+    Expr* index_expr = parse_expr(l);
     if(expr_is_bad(index_expr) || !consume(l, TOKEN_RBRACKET))
         return BAD_EXPR;
 
@@ -1331,9 +1358,9 @@ static ASTExpr* parse_array_access(Lexer* l, ASTExpr* array_expr)
     return access;
 }
 
-static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
+static Expr* parse_member_access(Lexer* l, Expr* struct_expr)
 {
-    ASTExpr* access = new_expr(tok_equal(l, TOKEN_ARROW) ? EXPR_UNRESOLVED_ARROW : EXPR_UNRESOLVED_DOT);
+    Expr* access = new_expr(tok_equal(l, TOKEN_ARROW) ? EXPR_UNRESOLVED_ARROW : EXPR_UNRESOLVED_DOT);
     advance(l);
     access->expr.unresolved_access.parent_expr = struct_expr;
     EXPECT_IDENT_OR_RET(BAD_EXPR);
@@ -1344,9 +1371,9 @@ static ASTExpr* parse_member_access(Lexer* l, ASTExpr* struct_expr)
     return access;
 }
 
-static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
+static Expr* parse_incdec_postfix(Lexer* l, Expr* left)
 {
-    ASTExpr* result = new_expr(EXPR_POSTFIX);
+    Expr* result = new_expr(EXPR_POSTFIX);
     result->expr.unary.inner = left;
     result->expr.unary.kind = tok_to_unary_op(peek(l)->kind);
     result->loc = extend_loc(left->loc, peek(l)->loc);
@@ -1354,11 +1381,11 @@ static ASTExpr* parse_incdec_postfix(Lexer* l, ASTExpr* left)
     return result;
 }
 
-static ASTExpr* parse_struct_init_list(Lexer* l, ModulePath struct_path)
+static Expr* parse_struct_init_list(Lexer* l, ModulePath struct_path)
 {
     DBG_ASSERT(tok_equal(l, TOKEN_LBRACE));
     advance(l);
-    ASTExpr* expr = new_expr(EXPR_STRUCT_INIT_LIST);
+    Expr* expr = new_expr(EXPR_STRUCT_INIT_LIST);
     StructInitList* list = &expr->expr.struct_init;
     list->struct_path = struct_path;
     while(true)
@@ -1397,10 +1424,10 @@ OUTER:
     return expr;
 }
 
-static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
+static Expr* parse_range(Lexer* l, Expr* from)
 {
-    ASTExpr* expr = new_expr(EXPR_RANGE);
-    ASTExprRange* range = &expr->expr.range;
+    Expr* expr = new_expr(EXPR_RANGE);
+    ExprRange* range = &expr->expr.range;
     range->from = from;
     advance(l);
     // range->inclusive = try_consume(l, TOKEN_ASSIGN);
@@ -1411,9 +1438,9 @@ static ASTExpr* parse_range(Lexer* l, ASTExpr* from)
     return expr;
 }
 
-static ASTExpr* parse_array_init_list(Lexer* l)
+static Expr* parse_array_init_list(Lexer* l)
 {
-    ASTExpr* expr = new_expr(EXPR_ARRAY_INIT_LIST);
+    Expr* expr = new_expr(EXPR_ARRAY_INIT_LIST);
     expr->loc = peek(l)->loc;
     ArrInitList* list = &expr->expr.array_init;
     advance(l);
@@ -1446,13 +1473,13 @@ static ASTExpr* parse_array_init_list(Lexer* l)
 }
 
 
-static ASTExpr* parse_invalid(Lexer* l)
+static Expr* parse_invalid(Lexer* l)
 {
     advance(l);
     return BAD_EXPR;
 }
 
-static ASTExpr* parse_identifier_expr(Lexer* l)
+static Expr* parse_identifier_expr(Lexer* l)
 {
     ModulePath path = {0};
     if(!parse_module_path(l, &path)) return BAD_EXPR;
@@ -1461,22 +1488,22 @@ static ASTExpr* parse_identifier_expr(Lexer* l)
     if(l->allow_struct_expr && tok_equal(l, TOKEN_LBRACE))
         return parse_struct_init_list(l, path);
 
-    ASTExpr* expr = new_expr(EXPR_UNRESOLVED_IDENT);
+    Expr* expr = new_expr(EXPR_UNRESOLVED_IDENT);
     expr->loc = extend_loc(path.data[0].loc, peek_prev(l)->loc);
     expr->expr.unresolved_ident = path;
     return expr;
 }
 
-static ASTExpr* parse_paren_expr(Lexer* l)
+static Expr* parse_paren_expr(Lexer* l)
 {
     DBG_ASSERT(peek(l)->kind == TOKEN_LPAREN);
     SourceLoc start = peek(l)->loc;
     advance(l);
-    ASTExpr* expr;
+    Expr* expr;
     ASSIGN_EXPR_OR_RET(expr, BAD_EXPR);
     if(tok_equal(l, TOKEN_COMMA))
     {
-        ASTExpr* inner = expr;
+        Expr* inner = expr;
         expr = new_expr(EXPR_TUPLE);
         expr->type = g_type_init_list;
         da_append(&expr->expr.tuple, inner);
@@ -1492,12 +1519,12 @@ static ASTExpr* parse_paren_expr(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_negation(Lexer* l)
+static Expr* parse_negation(Lexer* l)
 {
     if(peek_next(l)->kind == TOKEN_DEC_INT_LITERAL)
         return parse_decimal_literal(l);
 
-    ASTExpr* expr = new_expr(EXPR_UNARY);
+    Expr* expr = new_expr(EXPR_UNARY);
     expr->loc = peek(l)->loc;
     expr->expr.unary.kind = UNARY_NEG;
     advance(l);
@@ -1507,9 +1534,9 @@ static ASTExpr* parse_negation(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_unary_prefix(Lexer* l)
+static Expr* parse_unary_prefix(Lexer* l)
 {
-    ASTExpr* expr = new_expr(EXPR_UNARY);
+    Expr* expr = new_expr(EXPR_UNARY);
     expr->loc = peek(l)->loc;
     TokenKind kind = peek(l)->kind;
     advance(l);
@@ -1521,9 +1548,9 @@ static ASTExpr* parse_unary_prefix(Lexer* l)
 
 }
 
-static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
+static Expr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
+    Expr* expr = new_constant(l, CONSTANT_INTEGER);
 
     const char* src = peek(l)->start;
     Int128 val = (Int128){ 0, 0 };
@@ -1547,13 +1574,13 @@ static ASTExpr* parse_pow_2_int_literal(Lexer* l, BitSize bits_per_digit)
 
 }
 
-static ASTExpr* parse_binary_literal(Lexer* l) { return parse_pow_2_int_literal(l, 1); }
-static ASTExpr* parse_octal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 3); }
-static ASTExpr* parse_hexadecimal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 4); }
+static Expr* parse_binary_literal(Lexer* l) { return parse_pow_2_int_literal(l, 1); }
+static Expr* parse_octal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 3); }
+static Expr* parse_hexadecimal_literal(Lexer* l) { return parse_pow_2_int_literal(l, 4); }
 
-static ASTExpr* parse_decimal_literal(Lexer* l)
+static Expr* parse_decimal_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
+    Expr* expr = new_constant(l, CONSTANT_INTEGER);
     bool is_neg;
     if(tok_equal(l, TOKEN_SUB))
     {
@@ -1608,9 +1635,9 @@ static ASTExpr* parse_decimal_literal(Lexer* l)
 }
 
 
-static ASTExpr* parse_char_literal(Lexer* l)
+static Expr* parse_char_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_INTEGER);
+    Expr* expr = new_constant(l, CONSTANT_INTEGER);
     expr->expr.constant.i = i128_from_u64(peek(l)->chr.val);
     switch(peek(l)->chr.kind)
     {
@@ -1630,9 +1657,9 @@ static ASTExpr* parse_char_literal(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_float_literal(Lexer* l)
+static Expr* parse_float_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_FLOAT);
+    Expr* expr = new_constant(l, CONSTANT_FLOAT);
     const char* src = peek(l)->start;
     double val = 0.0f;
     uint32_t index = 0;
@@ -1675,9 +1702,9 @@ END:
     return expr;
 }
 
-static ASTExpr* parse_string_literal(Lexer* l)
+static Expr* parse_string_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_STRING);
+    Expr* expr = new_constant(l, CONSTANT_STRING);
     expr->expr.constant.str.val = peek(l)->str.val;
     expr->expr.constant.str.len = peek(l)->str.len;
     expr->expr.constant.str.kind = peek(l)->str.kind;
@@ -1686,26 +1713,41 @@ static ASTExpr* parse_string_literal(Lexer* l)
     return expr;
 }
 
-static ASTExpr* parse_bool_literal(Lexer* l)
+static Expr* parse_bool_literal(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_BOOL);
+    Expr* expr = new_constant(l, CONSTANT_BOOL);
     expr->expr.constant.b = peek(l)->kind == TOKEN_TRUE;
     expr->type = g_type_bool;
     advance(l);
     return expr;
 }
 
-static ASTExpr* parse_null(Lexer* l)
+static Expr* parse_if_expr(Lexer* l)
 {
-    ASTExpr* expr = new_constant(l, CONSTANT_NULL);
+    Expr* expr = new_expr(EXPR_IF);
+    expr->loc = peek(l)->loc;
+    printf("here\n");
+    return parse_if(l, &expr->expr.if_, true) ? expr : BAD_EXPR;
+}
+
+static Expr* parse_null(Lexer* l)
+{
+    Expr* expr = new_constant(l, CONSTANT_NULL);
     expr->type = g_type_null;
     advance(l);
     return expr;
 }
 
-static ASTExpr* parse_ct_offsetof(Lexer* l)
+static Expr* parse_switch_expr(Lexer* l)
 {
-    ASTExpr* expr = new_expr(EXPR_CT_ALIGNOF);
+    Expr* expr = new_expr(EXPR_SWITCH);
+    expr->loc = peek(l)->loc;
+    return parse_switch(l, &expr->expr.switch_, true) ? expr : BAD_EXPR;
+}
+
+static Expr* parse_ct_offsetof(Lexer* l)
+{
+    Expr* expr = new_expr(EXPR_CT_ALIGNOF);
     expr->loc = peek(l)->loc;
     advance(l);
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
@@ -1717,7 +1759,7 @@ static ASTExpr* parse_ct_offsetof(Lexer* l)
 
 }
 
-static ASTExpr* parse_ct_typearg(Lexer* l)
+static Expr* parse_ct_typearg(Lexer* l)
 {
     ExprKind kind;
     switch(peek(l)->kind)
@@ -1737,7 +1779,7 @@ static ASTExpr* parse_ct_typearg(Lexer* l)
     default:
         SIC_UNREACHABLE();
     }
-    ASTExpr* expr = new_expr(kind);
+    Expr* expr = new_expr(kind);
     expr->loc = peek(l)->loc;
     advance(l);
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
@@ -1874,24 +1916,24 @@ static inline void recover_top_level(Lexer* l, uint32_t prev_col)
     }
 }
 
-static inline ASTStmt* new_stmt(Lexer* l, StmtKind kind)
+static inline Stmt* new_stmt(Lexer* l, StmtKind kind)
 {
-    ASTStmt* stmt = CALLOC_STRUCT(ASTStmt);
+    Stmt* stmt = CALLOC_STRUCT(Stmt);
     stmt->kind = kind;
     stmt->loc = peek(l)->loc;
     return stmt;
 }
 
-static inline ASTExpr* new_expr(ExprKind kind)
+static inline Expr* new_expr(ExprKind kind)
 {
-    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    Expr* expr = CALLOC_STRUCT(Expr);
     expr->kind = kind;
     return expr;
 }
 
-static inline ASTExpr* new_constant(Lexer* l, ConstantKind kind)
+static inline Expr* new_constant(Lexer* l, ConstantKind kind)
 {
-    ASTExpr* expr = CALLOC_STRUCT(ASTExpr);
+    Expr* expr = CALLOC_STRUCT(Expr);
     expr->kind = EXPR_CONSTANT;
     expr->loc = peek(l)->loc;
     expr->expr.constant.kind = kind;
@@ -1969,7 +2011,9 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
 
     [TOKEN_CAST]            = { parse_cast, NULL, PREC_NONE },
     [TOKEN_FALSE]           = { parse_bool_literal, NULL, PREC_NONE },
+    [TOKEN_IF]              = { parse_if_expr, NULL, PREC_NONE },
     [TOKEN_NULL]            = { parse_null, NULL, PREC_NONE },
+    [TOKEN_SWITCH]          = { parse_switch_expr, NULL, PREC_NONE },
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 
     [TOKEN_CT_ALIGNOF]      = { parse_ct_typearg, NULL, PREC_NONE },

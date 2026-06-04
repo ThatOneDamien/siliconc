@@ -1,19 +1,19 @@
 #include "semantics.h"
 
-static void analyze_stmt(ASTStmt* stmt);
+static void analyze_stmt(Stmt* stmt);
 
-static void analyze_break(ASTStmt* stmt);
-static void analyze_continue(ASTStmt* stmt);
-static void analyze_expr_stmt(ASTStmt* stmt);
-static void analyze_for(ASTStmt* stmt);
-static void analyze_if(ASTStmt* stmt);
-static void analyze_return(ASTStmt* stmt);
-static void analyze_swap(ASTStmt* stmt);
-static void analyze_switch(ASTStmt* stmt);
-static void analyze_while(ASTStmt* stmt);
-static void analyze_ct_if(ASTStmt* stmt);
+static void analyze_break(Stmt* stmt);
+static void analyze_continue(Stmt* stmt);
+static void analyze_expr_stmt(Stmt* stmt);
+static void analyze_for(Stmt* stmt);
+static void analyze_if(Stmt* stmt);
+static void analyze_return(Stmt* stmt);
+static void analyze_swap(Stmt* stmt);
+static void analyze_switch(Stmt* stmt);
+static void analyze_while(Stmt* stmt);
+static void analyze_ct_if(Stmt* stmt);
 
-static void analyze_stmt(ASTStmt* stmt)
+static void analyze_stmt(Stmt* stmt)
 {
     if(g_sema.code_is_unreachable && !g_sema.has_errored_unreachable &&
        stmt->kind != STMT_INVALID && stmt->kind != STMT_NOP)
@@ -54,6 +54,8 @@ static void analyze_stmt(ASTStmt* stmt)
     case STMT_IF:
         analyze_if(stmt);
         return;
+    case STMT_RESULT:
+        SIC_TODO();
     case STMT_RETURN:
         analyze_return(stmt);
         return;
@@ -81,7 +83,7 @@ static void analyze_stmt(ASTStmt* stmt)
     SIC_UNREACHABLE();
 }
 
-bool analyze_stmt_block(ASTStmt* stmt)
+bool analyze_stmt_block(Stmt* stmt)
 {
     bool always_returns = false;
     while(stmt != NULL)
@@ -93,9 +95,9 @@ bool analyze_stmt_block(ASTStmt* stmt)
     return always_returns;
 }
 
-static void analyze_break(ASTStmt* stmt)
+static void analyze_break(Stmt* stmt)
 {
-    ASTStmt* target;
+    Stmt* target;
     if(stmt->stmt.break_cont.label.sym == NULL)
     {
         if(g_sema.break_target == NULL)
@@ -108,9 +110,9 @@ static void analyze_break(ASTStmt* stmt)
     g_sema.code_is_unreachable = true;
 }
 
-static void analyze_continue(ASTStmt* stmt)
+static void analyze_continue(Stmt* stmt)
 {
-    ASTStmt* target;
+    Stmt* target;
     if(stmt->stmt.break_cont.label.sym == NULL)
     {
         if(g_sema.continue_target == NULL)
@@ -131,9 +133,9 @@ static void analyze_continue(ASTStmt* stmt)
     g_sema.code_is_unreachable = true;
 }
 
-static void analyze_expr_stmt(ASTStmt* stmt)
+static void analyze_expr_stmt(Stmt* stmt)
 {
-    ASTExpr* expr = stmt->stmt.expr;
+    Expr* expr = stmt->stmt.expr;
     analyze_expr(expr);
     switch(expr->kind)
     {
@@ -144,7 +146,7 @@ static void analyze_expr_stmt(ASTStmt* stmt)
         if(expr->expr.binary.kind == BINARY_ASSIGN) return;
         break;
     case EXPR_FUNC_CALL: {
-        ASTExpr* func_expr = expr->expr.call.func_expr;
+        Expr* func_expr = expr->expr.call.func_expr;
         Object* header = &func_expr->expr.function->header;
         if(func_expr->kind != EXPR_FUNCTION) return;
         if(has_builtin_attr(header, ATTR_NODISCARD))
@@ -170,10 +172,10 @@ static void analyze_expr_stmt(ASTStmt* stmt)
     sic_diagnostic_at(DIAG_WARNING, expr->loc, "Expression result unused.");
 }
 
-static void analyze_for(ASTStmt* stmt)
+static void analyze_for(Stmt* stmt)
 {
     ObjVar* loop_var = stmt->stmt.for_.loop_var;
-    ASTExpr* collection = stmt->stmt.for_.collection;
+    Expr* collection = stmt->stmt.for_.collection;
     SymbolLoc label = stmt->stmt.for_.label;
     uint32_t scope = push_scope();
     push_obj(&loop_var->header);
@@ -215,8 +217,8 @@ static void analyze_for(ASTStmt* stmt)
     else
         invalidate_obj(&loop_var->header);
 
-    ASTStmt* prev_break = g_sema.break_target;
-    ASTStmt* prev_continue = g_sema.continue_target;
+    Stmt* prev_break = g_sema.break_target;
+    Stmt* prev_continue = g_sema.continue_target;
     g_sema.break_target = stmt;
     g_sema.continue_target = stmt;
     push_labeled_stmt(stmt, label);
@@ -229,11 +231,11 @@ static void analyze_for(ASTStmt* stmt)
     pop_scope(scope);
 }
 
-static void analyze_if(ASTStmt* stmt)
+static void analyze_if(Stmt* stmt)
 {
-    ASTExpr* cond = stmt->stmt.if_.cond;
-    ASTStmt* then = stmt->stmt.if_.then_stmt;
-    ASTStmt* elss = stmt->stmt.if_.else_stmt;
+    Expr* cond = stmt->stmt.if_.cond;
+    Stmt* then = stmt->stmt.if_.then_stmt;
+    Stmt* elss = stmt->stmt.if_.else_stmt;
     bool prev_unreachable = g_sema.code_is_unreachable;
     bool prev_errored = g_sema.has_errored_unreachable;
     implicit_cast(cond, g_type_bool);
@@ -269,29 +271,29 @@ static void analyze_if(ASTStmt* stmt)
     g_sema.has_errored_unreachable = prev_errored;
 }
 
-static void analyze_return(ASTStmt* stmt)
+static void analyze_return(Stmt* stmt)
 {
-    ASTReturn* ret = &stmt->stmt.return_;
+    Expr* ret_val = stmt->stmt.return_val;
     Type* ret_type = g_sema.cur_func->signature.ret_type.type;
     stmt->always_returns = true;
     g_sema.code_is_unreachable = true;
     if(ret_type->kind == TYPE_INVALID) return;
-    if(ret->ret_expr != NULL)
+    if(ret_val != NULL)
     {
         if(ret_type->kind == TYPE_VOID)
         {
-            sic_error_at(ret->ret_expr->loc, 
+            sic_error_at(ret_val->loc, 
                             "Function returning void should not return a value.");
             return;
         }
-        implicit_cast(ret->ret_expr, ret_type);
+        implicit_cast(ret_val, ret_type);
     }
     else if(ret_type->kind != TYPE_VOID)
         sic_error_at(stmt->loc, "Function returning non-void should return a value.");
 
 }
 
-static void analyze_switch(ASTStmt* stmt)
+static void analyze_switch(Stmt* stmt)
 {
     ASTSwitch* swi = &stmt->stmt.switch_;
     uint32_t scope;
@@ -307,12 +309,12 @@ static void analyze_switch(ASTStmt* stmt)
         return;
     }
 
-    ASTStmt* prev_break = g_sema.break_target;
+    Stmt* prev_break = g_sema.break_target;
     g_sema.break_target = stmt;
     bool always_returns = true;
     for(uint32_t i = 0; i < swi->cases.size; ++i)
     {
-        ASTCase* cas = swi->cases.data + i;
+        StmtCase* cas = swi->cases.data + i;
         if(cas->expr != NULL)
         {
             if(!implicit_cast(cas->expr, swi->expr->type)) goto CASE_BODY;
@@ -323,7 +325,7 @@ static void analyze_switch(ASTStmt* stmt)
             }
             for(uint32_t j = 0; j < i; ++j)
             {
-                ASTCase* other = swi->cases.data + j;
+                StmtCase* other = swi->cases.data + j;
                 if(i128_ucmp(other->expr->expr.constant.i, cas->expr->expr.constant.i) == 0)
                 {
                     sic_error_at(cas->expr->loc, "Duplicate case for value %s.", 
@@ -354,13 +356,13 @@ static void analyze_switch(ASTStmt* stmt)
     stmt->always_returns = always_returns & has_default;
 }
 
-static void analyze_while(ASTStmt* stmt)
+static void analyze_while(Stmt* stmt)
 {
-    ASTWhile* while_stmt = &stmt->stmt.while_;
+    StmtWhile* while_stmt = &stmt->stmt.while_;
     implicit_cast(while_stmt->cond, g_type_bool);
 
-    ASTStmt* prev_break = g_sema.break_target;
-    ASTStmt* prev_continue = g_sema.continue_target;
+    Stmt* prev_break = g_sema.break_target;
+    Stmt* prev_continue = g_sema.continue_target;
     bool prev_unreachable = g_sema.code_is_unreachable;
     bool prev_errored = g_sema.has_errored_unreachable;
     g_sema.break_target = stmt;
@@ -383,9 +385,9 @@ static void analyze_while(ASTStmt* stmt)
     g_sema.has_errored_unreachable = prev_errored;
 }
 
-void analyze_ct_assert(ASTStmt* stmt)
+void analyze_ct_assert(Stmt* stmt)
 {
-    ASTCtAssert* assert_ = &stmt->stmt.ct_assert;
+    StmtCTAssert* assert_ = &stmt->stmt.ct_assert;
     bool valid = implicit_cast(assert_->cond, g_type_bool);
     valid &= analyze_rvalue(assert_->err_msg);
     if(!valid) return;
@@ -409,12 +411,12 @@ void analyze_ct_assert(ASTStmt* stmt)
     }
 }
 
-void analyze_ct_if(ASTStmt* stmt)
+void analyze_ct_if(Stmt* stmt)
 {
     ASTIf* if_ = &stmt->stmt.if_;
     if(!implicit_cast(if_->cond, g_type_bool)) return;
 
-    ASTExpr* cond = if_->cond;
+    Expr* cond = if_->cond;
     if(cond->kind != EXPR_CONSTANT)
     {
         sic_error_at(if_->cond->loc, "Compile-time if's condition must be compile-time evaluable.");
@@ -441,7 +443,7 @@ void analyze_ct_if(ASTStmt* stmt)
 
 bool analyze_declaration(ObjVar* decl)
 {
-    ASTExpr* initial_val = decl->initial_val;
+    Expr* initial_val = decl->initial_val;
     if(decl->type_loc.type == NULL)
     {
         if(decl->is_extern)
@@ -562,10 +564,10 @@ ERR:
     return false;
 }
 
-static void analyze_swap(ASTStmt* stmt)
+static void analyze_swap(Stmt* stmt)
 {
-    ASTExpr* left = stmt->stmt.swap.left;
-    ASTExpr* right = stmt->stmt.swap.right;
+    Expr* left = stmt->stmt.swap.left;
+    Expr* right = stmt->stmt.swap.right;
     analyze_lvalue(left, true);
     analyze_lvalue(right, true);
     if(!analyze_rvalue_no_mutate(left) || !analyze_rvalue_no_mutate(right))
@@ -585,4 +587,4 @@ static void analyze_swap(ASTStmt* stmt)
         func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }
 }
-static void analyze_swap(ASTStmt* stmt);
+static void analyze_swap(Stmt* stmt);

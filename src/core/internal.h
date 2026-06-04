@@ -36,8 +36,8 @@ extern Type* const g_type_neg_int_lit;
 extern Type* const g_type_str_lit;
 extern Type* const g_type_range;
 
-extern ASTExpr* g_bad_expr;
-extern ASTStmt* g_bad_stmt;
+extern Expr* g_bad_expr;
+extern Stmt* g_bad_stmt;
 
 extern Symbol   g_sym_main;
 extern Symbol   g_sym_len;
@@ -119,10 +119,10 @@ Type*       type_from_token(TokenKind type_token);
 Type*       type_copy(const Type* other);
 Type*       type_apply_qualifiers(Type* base, TypeQualifiers qualifiers);
 Type*       type_pointer_to_single(Type* base);
-Type*       type_pointer_to_multi_static(Type* base, ASTExpr* size_expr);
+Type*       type_pointer_to_multi_static(Type* base, Expr* size_expr);
 Type*       type_pointer_to_multi_unknown(Type* base);
 Type*       type_func_ptr(FuncSignature* signature);
-Type*       type_array_of(Type* elem_ty, ASTExpr* size_expr, TypeKind kind);
+Type*       type_array_of(Type* elem_ty, Expr* size_expr, TypeKind kind);
 Type*       type_slice_of(Type* elem_ty);
 Type*       type_optional_of(Type* elem_ty);
 Type*       type_reduce(Type* t);
@@ -246,12 +246,12 @@ static inline Type* type_to_signed(Type* ty)
 
 
 // Bad value checkers
-static inline bool expr_is_bad(const ASTExpr* expr)
+static inline bool expr_is_bad(const Expr* expr)
 {
     return expr->kind == EXPR_INVALID;
 }
 
-static inline bool stmt_is_bad(const ASTStmt* stmt)
+static inline bool stmt_is_bad(const Stmt* stmt)
 {
     return stmt->kind == STMT_INVALID;
 }
@@ -350,7 +350,7 @@ void print_token(const Token* tok);
 void print_module(const ObjModule* module, bool allow_unresolved);
 void print_func(const ObjFunc* func, bool allow_unresolved);
 void print_global_var(const ObjVar* var, bool allow_unresolved);
-void print_stmt(const ASTStmt* stmt, bool allow_unresolved);
-void print_expr(const ASTExpr* expr, bool allow_unresolved);
+void print_stmt(const Stmt* stmt, bool allow_unresolved);
+void print_expr(const Expr* expr, bool allow_unresolved);
 
 #endif

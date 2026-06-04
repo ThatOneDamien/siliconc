@@ -15,10 +15,10 @@ static const char* s_binary_op_strs[];
 static const char* s_unary_op_strs[];
 static const char* s_vis_strs[];
 
-static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name, bool allow_unresolved);
-static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name, bool allow_unresolved);
+static void print_stmt_at_depth(const Stmt* stmt, int depth, const char* name, bool allow_unresolved);
+static void print_expr_at_depth(const Expr* expr, int depth, const char* name, bool allow_unresolved);
 static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolved);
-static void print_constant(const ASTExpr* expr, bool allow_unresolved);
+static void print_constant(const Expr* expr, bool allow_unresolved);
 static inline const char* debug_type_to_str(Type* type, bool allow_unresolved);
 static inline void scratch_append_debug_typename(const Type* type);
 
@@ -91,7 +91,7 @@ void print_func(const ObjFunc* func, bool allow_unresolved)
     }
 
     printf("  Body:\n");
-    ASTStmt* cur_stmt = func->body;
+    Stmt* cur_stmt = func->body;
     while(cur_stmt != NULL)
     {
         print_stmt_at_depth(cur_stmt, 2, NULL, allow_unresolved);
@@ -116,17 +116,17 @@ void print_global_var(const ObjVar* var, bool allow_unresolved)
     }
 }
 
-void print_stmt(const ASTStmt* stmt, bool allow_unresolved)
+void print_stmt(const Stmt* stmt, bool allow_unresolved)
 {
     print_stmt_at_depth(stmt, 0, NULL, allow_unresolved);
 }
 
-void print_expr(const ASTExpr* expr, bool allow_unresolved)
+void print_expr(const Expr* expr, bool allow_unresolved)
 {
     print_expr_at_depth(expr, 0, NULL, allow_unresolved);
 }
 
-static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name, bool allow_unresolved)
+static void print_stmt_at_depth(const Stmt* stmt, int depth, const char* name, bool allow_unresolved)
 {
     if(stmt == NULL)
         return;
@@ -138,7 +138,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     switch(stmt->kind)
     {
     case STMT_BLOCK: {
-        ASTStmt* cur = stmt->stmt.block;
+        Stmt* cur = stmt->stmt.block;
         while(cur != NULL)
         {
             print_stmt_at_depth(cur, depth + 1, NULL, allow_unresolved);
@@ -166,8 +166,10 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
         return;
     case STMT_NOP:
         return;
+    case STMT_RESULT:
+        SIC_TODO();
     case STMT_RETURN:
-        print_expr_at_depth(stmt->stmt.return_.ret_expr, depth + 1, NULL, allow_unresolved);
+        print_expr_at_depth(stmt->stmt.return_val, depth + 1, NULL, allow_unresolved);
         return;
     case STMT_SWAP:
         print_expr_at_depth(stmt->stmt.swap.left,  depth + 1, NULL, allow_unresolved);
@@ -189,7 +191,7 @@ static void print_stmt_at_depth(const ASTStmt* stmt, int depth, const char* name
     SIC_UNREACHABLE();
 }
 
-static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name, bool allow_unresolved)
+static void print_expr_at_depth(const Expr* expr, int depth, const char* name, bool allow_unresolved)
 {
     if(expr == NULL)
         return;
@@ -244,6 +246,8 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
     case EXPR_FUNCTION:
         printf("Function \'%s\' ]\n", expr->expr.function->header.sym);
         return;
+    case EXPR_IF:
+        SIC_TODO();
     case EXPR_MEMBER_ACCESS:
         printf("Member Access \'%s\'] (Type: %s)\n", 
                expr->expr.member_access.member->header.sym, 
@@ -278,6 +282,8 @@ static void print_expr_at_depth(const ASTExpr* expr, int depth, const char* name
         print_expr_at_depth(expr->expr.array_access.index_expr, depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_STRUCT_INIT_LIST:
+        SIC_TODO();
+    case EXPR_SWITCH:
         SIC_TODO();
     case EXPR_TUPLE:
     case EXPR_TYPE_IDENT:
@@ -339,9 +345,9 @@ static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolv
     }
 }
 
-static void print_constant(const ASTExpr* expr, bool allow_unresolved)
+static void print_constant(const Expr* expr, bool allow_unresolved)
 {
-    const ASTExprConstant* constant = &expr->expr.constant;
+    const ExprConstant* constant = &expr->expr.constant;
     const char* type_str = debug_type_to_str(expr->type, allow_unresolved);
     switch(constant->kind)
     {

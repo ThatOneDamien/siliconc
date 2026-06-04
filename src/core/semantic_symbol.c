@@ -18,7 +18,7 @@ static ObjStack s_obj_stack = {
 typedef struct
 {
     SymbolLoc label;
-    ASTStmt*  stmt;
+    Stmt*  stmt;
 } LabeledStmt;
 
 typedef struct
@@ -181,7 +181,7 @@ static inline LabeledStmt* internal_find_labeled(Symbol label)
     return NULL;
 }
 
-void push_labeled_stmt(ASTStmt* stmt, SymbolLoc label)
+void push_labeled_stmt(Stmt* stmt, SymbolLoc label)
 {
     if(label.sym == NULL) return;
     LabeledStmt* prev = internal_find_labeled(label.sym);
@@ -201,7 +201,7 @@ void push_labeled_stmt(ASTStmt* stmt, SymbolLoc label)
     };
 }
 
-void pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label)
+void pop_labeled_stmt(Stmt* stmt, SymbolLoc label)
 {
     if(label.sym == NULL) return;
     DBG_ASSERT(s_label_stack.bottom < LABEL_STACK_SIZE);
@@ -209,7 +209,7 @@ void pop_labeled_stmt(ASTStmt* stmt, SymbolLoc label)
     s_label_stack.bottom++;
 }
 
-ASTStmt* find_labeled_stmt(SymbolLoc label)
+Stmt* find_labeled_stmt(SymbolLoc label)
 {
     DBG_ASSERT(label.sym != NULL);
     LabeledStmt* stmt = internal_find_labeled(label.sym);

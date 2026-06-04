@@ -139,6 +139,7 @@ typedef enum : uint8_t
     EXPR_CONSTANT,
     EXPR_FUNC_CALL,
     EXPR_FUNCTION,
+    EXPR_IF,
     EXPR_MEMBER_ACCESS,
     EXPR_MEMBER_BUILTIN,
     EXPR_METHOD,
@@ -147,6 +148,7 @@ typedef enum : uint8_t
     EXPR_RANGE,
     EXPR_SLICE,
     EXPR_STRUCT_INIT_LIST,
+    EXPR_SWITCH,
     EXPR_TUPLE,
     EXPR_TYPE_IDENT,
     EXPR_UNARY,
@@ -253,6 +255,7 @@ typedef enum : uint8_t
     STMT_FOR,
     STMT_IF,
     STMT_NOP,
+    STMT_RESULT, // => result
     STMT_RETURN,
     STMT_SWAP,
     STMT_SWITCH,
@@ -309,6 +312,7 @@ typedef enum : uint8_t
     TOKEN_UNDERSCORE,       // _
 
     TOKEN_ARROW,            // ->
+    TOKEN_FAT_ARROW,        // =>
     TOKEN_LSHR,             // >>
     TOKEN_ASHR,             // >>>
     TOKEN_SHL,              // <<

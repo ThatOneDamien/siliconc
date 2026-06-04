@@ -128,7 +128,7 @@ static bool resolve_array(Type* type, SourceLoc error_loc)
     if(prev_status == STATUS_RESOLVING) return true;
 
     type->visibility = type->array.elem_type->visibility;
-    ASTExpr* size_expr = type->array.size_expr;
+    Expr* size_expr = type->array.size_expr;
     if(!implicit_cast(size_expr, g_type_usize))
         return false;
 
@@ -182,7 +182,7 @@ static bool resolve_multi_pointer(Type* pointer, SourceLoc error_loc)
                          "Pointer to multiple elements of type %s is not allowed.");
     g_sema.type_res_allow_unresolved = prev;
 
-    ASTExpr* size_expr = pointer->pointer.size_expr;
+    Expr* size_expr = pointer->pointer.size_expr;
 
     if(size_expr != NULL)
     {
@@ -234,7 +234,7 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
 {
     Type* type = *type_ref;
     TypeQualifiers qualifiers = type->qualifiers;
-    ASTExpr* inner = type->type_of;
+    Expr* inner = type->type_of;
     if(!analyze_expr(inner))
         return false;
 

@@ -1,0 +1,8 @@
+fn test(cond: bool) int
+{
+    return if cond {
+        => 1;
+    } else {
+        => 2;
+    };
+}
