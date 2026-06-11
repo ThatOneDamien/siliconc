@@ -903,7 +903,7 @@ static bool parse_if(Lexer* l, ASTIf* if_, bool is_expr)
         if(tok_equal(l, TOKEN_IF))
         {
             Stmt* nested = if_->else_stmt = new_stmt(l, STMT_IF);
-            if(!parse_if(l, &nested->stmt.if_, true)) return false;
+            if(!parse_if(l, &nested->stmt.if_, is_expr)) return false;
         }
         else if(is_expr && tok_equal(l, TOKEN_FAT_ARROW))
             if_->else_stmt = parse_result_stmt(l);
@@ -916,7 +916,8 @@ static bool parse_if(Lexer* l, ASTIf* if_, bool is_expr)
     } 
     else if(is_expr)
     {
-        ERROR_AND_RET(false, "If expression must have an else block.");
+        sic_error_upto(peek(l)->loc, "If expression must have an else block.");
+        return false;
     }
 
     return true;
@@ -1131,7 +1132,7 @@ static Stmt* parse_return(Lexer* l)
 
 static Stmt* parse_switch_stmt(Lexer* l)
 {
-    Stmt* stmt = new_stmt(l, STMT_RETURN);
+    Stmt* stmt = new_stmt(l, STMT_SWITCH);
     return parse_switch(l, &stmt->stmt.switch_, false) ? stmt : BAD_STMT;
 }
 

@@ -4,7 +4,7 @@
 // Expr kind functions
 static bool analyze_array_access(Expr* expr);
 static bool analyze_array_init_list(Expr* expr, Type* expected_type);
-static bool analyze_binary(Expr* expr);
+static bool analyze_binary(Expr* expr, Type* expected_type);
 static bool analyze_call(Expr* expr);
 static bool analyze_ident(Expr* expr);
 static bool analyze_if_expr(Expr* expr, Type* expected_type);
@@ -32,11 +32,11 @@ static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne);
 static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
 static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
 static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
-static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
+static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs, BinaryOpKind kind);
 static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs);
 static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs);
 static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs);
-static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs);
+static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs);
 static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs);
 static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs);
 
@@ -74,7 +74,7 @@ bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
     case EXPR_ARRAY_INIT_LIST:
         return analyze_array_init_list(expr, expected_type);
     case EXPR_BINARY:
-        return analyze_binary(expr);
+        return analyze_binary(expr, expected_type);
     case EXPR_CAST:
         return analyze_explicit_cast(expr);
     case EXPR_CONSTANT:
@@ -471,7 +471,7 @@ static bool analyze_array_init_list(Expr* expr, Type* expected_type)
     return valid;
 }
 
-static inline bool analyze_binary(Expr* expr)
+static inline bool analyze_binary(Expr* expr, Type* expected_type)
 {
     Expr* lhs = expr->expr.binary.lhs;
     Expr* rhs = expr->expr.binary.rhs;
@@ -504,13 +504,13 @@ static inline bool analyze_binary(Expr* expr)
     case BINARY_SHL:
     case BINARY_LSHR:
     case BINARY_ASHR:
-        return analyze_shift(expr, lhs, rhs, kind);
+        return analyze_shift(expr, expected_type, lhs, rhs, kind);
     case BINARY_BIT_OR:
         return analyze_bit_or(expr, lhs, rhs);
     case BINARY_BIT_XOR:
         return analyze_bit_xor(expr, lhs, rhs);
     case BINARY_BIT_AND:
-        return analyze_bit_and(expr, lhs, rhs);
+        return analyze_bit_and(expr, expected_type, lhs, rhs);
     case BINARY_ASSIGN:
         return analyze_assign(expr, lhs, rhs);
     case BINARY_ADD_ASSIGN:
@@ -759,7 +759,6 @@ static bool analyze_struct_init_list(Expr* expr)
     for(uint32_t i = 0; i < list.size; ++i)
     {
         StructInitEntry* entry = list.data + i;
-        if(!analyze_rvalue(entry->init_value)) valid = false;
         if(obj->kind == OBJ_UNION && i > 0)
         {
             sic_error_at(entry->unresolved_member.loc, "You cannot assign to multiple members of a union in an initializer list.");
@@ -782,7 +781,6 @@ static bool analyze_struct_init_list(Expr* expr)
             if(entry->unresolved_member.sym == member->header.sym)
             {
                 entry->member_idx = j;
-                valid &= analyze_rvalue_args(entry->init_value, member->type_loc.type, true);
                 valid &= implicit_cast(entry->init_value, member->type_loc.type);
                 goto NEXT_ENTRY;
             }
@@ -1820,14 +1818,13 @@ static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
     return true;
 }
 
-static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
+static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
     valid &= analyze_rvalue(rhs);
     if(!valid) return false;
 
-    expr->type = lhs->type;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     if(!type_is_integer(lt) || !type_is_integer(rt))
@@ -1840,44 +1837,85 @@ static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 
     if(rhs->kind == EXPR_CONSTANT)
     {
-        if(lt == g_type_neg_int_lit || (kind != BINARY_SHL && lt == g_type_pos_int_lit))
-        {
-            sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
-            return false;
-        }
         Int128 r = rhs->expr.constant.i;
-        if(type_is_signed(rt) && i128_is_neg(r))
+        if(i128_is_zero(r)) 
+        {
+            expr_copy(expr, lhs);
+            return true;
+        }
+        if(rt == g_type_neg_int_lit || (type_is_signed(rt) && i128_is_neg(r)))
         {
             sic_error_at(expr->loc, "Shift amount should not be negative.");
             return false;
         }
-        if(i128_ucmp64(r, lt->builtin.bit_size) >= 0)
+        BitSize lt_bitcnt = lt->builtin.bit_size;
+        BitSize res_size;
+        if(i128_ucmp64(r, lt_bitcnt) >= 0)
+        {
             sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount >= integer width.");
+            res_size = 0;
+        }
+        else
+            res_size = lt_bitcnt - r.lo;
+
+        bool can_shrink = false;
+        if(kind != BINARY_SHL && expected_type != NULL && !type_is_int_literal(lt))
+        {
+            Type* expected_ctype = expected_type->canonical;
+            if(type_is_integer(expected_ctype))
+            {
+                BitSize expected_bitcnt = expected_ctype->builtin.bit_size;
+                if(expected_bitcnt < lt_bitcnt && expected_bitcnt >= res_size &&
+                   ((type_is_unsigned(expected_ctype) && kind == BINARY_LSHR) || (type_is_signed(expected_ctype) && kind == BINARY_ASHR)))
+                {
+                    can_shrink = true;
+                }
+            }
+        }
 
         if(lhs->kind == EXPR_CONSTANT)
         {
-            if(i128_is_zero(r)) 
+            if(lt == g_type_neg_int_lit)
             {
-                expr_copy(expr, lhs);
-                return true;
+                sic_error_at(expr->loc, "Shifts on negative int literals are not allowed. Please assign a type first.");
+                return false;
             }
+            if(lt == g_type_pos_int_lit && kind == BINARY_ASHR)
+            {
+                sic_error_at(expr->loc, "You cannot perform >>> on untyped int literals. Please assign a type first.");
+                return false;
+            }
+            Int128 l = lhs->expr.constant.i;
             Int128 new_val;
             if(kind == BINARY_SHL)
-                new_val = i128_shl(lhs->expr.constant.i, rhs->expr.constant.i);
+                new_val = i128_shl(l, r);
             else if(kind == BINARY_LSHR)
             {
-                BitSize shift = 128 - lt->builtin.bit_size;
-                new_val = i128_shl64(lhs->expr.constant.i, shift);
-                new_val = i128_lshr(new_val, i128_add64(rhs->expr.constant.i, shift));
+                // Shifting left first removes any upper bits from a signed int, so that shifting right
+                // does not move in bits that shouldn't be there.
+                BitSize shift = 128 - lt_bitcnt;
+                new_val = i128_shl64(l, shift);
+                new_val = i128_lshr(new_val, i128_add64(r, shift));
             }
             else
             {
-                BitSize shift = 128 - lt->builtin.bit_size;
-                new_val = i128_shl64(lhs->expr.constant.i, shift);
-                new_val = i128_ashr(new_val, i128_add64(rhs->expr.constant.i, shift));
+                BitSize shift = 128 - lt_bitcnt;
+                new_val = i128_shl64(l, shift);
+                new_val = i128_ashr(new_val, i128_add64(r, shift));
             }
-            convert_to_const_int(expr, expr->type, new_val);
+            convert_to_const_int(expr, can_shrink ? expected_type : lhs->type, new_val);
             return true;
+        }
+        else if(can_shrink)
+        {
+            Expr* new_expr = MALLOC_STRUCT(Expr);
+            *new_expr = *expr;
+            new_expr->is_evaluated = true;
+            expr->kind = EXPR_CAST;
+            expr->expr.cast.kind = CAST_INT_TRUNCATE;
+            expr->expr.cast.inner = new_expr;
+            expr->type = expected_type;
+            expr = new_expr;
         }
     }
 
@@ -1890,6 +1928,7 @@ static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
     if(!implicit_cast(rhs, type_to_unsigned(lt))) return false;
     
 
+    expr->type = lhs->type;
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
@@ -1964,7 +2003,7 @@ static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs)
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
-static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs)
+static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1981,10 +2020,47 @@ static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs)
     }
     if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
+    uint32_t max_lz = 0;
+    if(lhs->kind == EXPR_CONSTANT)
+    {
+        max_lz = i128_clz(lhs->expr.constant.i);
+    }
+    if(rhs->kind == EXPR_CONSTANT)
+    {
+        uint32_t next = i128_clz(rhs->expr.constant.i);
+        max_lz = next > max_lz ? next : max_lz;
+    }
+
+    bool can_shrink = false;
+    if(expected_type != NULL)
+    {
+        Type* expected_ctype = expected_type->canonical;
+        if(type_is_integer(expected_ctype))
+        {
+            BitSize expected_bitcnt = expected_ctype->builtin.bit_size;
+            if(expected_bitcnt < expr->type->canonical->builtin.bit_size &&
+               128 - max_lz <= expected_bitcnt)
+            {
+                can_shrink = true;
+            }
+        }
+    }
+
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
-        convert_to_const_int(expr, expr->type, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
+        convert_to_const_int(expr, can_shrink ? expected_type : expr->type, i128_and(lhs->expr.constant.i, rhs->expr.constant.i));
         return true;
+    }
+    else if(can_shrink)
+    {
+        Expr* new_expr = MALLOC_STRUCT(Expr);
+        *new_expr = *expr;
+        new_expr->is_evaluated = true;
+        expr->kind = EXPR_CAST;
+        expr->expr.cast.kind = CAST_INT_TRUNCATE;
+        expr->expr.cast.inner = new_expr;
+        expr->type = expected_type;
+        expr = new_expr;
     }
 
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;

@@ -237,7 +237,8 @@ static void analyze_if_stmt(Stmt* stmt)
     Stmt* then = stmt->stmt.if_.then_stmt;
     Stmt* elss = stmt->stmt.if_.else_stmt;
     analyze_if(&stmt->stmt.if_);
-    stmt->always_returns = then->always_returns & elss->always_returns;
+    stmt->always_returns = then->always_returns;
+    if(elss != NULL) stmt->always_returns &= elss->always_returns;
     if(cond->kind == EXPR_CONSTANT)
     {
         if(cond->expr.constant.b)
@@ -302,22 +303,22 @@ static void analyze_return(Stmt* stmt)
 {
     Expr* ret_val = stmt->stmt.return_val;
     Type* ret_type = g_sema.cur_func->signature.ret_type.type;
+    Type* ret_type_red = type_reduce(ret_type);
+    if(ret_type->kind != TYPE_INVALID)
+    {
+        if(ret_val != NULL)
+        {
+            if(ret_type_red->kind == TYPE_VOID)
+                sic_error_at(ret_val->loc, "Function returning void should not return a value.");
+            else
+                implicit_cast(ret_val, ret_type);
+        }
+        else if(ret_type_red->kind != TYPE_VOID)
+            sic_error_at(stmt->loc, "Function returning non-void should return a value.");
+    }
+
     stmt->always_returns = true;
     g_sema.code_is_unreachable = true;
-    if(ret_type->kind == TYPE_INVALID) return;
-    if(ret_val != NULL)
-    {
-        if(ret_type->kind == TYPE_VOID)
-        {
-            sic_error_at(ret_val->loc, 
-                            "Function returning void should not return a value.");
-            return;
-        }
-        implicit_cast(ret_val, ret_type);
-    }
-    else if(ret_type->kind != TYPE_VOID)
-        sic_error_at(stmt->loc, "Function returning non-void should return a value.");
-
 }
 
 static void analyze_switch(Stmt* stmt)

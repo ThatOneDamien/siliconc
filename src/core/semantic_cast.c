@@ -109,7 +109,7 @@ void perform_cast(Expr* expr, Type* to)
 bool analyze_explicit_cast(Expr* cast)
 {
     Expr* inner = cast->expr.cast.inner;
-    if(!analyze_rvalue(inner) || !resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type"))
+    if(!resolve_type(&cast->type, TYPE_RES_ALLOW_VOID, cast->loc, "Cannot cast to type") || !analyze_rvalue_args(inner, cast->type, true))
         return false;
 
     CastParams params;
@@ -129,7 +129,7 @@ bool analyze_explicit_cast(Expr* cast)
 bool implicit_cast(Expr* expr, Type* desired)
 {
     DBG_ASSERT(desired->status == STATUS_RESOLVED);
-    if(!analyze_rvalue(expr) || type_is_bad(desired))
+    if(!analyze_rvalue_args(expr, desired, true) || type_is_bad(desired))
         return false;
 
     CastParams params;
