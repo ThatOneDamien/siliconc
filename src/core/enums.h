@@ -135,8 +135,8 @@ typedef enum : uint8_t
     EXPR_ARRAY_INIT_LIST,
     EXPR_BINARY,
     EXPR_CAST,
-    EXPR_CONDITIONAL,
     EXPR_CONSTANT,
+    EXPR_DEFAULT_VAL,
     EXPR_FUNC_CALL,
     EXPR_FUNCTION,
     EXPR_IF,
@@ -154,7 +154,6 @@ typedef enum : uint8_t
     EXPR_UNARY,
     EXPR_UNWRAP,
     EXPR_VAR,
-    EXPR_ZEROED_OUT,
 
     EXPR_UNRESOLVED_ARROW,
     EXPR_UNRESOLVED_DOT,
@@ -163,6 +162,7 @@ typedef enum : uint8_t
     EXPR_CT_ALIGNOF,
     EXPR_CT_OFFSETOF,
     EXPR_CT_SIZEOF,
+    EXPR_CT_TYPE_EQUAL,
     EXPR_CT_TYPE_MAX,
     EXPR_CT_TYPE_MIN,
 } ExprKind;
@@ -410,6 +410,7 @@ typedef enum : uint8_t
     TOKEN_CT_IF,
 	TOKEN_CT_OFFSETOF,
 	TOKEN_CT_SIZEOF,
+    TOKEN_CT_TYPE_EQUAL,
     TOKEN_CT_TYPE_MAX,
     TOKEN_CT_TYPE_MIN,
 	TOKEN_CT_TYPEOF,
@@ -581,6 +582,7 @@ typedef enum : uint8_t
             case EXPR_CT_ALIGNOF:       \
             case EXPR_CT_OFFSETOF:      \
             case EXPR_CT_SIZEOF:        \
+            case EXPR_CT_TYPE_EQUAL:    \
             case EXPR_CT_TYPE_MAX:      \
             case EXPR_CT_TYPE_MIN
 

@@ -884,25 +884,39 @@ BAD_PARSE:
     return var;
 }
 
-static bool parse_if(Lexer* l, ASTIf* if_, UNUSED bool is_expr)
+static bool parse_if(Lexer* l, ASTIf* if_, bool is_expr)
 {
     advance(l);
 
     if_->cond = parse_condition(l);
     if(expr_is_bad(if_->cond)) return false;
-    EXPECT_OR_RET(TOKEN_LBRACE, false);
-    if_->then_stmt = parse_stmt_block(l);
+    if(is_expr && tok_equal(l, TOKEN_FAT_ARROW))
+        if_->then_stmt = parse_result_stmt(l);
+    else
+    {
+        EXPECT_OR_RET(TOKEN_LBRACE, false);
+        if_->then_stmt = parse_stmt_block(l);
+    }
     if(stmt_is_bad(if_->then_stmt)) return false;
     if(try_consume(l, TOKEN_ELSE))
     {
         if(tok_equal(l, TOKEN_IF))
-            if_->else_stmt = parse_if_stmt(l);
+        {
+            Stmt* nested = if_->else_stmt = new_stmt(l, STMT_IF);
+            if(!parse_if(l, &nested->stmt.if_, true)) return false;
+        }
+        else if(is_expr && tok_equal(l, TOKEN_FAT_ARROW))
+            if_->else_stmt = parse_result_stmt(l);
         else
         {
             EXPECT_OR_RET(TOKEN_LBRACE, false);
             if_->else_stmt = parse_stmt_block(l);
         }
         if(stmt_is_bad(if_->else_stmt)) return false;
+    } 
+    else if(is_expr)
+    {
+        ERROR_AND_RET(false, "If expression must have an else block.");
     }
 
     return true;
@@ -1099,7 +1113,7 @@ static Stmt* parse_result_stmt(Lexer* l)
 {
     Stmt* stmt = new_stmt(l, STMT_RESULT);
     advance(l);
-    ASSIGN_EXPR_OR_RET(stmt->stmt.result_val, BAD_STMT);
+    ASSIGN_EXPR_OR_RET(stmt->stmt.result.val, BAD_STMT);
     return stmt;
 }
 
@@ -1327,22 +1341,6 @@ static Expr* parse_cast(Lexer* l)
     return cast;
 }
 
-// static ASTExpr* parse_conditional(Lexer* l, ASTExpr* cond)
-// {
-//     ASTExpr* tern = new_expr(EXPR_CONDITIONAL);
-//     advance(l);
-//     ASSIGN_EXPR_OR_RET(tern->expr.conditional.then_expr, BAD_EXPR);
-//     CONSUME_OR_RET(TOKEN_COLON, BAD_EXPR);
-//
-//     tern->expr.conditional.else_expr = parse_expr_with_prec(l, PREC_CONDITIONAL + 1, NULL);
-//     if(expr_is_bad(tern->expr.conditional.else_expr))
-//         return BAD_EXPR;
-//
-//     tern->loc = extend_loc(cond->loc, tern->expr.conditional.else_expr->loc);
-//     tern->expr.conditional.cond_expr = cond;
-//     return tern;
-// }
-
 static Expr* parse_array_access(Lexer* l, Expr* array_expr)
 {
     Expr* access = new_expr(EXPR_ARRAY_ACCESS);
@@ -1355,6 +1353,20 @@ static Expr* parse_array_access(Lexer* l, Expr* array_expr)
 
     access->loc = extend_loc(array_expr->loc, peek_prev(l)->loc);
     access->expr.array_access.index_expr = index_expr;
+    return access;
+}
+
+static Expr* parse_inferred_member_access(Lexer* l)
+{
+    Expr* access = new_expr(EXPR_UNRESOLVED_DOT);
+    access->loc = peek(l)->loc;
+    advance(l);
+    access->expr.unresolved_access.parent_expr = NULL;
+    EXPECT_IDENT_OR_RET(BAD_EXPR);
+    access->expr.unresolved_access.member.sym = peek(l)->sym;
+    access->expr.unresolved_access.member.loc = peek(l)->loc;
+    access->loc = extend_loc(access->loc, peek(l)->loc);
+    advance(l);
     return access;
 }
 
@@ -1726,8 +1738,7 @@ static Expr* parse_if_expr(Lexer* l)
 {
     Expr* expr = new_expr(EXPR_IF);
     expr->loc = peek(l)->loc;
-    printf("here\n");
-    return parse_if(l, &expr->expr.if_, true) ? expr : BAD_EXPR;
+    return parse_if(l, &expr->expr.if_.data, true) ? expr : BAD_EXPR;
 }
 
 static Expr* parse_null(Lexer* l)
@@ -1784,6 +1795,22 @@ static Expr* parse_ct_typearg(Lexer* l)
     advance(l);
     CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
     if(!parse_type(l, &expr->expr.ct_typearg))
+        return BAD_EXPR;
+    CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
+    expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
+    return expr;
+}
+
+static Expr* parse_ct_type_equal(Lexer* l)
+{
+    Expr* expr = new_expr(EXPR_CT_TYPE_EQUAL);
+    expr->loc = peek(l)->loc;
+    advance(l);
+    CONSUME_OR_RET(TOKEN_LPAREN, BAD_EXPR);
+    if(!parse_type(l, &expr->expr.ct_type_equal.first))
+        return BAD_EXPR;
+    CONSUME_OR_RET(TOKEN_COMMA, BAD_EXPR);
+    if(!parse_type(l, &expr->expr.ct_type_equal.second))
         return BAD_EXPR;
     CONSUME_OR_RET(TOKEN_RPAREN, BAD_EXPR);
     expr->loc = extend_loc(expr->loc, peek_prev(l)->loc);
@@ -1870,7 +1897,6 @@ static inline bool consume(Lexer* l, TokenKind kind)
 
 static inline void recover_to(Lexer* l, const TokenKind stopping_kinds[], size_t count)
 {
-    printf("here\n");
     while(true)
     {
         TokenKind kind = peek(l)->kind;
@@ -1975,15 +2001,13 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_LT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_GT]              = { NULL, parse_binary, PREC_RELATIONAL },
     [TOKEN_DIV]             = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    [TOKEN_DOT]             = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
+    [TOKEN_DOT]             = { parse_inferred_member_access, parse_member_access, PREC_PRIMARY_POSTFIX },
     // [TOKEN_LBRACE]          = { NULL, NULL, PREC_NONE },
     [TOKEN_LBRACKET]        = { parse_array_init_list, parse_array_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LPAREN]          = { parse_paren_expr, parse_call, PREC_PRIMARY_POSTFIX },
     [TOKEN_ADD]             = { NULL, parse_binary, PREC_ADD_SUB },
     [TOKEN_SUB]             = { parse_negation, parse_binary, PREC_ADD_SUB },
     [TOKEN_MODULO]          = { NULL, parse_binary, PREC_MUL_DIV_MOD },
-    // TODO: Re-add the conditional expression but better.
-    // [TOKEN_QUESTION]        = { NULL, parse_conditional, PREC_CONDITIONAL },
     [TOKEN_ARROW]           = { NULL, parse_member_access, PREC_PRIMARY_POSTFIX },
     [TOKEN_LSHR]            = { NULL, parse_binary, PREC_SHIFTS },
     [TOKEN_ASHR]            = { NULL, parse_binary, PREC_SHIFTS },
@@ -2019,6 +2043,7 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_CT_ALIGNOF]      = { parse_ct_typearg, NULL, PREC_NONE },
 	[TOKEN_CT_OFFSETOF]     = { parse_ct_offsetof, NULL, PREC_NONE },
 	[TOKEN_CT_SIZEOF]       = { parse_ct_typearg, NULL, PREC_NONE },
+	[TOKEN_CT_TYPE_EQUAL]   = { parse_ct_type_equal, NULL, PREC_NONE },
 	[TOKEN_CT_TYPE_MAX]     = { parse_ct_typearg, NULL, PREC_NONE },
 	[TOKEN_CT_TYPE_MIN]     = { parse_ct_typearg, NULL, PREC_NONE },
 };

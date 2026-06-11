@@ -1,0 +1,8 @@
+#const a: int = 1;
+#const b: uint = 1;
+#const c = a;
+
+#assert(#type_equal(#typeof(a), int), "Fail");
+#assert(!#type_equal(#typeof(b), int), "Fail");
+#assert(!#type_equal(#typeof(a), #typeof(b)), "Fail");
+#assert(#type_equal(#typeof(a), #typeof(c)), "Fail");

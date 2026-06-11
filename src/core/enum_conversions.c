@@ -116,6 +116,7 @@ static const char* const s_tok_strs[__TOKEN_COUNT] = {
 	[TOKEN_CT_IF]           = "#if",
 	[TOKEN_CT_OFFSETOF]     = "#offsetof",
 	[TOKEN_CT_SIZEOF]       = "#sizeof",
+	[TOKEN_CT_TYPE_EQUAL]   = "#type_equal",
     [TOKEN_CT_TYPE_MAX]     = "#type_max",
     [TOKEN_CT_TYPE_MIN]     = "#type_min",
 	[TOKEN_CT_TYPEOF]       = "#typeof",

@@ -1,0 +1,3 @@
+#assert(#type_min(int) == -2147483648, "Fail");
+#assert(#type_max(long) == 9223372036854775807, "Fail");
+#assert(#type_min(uint) == #type_min(ulong), "Fail");

@@ -66,6 +66,7 @@ typedef struct ExprCall         ExprCall;
 typedef struct ExprCast         ExprCast;
 typedef struct ExprCond         ExprCond;
 typedef struct ExprConstant     ExprConstant;
+typedef struct ExprIf           ExprIf;
 typedef struct ArrInitEntry     ArrInitEntry;
 typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
@@ -79,11 +80,12 @@ typedef struct ExprTuple        ExprTuple;
 typedef struct ExprUnary        ExprUnary;
 typedef struct ExprUAccess      ExprUnresAccess;
 typedef struct ExprCTOffset     ExprCTOffset;
+typedef struct ExprCTTypeEqual  ExprCTTypeEqual;
 typedef struct Expr             Expr;
 typedef struct StmtBreakCont    StmtBreakCont;
 typedef struct StmtCase         StmtCase;
 typedef struct StmtFor          StmtFor;
-typedef struct StmtReturn       StmtReturn;
+typedef struct StmtResult       StmtResult;
 typedef struct StmtSwap         StmtSwap;
 typedef struct StmtWhile        StmtWhile;
 typedef struct StmtCtAssert     StmtCTAssert;
@@ -354,17 +356,9 @@ struct AttrDA
 
 struct ASTIf
 {
-    union
-    {
-        struct
-        {
-            Expr* cond;
-            Stmt* then_stmt;
-            Stmt* else_stmt;
-        };
-        
-        void* backend;
-    };
+    Expr* cond;
+    Stmt* then_stmt;
+    Stmt* else_stmt;
 };
 
 struct ASTSwitch
@@ -470,6 +464,19 @@ struct ExprConstant
     };
 };
 
+struct ExprIf
+{
+    union
+    {
+        ASTIf data;
+        struct
+        {
+            void* exit_block;
+            void* phi_node;
+        } backend;
+    };
+};
+
 struct ExprCond
 {
     Expr* cond_expr;
@@ -529,6 +536,12 @@ struct ExprCTOffset
     SymbolLoc member;
 };
 
+struct ExprCTTypeEqual
+{
+    TypeLoc first;
+    TypeLoc second;
+};
+
 struct Expr
 {
     Type*     type;
@@ -547,7 +560,7 @@ struct Expr
         ExprCond          conditional;
         ExprConstant      constant;
         ObjFunc*          function;
-        ASTIf             if_;
+        ExprIf            if_;
         ExprMemberAccess  member_access;
         ExprMemberBuiltin member_builtin;
         ExprMethod        method_access;
@@ -563,8 +576,9 @@ struct Expr
         Expr*             unwrap;
         ObjVar*           var;
 
-        TypeLoc           ct_typearg;
         ExprCTOffset      ct_offsetof;
+        TypeLoc           ct_typearg;
+        ExprCTTypeEqual   ct_type_equal;
     } expr;
 };
 
@@ -604,6 +618,12 @@ struct StmtFor
     };
 };
 
+struct StmtResult
+{
+    Expr* val;
+    Expr* target;
+};
+
 struct StmtSwap
 {
     Expr* left;
@@ -638,8 +658,8 @@ struct StmtCtAssert
 struct Stmt
 {
     StmtKind  kind;
-    bool      always_returns : 1;
-    Stmt*  next;
+    bool      always_returns : 1; // Does the block always return?
+    Stmt*     next;
     SourceLoc loc;
 
     union
@@ -650,7 +670,7 @@ struct Stmt
         Expr*      expr;
         StmtFor    for_;
         ASTIf      if_;
-        Expr*      result_val;
+        StmtResult result;
         Expr*      return_val;
         StmtSwap   swap;
         ASTSwitch  switch_;

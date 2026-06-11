@@ -1,0 +1,4 @@
+const a: int = 1;
+var b: #typeof(a);
+const size = #sizeof(#typeof(a));
+const ptr_size = #sizeof(*#typeof(a));

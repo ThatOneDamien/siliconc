@@ -228,12 +228,6 @@ static void print_expr_at_depth(const Expr* expr, int depth, const char* name, b
         printf("Cast ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
         print_expr_at_depth(expr->expr.cast.inner, depth + 1, NULL, allow_unresolved);
         return;
-    case EXPR_CONDITIONAL:
-        printf("Conditional ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
-        print_expr_at_depth(expr->expr.conditional.cond_expr, depth + 1, "cond", allow_unresolved);
-        print_expr_at_depth(expr->expr.conditional.then_expr, depth + 1, "then", allow_unresolved);
-        print_expr_at_depth(expr->expr.conditional.else_expr, depth + 1, "else", allow_unresolved);
-        return;
     case EXPR_CONSTANT:
         print_constant(expr, allow_unresolved);
         return;
@@ -324,10 +318,11 @@ UNRESOLVED_ARROW:
                scratch_string(), debug_type_to_str(expr->type, allow_unresolved));
         return;
     }
-    case EXPR_ZEROED_OUT:
+    case EXPR_DEFAULT_VAL:
     case EXPR_CT_ALIGNOF:
     case EXPR_CT_OFFSETOF:
     case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_EQUAL:
     case EXPR_CT_TYPE_MAX:
     case EXPR_CT_TYPE_MIN:
         SIC_TODO();

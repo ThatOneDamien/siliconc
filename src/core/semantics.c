@@ -518,7 +518,7 @@ static void analyze_function(ObjFunc* func)
         g_sema.cur_func = func;
         g_sema.code_is_unreachable = false;
         g_sema.has_errored_unreachable = false;
-        if(!analyze_stmt_block(func->body->stmt.block) && func->signature.ret_type.type->kind != TYPE_VOID)
+        if(!analyze_stmt_list(func->body) && func->signature.ret_type.type->kind != TYPE_VOID)
         {
             sic_error_at(func->header.loc, "Function does not return from all control paths.");
         }

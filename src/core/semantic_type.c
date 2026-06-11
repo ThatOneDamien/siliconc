@@ -119,6 +119,47 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     return false;
 }
 
+bool type_has_default_value(const Type* type)
+{
+    DBG_ASSERT(type != NULL);
+    DBG_ASSERT(type->status == STATUS_RESOLVED);
+    const Type* t = type;
+RETRY:
+    switch(t->kind)
+    {
+    case TYPE_BOOL:
+    case CHAR_TYPES:
+    case INT_TYPES:
+    case FLOAT_TYPES:
+    case TYPE_OPTIONAL:
+        return true;
+    case POINTER_TYPES:
+    case TYPE_SLICE:
+        return false;
+    case TYPE_STATIC_ARRAY:
+        t = t->array.elem_type;
+        goto RETRY;
+    case TYPE_ALIAS:
+    case TYPE_ALIAS_DISTINCT:
+        // TODO: Let distinct types have default values
+        t = obj_as_typedef(t->user_def)->alias.type;
+        goto RETRY;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+        // TODO: Let distinct types have default values
+        t = obj_as_enum(t->user_def)->underlying.type;
+        goto RETRY;
+    case TYPE_STRUCT:
+
+    case TYPE_UNION:
+    case TYPE_INVALID:
+    case TYPE_VOID:
+    case SEMA_ONLY_TYPES:
+        break;
+    }
+    SIC_UNREACHABLE();
+}
+
 static bool resolve_array(Type* type, SourceLoc error_loc)
 {
     if(!resolve_type(&type->array.elem_type, TYPE_RES_NORMAL, error_loc, "Arrays cannot have elements of type %s.")) return false;
@@ -293,4 +334,3 @@ static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc erro
     *type_ref = type_apply_qualifiers(user_ty, qualifiers);
     return true;
 }
-

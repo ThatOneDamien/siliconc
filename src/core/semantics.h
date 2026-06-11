@@ -10,19 +10,20 @@ typedef enum : uint8_t
 typedef struct SemaContext SemaContext;
 struct SemaContext
 {
-    ObjModule*   module;
-    ObjFunc*     cur_func;
-    Object*      circular_def;
-    ObjVarDA     locals;
-    ObjEnum*     cur_enum; // Used when analyzing enums to find members
-    Type*        inferred_type;
+    ObjModule* module;
+    ObjFunc*   cur_func;
+    Object*    circular_def;
+    ObjVarDA   locals;
+    ObjEnum*   cur_enum; // Used when analyzing enums to find members
+    Type*      inferred_type;
     
-    Stmt*     break_target;
-    Stmt*     continue_target;
-    bool         type_res_allow_unresolved;
-    bool         in_global_init;
-    bool         code_is_unreachable;
-    bool         has_errored_unreachable;
+    Stmt*      break_target;
+    Stmt*      continue_target;
+    Expr*      result_target;
+    bool       type_res_allow_unresolved;
+    bool       in_global_init;
+    bool       code_is_unreachable;
+    bool       has_errored_unreachable;
 };
 
 extern SemaContext g_sema;
@@ -37,18 +38,44 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
 bool resolve_import(ObjModule* module, ObjImport* import);
 
 // Statements
-bool analyze_stmt_block(Stmt* stmt);
+void analyze_stmt(Stmt* stmt);
+bool analyze_if(ASTIf* if_);
+bool analyze_stmt_list(Stmt* stmt_list);
 void analyze_ct_assert(Stmt* stmt);
 bool analyze_declaration(ObjVar* decl);
 
 // Expressions
-bool analyze_expr(Expr* expr);
-bool analyze_rvalue(Expr* expr);
-bool analyze_rvalue_no_mutate(Expr* expr);
-bool analyze_lvalue(Expr* expr, bool will_write);
-bool analyze_explicit_cast(Expr* cast);
+bool analyze_expr_args(Expr* expr, Type* expected_type);
+bool analyze_expr_dispatch(Expr* expr, Type* expected_type);
+bool analyze_rvalue_dispatch(Expr* expr, bool mutate);
+bool analyze_lvalue_dispatch(Expr* expr, bool will_write);
+bool analyze_var_rvalue(Expr* expr);
+
+static inline bool analyze_expr(Expr* expr)
+{
+    return analyze_expr_args(expr, NULL);
+}
+
+static inline bool analyze_rvalue_args(Expr* expr, Type* expected_type, bool mutate)
+{
+    DBG_ASSERT(expr != NULL);
+    return analyze_expr_args(expr, expected_type) && analyze_rvalue_dispatch(expr, mutate);
+}
+
+static inline bool analyze_rvalue(Expr* expr)
+{
+    return analyze_rvalue_args(expr, NULL, true);
+}
+
+static inline bool analyze_lvalue(Expr* expr, bool will_write)
+{
+    DBG_ASSERT(expr != NULL);
+    return analyze_expr(expr) && analyze_lvalue_dispatch(expr, will_write);
+}
+
 
 // Casting
+bool analyze_explicit_cast(Expr* cast);
 bool can_cast(Expr* expr, Type* to, bool silent);
 void perform_cast(Expr* expr, Type* to);
 bool implicit_cast(Expr* expr, Type* desired);

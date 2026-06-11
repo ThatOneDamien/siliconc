@@ -51,7 +51,8 @@ static void     emit_break_stmt(CodegenContext* c, Stmt* stmt);
 static void     emit_continue_stmt(CodegenContext* c, Stmt* stmt);
 static void     emit_declaration(CodegenContext* c, ObjVar* decl);
 static void     emit_for(CodegenContext* c, Stmt* stmt);
-static void     emit_if(CodegenContext* c, Stmt* stmt);
+static void     emit_if(CodegenContext* c, const ASTIf if_, LLVMBasicBlockRef exit_block);
+static void     emit_result_stmt(CodegenContext* c, Stmt* stmt);
 static void     emit_swap(CodegenContext* c, Stmt* stmt);
 static void     emit_switch(CodegenContext* c, Stmt* stmt);
 static void     emit_while(CodegenContext* c, Stmt* stmt);
@@ -64,12 +65,12 @@ static void     emit_array_initialization(CodegenContext* c, GenValue* lhs, Expr
 static void     emit_binary(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_call(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, Expr* expr, GenValue* inner, GenValue* result);
-static void     emit_conditional(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_constant(CodegenContext* c, Expr* expr, GenValue* result);
 static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
 static LLVMValueRef emit_const_initializer(CodegenContext* c, Expr* expr);
 static LLVMValueRef emit_const_array_init_list(CodegenContext* c, Expr* expr);
 static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, Expr* expr);
+static void     emit_if_expr(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_incdec(CodegenContext* c, Expr* expr, GenValue* inner, GenValue* result, bool is_post);
 static void     emit_member_access(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_member_builtin(CodegenContext* c, Expr* expr, GenValue* result);
@@ -395,13 +396,14 @@ static void emit_stmt(CodegenContext* c, Stmt* stmt)
     case STMT_FOR:
         emit_for(c, stmt);
         return;
-    case STMT_IF: 
-        emit_if(c, stmt);
+    case STMT_IF:
+        emit_if(c, stmt->stmt.if_, LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, ".if_exit"));
         return;
     case STMT_NOP:
         return;
     case STMT_RESULT:
-        SIC_TODO();
+        emit_result_stmt(c, stmt);
+        return;
     case STMT_RETURN:
         if(c->cur_func->signature.ret_type.type->kind == TYPE_VOID)
             LLVMBuildRetVoid(c->builder);
@@ -592,40 +594,55 @@ RETRY:
     append_old_basic_block(c, exit_block);
 }
 
-static void emit_if(CodegenContext* c, Stmt* stmt)
+static void emit_if(CodegenContext* c, const ASTIf if_, LLVMBasicBlockRef exit_block)
 {
-    ASTIf* if_stmt = &stmt->stmt.if_;
+    DBG_ASSERT(exit_block != NULL);
 
-    LLVMBasicBlockRef exit_block = create_basic_block(".if_exit");
     LLVMBasicBlockRef then_block = exit_block;
     LLVMBasicBlockRef else_block = exit_block;
 
-    GenValue cond = emit_rvalue(c, if_stmt->cond);
+    GenValue cond_val = emit_rvalue(c, if_.cond);
 
-    if(!stmt_empty(if_stmt->then_stmt))
+    if(!stmt_empty(if_.then_stmt))
         then_block = create_basic_block(".if_then");
-    
-    if(!stmt_empty(if_stmt->else_stmt))
+
+    if(!stmt_empty(if_.else_stmt))
         else_block = create_basic_block(".if_else");
 
     if(then_block == exit_block && else_block == exit_block)
         return;
 
-    LLVMBuildCondBr(c->builder, cond.value, then_block, else_block);
+    LLVMBuildCondBr(c->builder, cond_val.value, then_block, else_block);
     if(then_block != exit_block)
     {
         append_old_basic_block(c, then_block);
-        emit_stmt(c, if_stmt->then_stmt);
+        emit_stmt(c, if_.then_stmt);
         emit_br(c, exit_block);
     }
 
     if(else_block != exit_block)
     {
         append_old_basic_block(c, else_block);
-        emit_stmt(c, if_stmt->else_stmt);
+        emit_stmt(c, if_.else_stmt);
         emit_br(c, exit_block);
+        LLVMMoveBasicBlockAfter(exit_block, else_block);
     }
-    append_old_basic_block(c, exit_block);
+    else 
+        LLVMMoveBasicBlockAfter(exit_block, then_block);
+
+    use_basic_block(c, exit_block);
+}
+
+static void emit_result_stmt(CodegenContext* c, Stmt* stmt)
+{
+    Expr* target = stmt->stmt.result.target;
+    DBG_ASSERT(target != NULL);
+
+    LLVMValueRef phi_node = target->expr.if_.backend.phi_node;
+    DBG_ASSERT(phi_node != NULL);
+
+    GenValue result = emit_rvalue(c, stmt->stmt.result.val);
+    LLVMAddIncoming(phi_node, &result.value, &c->cur_block, 1);
 }
 
 static void emit_swap(CodegenContext* c, Stmt* stmt)
@@ -741,12 +758,11 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
         emit_cast(c, expr, &inner, &result);
         break;
     }
-    case EXPR_CONDITIONAL:
-        emit_conditional(c, expr, &result);
-        break;
     case EXPR_CONSTANT:
         emit_constant(c, expr, &result);
         break;
+    case EXPR_DEFAULT_VAL:
+        SIC_TODO();
     case EXPR_FUNC_CALL:
         emit_call(c, expr, &result);
         break;
@@ -755,7 +771,8 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
         result.kind = GEN_VAL_RVALUE;
         break;
     case EXPR_IF:
-        SIC_TODO();
+        emit_if_expr(c, expr, &result);
+        break;
     case EXPR_MEMBER_ACCESS:
         emit_member_access(c, expr, &result);
         break;
@@ -796,8 +813,6 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
         result.value = get_var_llvm_ref(c, expr->expr.var);
         result.kind = GEN_VAL_ADDRESS;
         break;
-    case EXPR_ZEROED_OUT:
-        SIC_TODO();
     case SEMA_ONLY_EXPRS:
     case EXPR_METHOD:
         SIC_UNREACHABLE();
@@ -1289,6 +1304,18 @@ static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, Expr* expr)
     return LLVMConstNamedStruct(get_llvm_type(c, struct_type), values, struct_->members.size);
 }
 
+static void emit_if_expr(CodegenContext* c, Expr* expr, GenValue* result)
+{
+    result->kind = GEN_VAL_RVALUE;
+    ASTIf copy = expr->expr.if_.data;
+    LLVMBasicBlockRef prev_block = c->cur_block;
+    LLVMBasicBlockRef exit_block = expr->expr.if_.backend.exit_block = LLVMAppendBasicBlockInContext(s_context, c->cur_func->header.llvm_ref, ".if_exit");
+    use_basic_block(c, exit_block);
+    result->value = expr->expr.if_.backend.phi_node = LLVMBuildPhi(c->builder, get_llvm_type(c, result->type), "");
+    use_basic_block(c, prev_block);
+    emit_if(c, copy, exit_block);
+}
+
 static void emit_incdec(CodegenContext* c, Expr* expr, GenValue* inner, GenValue* result, bool is_post)
 {
     GenValue inner_rval = *inner;
@@ -1468,32 +1495,6 @@ static void emit_logical_andor(CodegenContext* c, GenValue* lhs, Expr* rhs, GenV
     LLVMValueRef values[2] = { LLVMConstInt(LLVMInt1TypeInContext(s_context), exit_early_val, false), rhs_val.value };
     result->type = g_type_bool;
     LLVMAddIncoming(result->value, values, blocks, 2);
-}
-
-static void emit_conditional(CodegenContext* c, Expr* expr, GenValue* result)
-{
-    ExprCond* conditional = &expr->expr.conditional;
-    GenValue cond = emit_rvalue(c, conditional->cond_expr);
-    LLVMBasicBlockRef then_bb = create_basic_block(".cond_then");
-    LLVMBasicBlockRef else_bb = create_basic_block(".cond_else");
-    LLVMBasicBlockRef exit_bb = create_basic_block(".cond_exit");
-    LLVMBuildCondBr(c->builder, cond.value, then_bb, else_bb);
-
-    append_old_basic_block(c, then_bb);
-    GenValue then = emit_rvalue(c, conditional->then_expr);
-
-    append_old_basic_block(c, else_bb);
-    GenValue elss = emit_rvalue(c, conditional->else_expr);
-
-    emit_br(c, exit_bb);
-    append_old_basic_block(c, exit_bb);
-    result->value = LLVMBuildPhi(c->builder, get_llvm_type(c, result->type), "");
-    result->kind = GEN_VAL_RVALUE;
-
-    LLVMValueRef values[2] = { then.value, elss.value };
-    LLVMBasicBlockRef blocks[2] = { then_bb, else_bb };
-    LLVMAddIncoming(result->value, values, blocks, 2);
-
 }
 
 static void emit_unary(CodegenContext* c, Expr* expr, GenValue* result)

@@ -52,5 +52,6 @@ enum Test8 : uint
     B // #error: exceeds the maximum
 }
 
+const a: Test = .A;
 
 fn returns_int() int { return 1; }

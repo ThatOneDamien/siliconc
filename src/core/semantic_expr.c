@@ -1,28 +1,23 @@
 #include "semantics.h"
 #include <float.h>
 
-static bool analyze_expr_dispatch(Expr* expr);
-static bool analyze_rvalue_dispatch(Expr* expr, bool mutate);
-static bool analyze_lvalue_dispatch(Expr* expr, bool will_write);
-
-static bool analyze_var_rvalue(Expr* expr);
-
 // Expr kind functions
 static bool analyze_array_access(Expr* expr);
-static bool analyze_array_init_list(Expr* expr);
+static bool analyze_array_init_list(Expr* expr, Type* expected_type);
 static bool analyze_binary(Expr* expr);
 static bool analyze_call(Expr* expr);
-static bool analyze_conditional(Expr* expr);
 static bool analyze_ident(Expr* expr);
+static bool analyze_if_expr(Expr* expr, Type* expected_type);
 static bool analyze_range(Expr* expr);
 static bool analyze_struct_init_list(Expr* expr);
 static bool analyze_unary(Expr* expr);
 static bool analyze_unresolved_arrow(Expr* expr);
-static bool analyze_unresolved_dot(Expr* expr);
+static bool analyze_unresolved_dot(Expr* expr, Type* expected_type);
 static bool analyze_unwrap(Expr* expr);
 static bool analyze_ct_alignof(Expr* expr);
 static bool analyze_ct_offsetof(Expr* expr);
 static bool analyze_ct_sizeof(Expr* expr);
+static bool analyze_ct_type_equal(Expr* expr);
 static bool analyze_ct_type_max(Expr* expr);
 static bool analyze_ct_type_min(Expr* expr);
 
@@ -54,39 +49,22 @@ static bool analyze_log_not(Expr* expr, Expr* inner);
 static bool analyze_negate(Expr* expr, Expr* inner);
 
 static bool basic_arith_type_conv(Expr* expr1, Expr* expr2, SourceLoc loc);
-static void convert_to_const_zero(Expr* expr, Type* type);
+static void convert_to_types_default(Expr* expr, Type* type);
 
-bool analyze_expr(Expr* expr)
+bool analyze_expr_args(Expr* expr, Type* expected_type)
 {
     DBG_ASSERT(expr != NULL);
     if(expr->is_evaluated) return !expr_is_bad(expr);
-    bool success = analyze_expr_dispatch(expr);
+    bool success = analyze_expr_dispatch(expr, expected_type);
     DBG_ASSERT(!success || (expr->type != NULL && expr->type->status != STATUS_UNRESOLVED));
     expr->is_evaluated = true;
     if(!success) expr->kind = EXPR_INVALID;
     return success;
 }
 
-bool analyze_rvalue(Expr* expr)
+bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
 {
-    DBG_ASSERT(expr != NULL);
-    return analyze_expr(expr) && analyze_rvalue_dispatch(expr, true);
-}
-
-bool analyze_rvalue_no_mutate(Expr* expr)
-{
-    DBG_ASSERT(expr != NULL);
-    return analyze_expr(expr) && analyze_rvalue_dispatch(expr, false);
-}
-
-bool analyze_lvalue(Expr* expr, bool will_write)
-{
-    DBG_ASSERT(expr != NULL);
-    return analyze_expr(expr) && analyze_lvalue_dispatch(expr, will_write);
-}
-
-static bool analyze_expr_dispatch(Expr* expr)
-{
+    DBG_ASSERT(expected_type == NULL || expected_type->status != STATUS_UNRESOLVED);
     switch(expr->kind)
     {
     case EXPR_INVALID:
@@ -94,19 +72,17 @@ static bool analyze_expr_dispatch(Expr* expr)
     case EXPR_ARRAY_ACCESS:
         return analyze_array_access(expr);
     case EXPR_ARRAY_INIT_LIST:
-        return analyze_array_init_list(expr);
+        return analyze_array_init_list(expr, expected_type);
     case EXPR_BINARY:
         return analyze_binary(expr);
     case EXPR_CAST:
         return analyze_explicit_cast(expr);
-    case EXPR_CONDITIONAL:
-        return analyze_conditional(expr);
     case EXPR_CONSTANT:
         return true;
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
     case EXPR_IF:
-        SIC_TODO();
+        return analyze_if_expr(expr, expected_type);
     case EXPR_RANGE:
         return analyze_range(expr);
     case EXPR_STRUCT_INIT_LIST:
@@ -123,7 +99,7 @@ static bool analyze_expr_dispatch(Expr* expr)
     case EXPR_UNRESOLVED_ARROW:
         return analyze_unresolved_arrow(expr);
     case EXPR_UNRESOLVED_DOT:
-        return analyze_unresolved_dot(expr);
+        return analyze_unresolved_dot(expr, expected_type);
     case EXPR_UNRESOLVED_IDENT:
         return analyze_ident(expr);
     case EXPR_CT_ALIGNOF:
@@ -132,6 +108,8 @@ static bool analyze_expr_dispatch(Expr* expr)
         return analyze_ct_offsetof(expr);
     case EXPR_CT_SIZEOF:
         return analyze_ct_sizeof(expr);
+    case EXPR_CT_TYPE_EQUAL:
+        return analyze_ct_type_equal(expr);
     case EXPR_CT_TYPE_MAX:
         return analyze_ct_type_max(expr);
     case EXPR_CT_TYPE_MIN:
@@ -144,13 +122,13 @@ static bool analyze_expr_dispatch(Expr* expr)
     case EXPR_SLICE:
     case EXPR_TYPE_IDENT:
     case EXPR_VAR:
-    case EXPR_ZEROED_OUT:
+    case EXPR_DEFAULT_VAL:
         break;
     }
     SIC_UNREACHABLE();
 }
 
-static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
+bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
 {
     // The expressions must always be evaluated prior to calling this function.
     DBG_ASSERT(expr->is_evaluated);
@@ -185,8 +163,8 @@ static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     case EXPR_ARRAY_INIT_LIST:
     case EXPR_BINARY:
     case EXPR_CAST:
-    case EXPR_CONDITIONAL:
     case EXPR_CONSTANT:
+    case EXPR_DEFAULT_VAL:
     case EXPR_IF:
     case EXPR_POINTER_OFFSET:
     case EXPR_POSTFIX:
@@ -196,7 +174,6 @@ static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     case EXPR_SWITCH:
     case EXPR_UNARY:
     case EXPR_UNWRAP:
-    case EXPR_ZEROED_OUT:
         return true;
     case EXPR_UNRESOLVED_ARROW:
     case EXPR_UNRESOLVED_DOT:
@@ -204,6 +181,7 @@ static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     case EXPR_CT_ALIGNOF:
     case EXPR_CT_OFFSETOF:
     case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_EQUAL:
     case EXPR_CT_TYPE_MAX:
     case EXPR_CT_TYPE_MIN:
         break;
@@ -211,7 +189,7 @@ static bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     SIC_UNREACHABLE();
 }
 
-static bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
+bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
 {
     switch(expr->kind)
     {
@@ -295,7 +273,7 @@ ERR:
     return false;
 }
 
-static bool analyze_var_rvalue(Expr* expr)
+bool analyze_var_rvalue(Expr* expr)
 {
     ObjVar* var = expr->expr.var;
     var->read = true;
@@ -310,7 +288,7 @@ static bool analyze_var_rvalue(Expr* expr)
             if(var->initial_val)
                 expr_copy(expr, var->initial_val);
             else
-                convert_to_const_zero(expr, var->type_loc.type);
+                convert_to_types_default(expr, var->type_loc.type);
         }
         return true;
     case VAR_LOCAL:
@@ -416,7 +394,7 @@ static bool analyze_array_access(Expr* expr)
                 }
             }
 
-            convert_to_const_zero(expr, elem_type);
+            convert_to_types_default(expr, elem_type);
             return true;
         }
     }
@@ -425,8 +403,16 @@ static bool analyze_array_access(Expr* expr)
     return true;
 }
 
-static bool analyze_array_init_list(Expr* expr)
+static bool analyze_array_init_list(Expr* expr, Type* expected_type)
 {
+    Type* elem_expected = NULL;
+    if(expected_type != NULL)
+    {
+        elem_expected = expected_type->canonical;
+        if(elem_expected->kind == TYPE_STATIC_ARRAY || elem_expected->kind == TYPE_INFERRED_ARRAY)
+            elem_expected = elem_expected->array.elem_type;
+    }
+
     ArrInitList* list = &expr->expr.array_init;
     bool valid = true;
     bool is_constant = true;
@@ -473,7 +459,7 @@ static bool analyze_array_init_list(Expr* expr)
                 max = entry->const_index;
         }
 
-        if(!analyze_rvalue(entry->init_value))
+        if(!analyze_rvalue_args(entry->init_value, elem_expected, true))
             valid = false;
         else if(!entry->init_value->is_const_eval)
             is_constant = false;
@@ -701,6 +687,38 @@ static bool analyze_ident(Expr* expr)
     SIC_UNREACHABLE();
 }
 
+static bool analyze_if_expr(Expr* expr, Type* expected_type)
+{
+    expr->type = expected_type;
+
+    ASTIf* if_ = &expr->expr.if_.data;
+    Expr* cond = if_->cond;
+    Stmt* then = if_->then_stmt;
+    Stmt* elss = if_->else_stmt;
+
+    Expr* prev_target = g_sema.result_target;
+    g_sema.result_target = expr;
+
+    bool valid = analyze_if(if_);
+    DBG_ASSERT(elss != NULL); // This should be handled in the parser.
+    g_sema.result_target = prev_target;
+    if(!valid) return false;
+
+    if(!then->always_returns || !elss->always_returns)
+    {
+        sic_error_at(expr->loc, "If does not return from all control paths.");
+        return false;
+    }
+    if(cond->kind == EXPR_CONSTANT)
+    {
+        if(cond->expr.constant.b)
+            sic_diagnostic_at(DIAG_WARNING, cond->loc, "Condition always evaluates to true.");
+        else
+            sic_diagnostic_at(DIAG_WARNING, cond->loc, "Condition always evaluates to false.");
+    }
+    return expr->type != g_type_invalid;
+}
+
 static bool analyze_range(Expr* expr)
 {
     Expr* from = expr->expr.range.from;
@@ -758,43 +776,27 @@ static bool analyze_struct_init_list(Expr* expr)
             }
         }
 
-        is_const_eval = is_const_eval & entry->init_value->is_const_eval;
         for(uint32_t j = 0; j < struct_->members.size; ++j)
         {
             ObjVar* member = struct_->members.data[j];
             if(entry->unresolved_member.sym == member->header.sym)
             {
                 entry->member_idx = j;
-                if(!implicit_cast(entry->init_value, member->type_loc.type)) valid = false;
+                valid &= analyze_rvalue_args(entry->init_value, member->type_loc.type, true);
+                valid &= implicit_cast(entry->init_value, member->type_loc.type);
                 goto NEXT_ENTRY;
             }
         }
 
+        analyze_rvalue(entry->init_value);
         sic_error_at(entry->unresolved_member.loc, "Type %s has no member '%s'.", 
-                type_to_string(expr->type), entry->unresolved_member.sym);
+                     type_to_string(expr->type), entry->unresolved_member.sym);
         valid = false;
 NEXT_ENTRY:;
+        is_const_eval = is_const_eval & entry->init_value->is_const_eval;
     }
     expr->is_const_eval = is_const_eval;
     return valid;
-}
-
-static bool analyze_conditional(Expr* expr)
-{
-    ExprCond* cond= &expr->expr.conditional;
-    bool valid = true;
-    valid &= analyze_rvalue(cond->cond_expr);
-    valid &= analyze_rvalue(cond->then_expr);
-    valid &= analyze_rvalue(cond->else_expr);
-    if(!valid) return false;
-
-    SIC_TODO();
-    // if(!type_equal(tern->then_expr->type, tern->else_expr->type) &&
-    //    !arith_type_conv(&tern->then_expr, &tern->else_expr, expr->loc))
-    //     return false;
-
-    expr->type = cond->else_expr->type;
-    return implicit_cast(cond->cond_expr, g_type_bool);
 }
 
 static bool analyze_unary(Expr* expr)
@@ -932,10 +934,51 @@ static bool analyze_unresolved_arrow(Expr* expr)
     return resolve_member(expr);
 }
 
-static bool analyze_unresolved_dot(Expr* expr)
+static bool analyze_inferred_dot(Expr* expr, Type* expected_type)
+{
+    if(expected_type == NULL)
+    {
+        sic_error_at(expr->loc, "Inferred dot expression not allowed in this context.");
+        return false;
+    }
+    Type* t = expected_type;
+RETRY:
+    switch(t->kind)
+    {
+    case TYPE_ALIAS:
+        t = t->canonical;
+        goto RETRY;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT:
+        break;
+    default:
+        sic_error_at(expr->loc, "Inferred dot expression not allowed in this context.");
+        return false;
+    }
+    ExprUnresAccess* uaccess = &expr->expr.unresolved_access;
+    ObjEnum* enum_ = obj_as_enum(t->user_def);
+    const ObjEnumValueDA values = enum_->values;
+    for(uint32_t i = 0; i < values.size; ++i)
+        if(values.data[i]->header.sym == uaccess->member.sym)
+        {
+            if(!analyze_enum_value(enum_, i))
+            {
+                check_circular_def(&values.data[i]->header, expr->loc);
+                return false;
+            }
+            convert_to_const_int(expr, enum_->type_ref, values.data[i]->const_value);
+            return true;
+        }
+    sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
+                 enum_->header.sym, uaccess->member.sym);
+    return false;
+}
+
+static bool analyze_unresolved_dot(Expr* expr, Type* expected_type)
 {
     ExprUnresAccess* uaccess = &expr->expr.unresolved_access;
     Expr* parent = uaccess->parent_expr;
+    if(parent == NULL) return analyze_inferred_dot(expr, expected_type);
     if(!analyze_expr(parent)) return false;
 
     if(parent->kind == EXPR_TYPE_IDENT)
@@ -1062,6 +1105,18 @@ static bool analyze_ct_sizeof(Expr* expr)
     
     uint32_t size = type_size(expr->expr.ct_typearg.type);
     convert_to_const_int(expr, g_type_usize, i128_from_u64(size));
+    return true;
+}
+
+static bool analyze_ct_type_equal(Expr* expr)
+{
+    TypeLoc* first = &expr->expr.ct_type_equal.first;
+    TypeLoc* second = &expr->expr.ct_type_equal.second;
+    bool valid = resolve_type(&first->type, TYPE_RES_ALLOW_ALL, first->loc, "");
+    valid &= resolve_type(&second->type, TYPE_RES_ALLOW_ALL, second->loc, "");
+    if(!valid) return false;
+
+    convert_to_const_bool(expr, g_type_bool, type_equal(first->type, second->type));
     return true;
 }
 
@@ -1796,7 +1851,7 @@ static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
             sic_error_at(expr->loc, "Shift amount should not be negative.");
             return false;
         }
-        if(i128_ucmp64(rhs->expr.constant.i, lt->builtin.bit_size) >= 0)
+        if(i128_ucmp64(r, lt->builtin.bit_size) >= 0)
             sic_diagnostic_at(DIAG_WARNING, expr->loc, "Shift amount >= integer width.");
 
         if(lhs->kind == EXPR_CONSTANT)
@@ -2048,7 +2103,7 @@ static bool analyze_deref(Expr* expr, Expr* inner)
 
 static bool analyze_incdec(Expr* expr, Expr* inner)
 {
-    if(!analyze_lvalue(inner, true) || !analyze_rvalue_no_mutate(inner))
+    if(!analyze_lvalue(inner, true) || !analyze_rvalue_args(inner, NULL, true))
         return false;
 
     Type* ty = inner->type;
@@ -2212,7 +2267,7 @@ INT_ERR:
     return false;
 }
 
-static void convert_to_const_zero(Expr* expr, Type* type)
+static void convert_to_types_default(Expr* expr, Type* type)
 {
     Type* t = type;
 RETRY:
@@ -2234,10 +2289,12 @@ RETRY:
     case TYPE_STATIC_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
+        // TODO: Let distinct types have default values
         t = obj_as_typedef(t->user_def)->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
+        // TODO: Let distinct types have default values
         t = obj_as_enum(t->user_def)->underlying.type;
         goto RETRY;
     case TYPE_STRUCT:
@@ -2245,7 +2302,7 @@ RETRY:
     case TYPE_SLICE:
     case TYPE_OPTIONAL:
         expr->type = type;
-        expr->kind = EXPR_ZEROED_OUT;
+        expr->kind = EXPR_DEFAULT_VAL;
         expr->is_const_eval = true;
         return;
     case TYPE_INVALID:
