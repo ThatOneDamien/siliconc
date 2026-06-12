@@ -939,20 +939,13 @@ static bool analyze_inferred_dot(Expr* expr, Type* expected_type)
         sic_error_at(expr->loc, "Inferred dot expression not allowed in this context.");
         return false;
     }
-    Type* t = expected_type;
-RETRY:
-    switch(t->kind)
+    Type* t = type_remove_aliases(expected_type);
+    if(t->kind != TYPE_ENUM && t->kind != TYPE_ENUM_DISTINCT)
     {
-    case TYPE_ALIAS:
-        t = t->canonical;
-        goto RETRY;
-    case TYPE_ENUM:
-    case TYPE_ENUM_DISTINCT:
-        break;
-    default:
         sic_error_at(expr->loc, "Inferred dot expression not allowed in this context.");
         return false;
     }
+
     ExprUnresAccess* uaccess = &expr->expr.unresolved_access;
     ObjEnum* enum_ = obj_as_enum(t->user_def);
     const ObjEnumValueDA values = enum_->values;
@@ -1631,6 +1624,9 @@ static bool analyze_logical(Expr* expr, Expr* lhs, Expr* rhs)
 
 static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
 {
+    bool valid = analyze_rvalue(lhs);
+    valid &= analyze_rvalue_args(rhs, type_is_enum(type_remove_aliases(lhs->type)) ? lhs->type : NULL, true);
+    if(!valid) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     TypeKind lkind = lt->kind;
@@ -1657,6 +1653,7 @@ static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
         if(rkind != lkind) break;
         return true;
     case INT_TYPES:
+        if(type_is_int_literal(lt) && type_is_int_literal(rt)) return true; // This is handled elsewhere, specific to each operator
         if(!type_kind_is_integer(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
     case FLOAT_TYPES:
@@ -1703,10 +1700,7 @@ static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
 
 static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_comparison(expr, lhs, rhs, true)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
 
@@ -1719,9 +1713,7 @@ static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
         convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_NE));
         return true;
     }
-    if(!analyze_comparison(expr, lhs, rhs, true)) return false;
 
-    lt = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         bool value;
@@ -1740,10 +1732,7 @@ static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 
 static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     // Untyped int literal case
@@ -1759,9 +1748,7 @@ static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
         convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GE));
         return true;
     }
-    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    lt = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         bool value;
@@ -1780,10 +1767,7 @@ static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 
 static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     // Untyped int literal case
@@ -1799,9 +1783,7 @@ static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
         convert_to_const_bool(expr, g_type_bool, value ^ (kind == BINARY_GT));
         return true;
     }
-    if(!analyze_comparison(expr, lhs, rhs, false)) return false;
 
-    lt = lhs->type->canonical;
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
         bool value;
@@ -1862,7 +1844,7 @@ static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs,
         if(kind != BINARY_SHL && expected_type != NULL && !type_is_int_literal(lt))
         {
             Type* expected_ctype = expected_type->canonical;
-            if(type_is_integer(expected_ctype))
+            if(type_is_integer(expected_ctype) && type_is_unsigned(expected_ctype) == type_is_unsigned(lt))
             {
                 BitSize expected_bitcnt = expected_ctype->builtin.bit_size;
                 if(expected_bitcnt < lt_bitcnt && expected_bitcnt >= res_size &&
@@ -2031,15 +2013,15 @@ static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rh
         max_lz = next > max_lz ? next : max_lz;
     }
 
+    Type* ct = expr->type->canonical;
     bool can_shrink = false;
     if(expected_type != NULL)
     {
         Type* expected_ctype = expected_type->canonical;
-        if(type_is_integer(expected_ctype))
+        if(type_is_integer(expected_ctype) && type_is_unsigned(expected_ctype) == type_is_unsigned(ct))
         {
             BitSize expected_bitcnt = expected_ctype->builtin.bit_size;
-            if(expected_bitcnt < expr->type->canonical->builtin.bit_size &&
-               128 - max_lz <= expected_bitcnt)
+            if(expected_bitcnt < ct->builtin.bit_size && 128 - max_lz <= expected_bitcnt)
             {
                 can_shrink = true;
             }

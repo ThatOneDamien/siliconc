@@ -126,6 +126,7 @@ Type*       type_array_of(Type* elem_ty, Expr* size_expr, TypeKind kind);
 Type*       type_slice_of(Type* elem_ty);
 Type*       type_optional_of(Type* elem_ty);
 Type*       type_reduce(Type* t);
+Type*       type_remove_aliases(Type* t);
 bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
@@ -167,6 +168,11 @@ static inline bool type_kind_is_distinct(TypeKind kind)
     return kind == TYPE_ENUM_DISTINCT || kind == TYPE_ALIAS_DISTINCT;
 }
 
+static inline bool type_kind_is_enum(TypeKind kind)
+{
+    return kind == TYPE_ENUM || kind == TYPE_ENUM_DISTINCT;
+}
+
 static inline bool type_kind_is_pointer(TypeKind kind)
 {
     return kind >= TYPE_POINTERS_START && kind <= TYPE_POINTERS_END;
@@ -193,6 +199,7 @@ static inline bool type_is_char(const Type* ty) { return type_kind_is_char(ty->k
 static inline bool type_is_float(const Type* ty) { return type_kind_is_float(ty->kind); }
 static inline bool type_is_numeric(const Type* ty) { return type_kind_is_numeric(ty->kind); }
 static inline bool type_is_distinct(const Type* ty) { return type_kind_is_distinct(ty->kind); }
+static inline bool type_is_enum(const Type* ty) { return type_kind_is_enum(ty->kind); }
 static inline bool type_is_pointer(const Type* ty) { return type_kind_is_pointer(ty->kind); }
 static inline bool type_is_aggregate(const Type* ty) { return type_kind_is_aggregate(ty->kind); }
 static inline bool type_is_trivially_copyable(const Type* ty)

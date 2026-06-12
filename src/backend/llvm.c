@@ -610,7 +610,10 @@ static void emit_if(CodegenContext* c, const ASTIf if_, LLVMBasicBlockRef exit_b
         else_block = create_basic_block(".if_else");
 
     if(then_block == exit_block && else_block == exit_block)
+    {
+        LLVMDeleteBasicBlock(exit_block);
         return;
+    }
 
     LLVMBuildCondBr(c->builder, cond_val.value, then_block, else_block);
     if(then_block != exit_block)

@@ -1,5 +1,8 @@
 #include "semantics.h"
 
+
+static bool analyze_inferred_declaration(ObjVar* decl);
+
 static void analyze_break(Stmt* stmt);
 static void analyze_continue(Stmt* stmt);
 static void analyze_expr_stmt(Stmt* stmt);
@@ -515,77 +518,88 @@ bool analyze_declaration(ObjVar* decl)
         goto ERR;
 
     TypeKind kind = decl->type_loc.type->kind;
+    if(kind == TYPE_INFERRED_ARRAY) return analyze_inferred_declaration(decl);
     if(initial_val == NULL)
     {
-        if(decl->is_extern)
+        if(!decl->is_extern)
         {
-            if(kind == TYPE_INFERRED_ARRAY)
+            if(decl->binding_kind != VAR_BINDING_MUTABLE)
             {
-                sic_error_at(decl->header.loc, "Extern variables cannot be inferred arrays.");
+                sic_error_at(decl->header.loc, "Variables marked const or #const must always have an initialized value.");
+                goto ERR;
+            }
+            else if(!decl->uninitialized && !type_has_default_value(decl->type_loc.type, decl->header.loc, false))
+            {
                 goto ERR;
             }
         }
-        else if(kind == TYPE_INFERRED_ARRAY)
-        {
-            sic_error_at(decl->header.loc, "Auto-sized arrays require an right hand side with an "
-                                           "inferrible array size(i.e. an array literal) to be initialized.");
-            goto ERR;
-        }
-        else if(decl->binding_kind != VAR_BINDING_MUTABLE)
-        {
-            sic_error_at(decl->header.loc, "Variables marked const or #const must always have an initialized value.");
-            goto ERR;
-        }
     }
-    else if(!analyze_rvalue_args(initial_val, decl->type_loc.type, true))
+    else if(!implicit_cast(initial_val, decl->type_loc.type))
         goto ERR;
-    else
-    {
-        Type* rhs_type = initial_val->type;
-        Type* rhs_ctype = rhs_type->canonical;
-        if(kind == TYPE_INFERRED_ARRAY)
-        {
-            if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
-            {
-                if(!type_equal(decl->type_loc.type->array.elem_type, rhs_ctype->array.elem_type))
-                {
-                    sic_error_at(decl->header.loc, 
-                                 "Cannot assign auto-sized array type \'%s\' to "
-                                 "incompatible array type \'%s\'.",
-                                 type_to_string(decl->type_loc.type),
-                                 type_to_string(rhs_type));
-                    goto ERR;
-                }
-                decl->type_loc.type = rhs_type;
-            }
-            else if(rhs_type->kind == TYPE_INIT_LIST)
-            {
-                if(initial_val->expr.array_init.size == 0)
-                {
-                    sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
-                    goto ERR;
-                }
 
-                decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
-                decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
-                decl->type_loc.type->status = STATUS_RESOLVED;
-                if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
-            }
-            else
-            {
-                sic_error_at(decl->header.loc, 
-                             "Cannot resolve auto-sized array type \'%s\' to "
-                             "incompatible type \'%s\'.",
-                             type_to_string(decl->type_loc.type),
-                             type_to_string(rhs_type));
-                goto ERR;
-            }
-        }
-        else if(!implicit_cast(initial_val, decl->type_loc.type))
-            return false;
-    }
     if(decl->binding_kind == VAR_BINDING_RT_CONST)
         decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);
+    return true;
+ERR:
+    invalidate_obj(&decl->header);
+    return false;
+}
+
+static bool analyze_inferred_declaration(ObjVar* decl)
+{
+    Expr* initial_val = decl->initial_val;
+    Type* rhs_type = initial_val->type;
+    Type* rhs_ctype = rhs_type->canonical;
+    if(decl->is_extern)
+    {
+        sic_error_at(decl->header.loc, "Variable marked extern cannot have an inferred type.");
+        goto ERR;
+    }
+    if(initial_val == NULL)
+    {
+        sic_error_at(decl->header.loc, "Variable with inferred type must be assigned a value.");
+        goto ERR;
+    }
+
+    if(decl->type_loc.type->kind == TYPE_INFERRED_ARRAY)
+    {
+        if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
+        {
+            if(!type_equal(decl->type_loc.type->array.elem_type, rhs_ctype->array.elem_type))
+            {
+                sic_error_at(decl->header.loc, 
+                                "Cannot assign auto-sized array type \'%s\' to "
+                                "incompatible array type \'%s\'.",
+                                type_to_string(decl->type_loc.type),
+                                type_to_string(rhs_type));
+                goto ERR;
+            }
+            decl->type_loc.type = rhs_type;
+        }
+        else if(rhs_type->kind == TYPE_INIT_LIST)
+        {
+            if(initial_val->expr.array_init.size == 0)
+            {
+                sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
+                goto ERR;
+            }
+
+            decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
+            decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
+            decl->type_loc.type->status = STATUS_RESOLVED;
+            if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
+        }
+        else
+        {
+            sic_error_at(decl->header.loc, 
+                            "Cannot resolve auto-sized array type \'%s\' to "
+                            "incompatible type \'%s\'.",
+                            type_to_string(decl->type_loc.type),
+                            type_to_string(rhs_type));
+            goto ERR;
+        }
+    }
+
     return true;
 ERR:
     invalidate_obj(&decl->header);

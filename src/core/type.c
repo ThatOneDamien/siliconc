@@ -334,24 +334,32 @@ Type* type_optional_of(Type* elem_ty)
 Type* type_reduce(Type* t)
 {
     DBG_ASSERT(t != NULL);
-    while(true)
+RETRY:
+    switch(t->kind)
     {
-        switch(t->kind)
-        {
-        case TYPE_ALIAS:
-        case TYPE_ENUM:
-            t = t->canonical;
-            continue;
-        case TYPE_ALIAS_DISTINCT:
-            t = obj_as_typedef(t->user_def)->alias.type;
-            continue;
-        case TYPE_ENUM_DISTINCT:
-            t = obj_as_enum(t->user_def)->underlying.type;
-            continue;
-        default:
-            return t;
-        }
+    case TYPE_ALIAS:
+    case TYPE_ENUM:
+        t = t->canonical;
+        goto RETRY;
+    case TYPE_ALIAS_DISTINCT:
+        t = obj_as_typedef(t->user_def)->alias.type;
+        goto RETRY;
+    case TYPE_ENUM_DISTINCT:
+        t = obj_as_enum(t->user_def)->underlying.type;
+        goto RETRY;
+    default:
+        return t;
     }
+}
+
+Type* type_remove_aliases(Type* t)
+{
+    DBG_ASSERT(t != NULL);
+    while(t->kind == TYPE_ALIAS)
+    {
+        t = obj_as_typedef(t->user_def)->alias.type;
+    }
+    return t;
 }
 
 bool type_equal(const Type* t1, const Type* t2)

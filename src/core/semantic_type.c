@@ -119,10 +119,10 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     return false;
 }
 
-bool type_has_default_value(const Type* type)
+bool type_has_default_value(const Type* type, SourceLoc error_loc, bool silent)
 {
     DBG_ASSERT(type != NULL);
-    DBG_ASSERT(type->status == STATUS_RESOLVED);
+    DBG_ASSERT(type->status != STATUS_UNRESOLVED);
     const Type* t = type;
 RETRY:
     switch(t->kind)
@@ -132,10 +132,15 @@ RETRY:
     case INT_TYPES:
     case FLOAT_TYPES:
     case TYPE_OPTIONAL:
+    case TYPE_UNION:
         return true;
     case POINTER_TYPES:
-    case TYPE_SLICE:
+    case TYPE_SLICE: {
+        const char* type_str = type_to_string(type);
+        if(!silent)
+            sic_error_at(error_loc, "Type %s has no default value. If you wish to have null use ?%s.", type_str, type_str);
         return false;
+    }
     case TYPE_STATIC_ARRAY:
         t = t->array.elem_type;
         goto RETRY;
@@ -149,9 +154,20 @@ RETRY:
         // TODO: Let distinct types have default values
         t = obj_as_enum(t->user_def)->underlying.type;
         goto RETRY;
-    case TYPE_STRUCT:
-
-    case TYPE_UNION:
+    case TYPE_STRUCT: {
+        const ObjVarDA members = obj_as_struct(t->user_def)->members;
+        for(uint32_t i = 0; i < members.size; ++i)
+        {
+            ObjVar* member = members.data[i];
+            if(member->uninitialized || (member->initial_val == NULL && !type_has_default_value(member->type_loc.type, LOC_NULL, true)))
+            {
+                if(!silent)
+                    sic_error_at(error_loc, "Member %s of struct-type %s has no default value.", member->header.sym, type_to_string(type));
+                return false;
+            }
+        }
+        return true;
+    }
     case TYPE_INVALID:
     case TYPE_VOID:
     case SEMA_ONLY_TYPES:

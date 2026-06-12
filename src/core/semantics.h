@@ -36,6 +36,7 @@ bool analyze_enum_underlying(ObjEnum* enum_);
 bool analyze_enum_value(ObjEnum* parent, uint32_t index);
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 bool resolve_import(ObjModule* module, ObjImport* import);
+bool type_has_default_value(const Type* type, SourceLoc error_loc, bool silent);
 
 // Statements
 void analyze_stmt(Stmt* stmt);

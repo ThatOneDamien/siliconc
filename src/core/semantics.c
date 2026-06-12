@@ -475,7 +475,7 @@ Attr* get_builtin_attr(Object* obj, AttrKind kind)
 
 static void check_var_usage(ObjVar* var)
 {
-    if(var->header.sym == NULL || var->header.sym[0] == '_') return;
+    if(var->header.kind == OBJ_INVALID || var->header.sym == NULL || var->header.sym[0] == '_') return;
     if(var->binding_kind == VAR_BINDING_MUTABLE)
     {
         if(!var->read)
