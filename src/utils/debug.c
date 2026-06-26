@@ -167,7 +167,8 @@ static void print_stmt_at_depth(const Stmt* stmt, int depth, const char* name, b
     case STMT_NOP:
         return;
     case STMT_RESULT:
-        SIC_TODO();
+        print_expr_at_depth(stmt->stmt.result.val, depth + 1, NULL, allow_unresolved);
+        return;
     case STMT_RETURN:
         print_expr_at_depth(stmt->stmt.return_val, depth + 1, NULL, allow_unresolved);
         return;
@@ -241,7 +242,11 @@ static void print_expr_at_depth(const Expr* expr, int depth, const char* name, b
         printf("Function \'%s\' ]\n", expr->expr.function->header.sym);
         return;
     case EXPR_IF:
-        SIC_TODO();
+        printf("Conditional ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.if_.data.cond, depth + 1, "cond", allow_unresolved);
+        print_stmt_at_depth(expr->expr.if_.data.then_stmt, depth + 1, "then", allow_unresolved);
+        print_stmt_at_depth(expr->expr.if_.data.else_stmt, depth + 1, "else", allow_unresolved);
+        return;
     case EXPR_MEMBER_ACCESS:
         printf("Member Access \'%s\'] (Type: %s)\n", 
                expr->expr.member_access.member->header.sym, 
@@ -249,7 +254,11 @@ static void print_expr_at_depth(const Expr* expr, int depth, const char* name, b
         print_expr_at_depth(expr->expr.member_access.parent_expr, depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_MEMBER_BUILTIN:
-        SIC_TODO();
+        printf("Member Access \'%s\'] (Type: %s)\n", 
+               expr->expr.member_builtin.symbol,
+               debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.member_builtin.parent_expr, depth + 1, NULL, allow_unresolved);
+        return;
     case EXPR_METHOD:
         printf("Method Access \'%s\'] (Type: %s)\n", 
                expr->expr.method_access.method->header.sym, 
@@ -530,6 +539,7 @@ static const char* s_stmt_type_strs[] = {
     [STMT_FOR]         = "For Loop",
     [STMT_IF]          = "If Statement",
     [STMT_NOP]         = "Nop",
+    [STMT_RESULT]      = "Result Statement",
     [STMT_RETURN]      = "Return Statement",
     [STMT_SWAP]        = "Swap Statement",
     [STMT_SWITCH]      = "Switch Statement",

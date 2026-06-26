@@ -466,15 +466,7 @@ struct ExprConstant
 
 struct ExprIf
 {
-    union
-    {
-        ASTIf data;
-        struct
-        {
-            void* exit_block;
-            void* phi_node;
-        } backend;
-    };
+    ASTIf data;
 };
 
 struct ExprCond
@@ -621,7 +613,6 @@ struct StmtFor
 struct StmtResult
 {
     Expr* val;
-    Expr* target;
 };
 
 struct StmtSwap

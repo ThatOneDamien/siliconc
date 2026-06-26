@@ -296,12 +296,17 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
         return false;
 
     Type* inner_ty = inner->type;
-    if(inner_ty->kind == TYPE_INIT_LIST)
+    if(type_is_int_literal(inner_ty))
+    {
+        sic_error_at(inner->loc, "Integer literals have no default type.");
+        return false;
+    }
+    else if(inner_ty->kind == TYPE_INIT_LIST)
     {
         sic_error_at(inner->loc, "Cannot get type of array/struct initializer list.");
         return false;
     }
-    if(inner_ty->kind == TYPE_STRING_LITERAL)
+    else if(inner_ty->kind == TYPE_STRING_LITERAL)
     {
         DBG_ASSERT(inner->expr.constant.kind == CONSTANT_STRING);
         *type_ref = type_apply_qualifiers(type_pointer_to_multi_unknown(g_type_char), qualifiers);

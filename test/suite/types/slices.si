@@ -1,7 +1,7 @@
 fn test() void 
 {
     var i: int;
-    var _a: []int;
+    var _a: []int = void;
     _a.ptr = &i;
     _a.len = 1;
     

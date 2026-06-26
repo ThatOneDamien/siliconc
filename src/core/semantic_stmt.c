@@ -240,8 +240,7 @@ static void analyze_if_stmt(Stmt* stmt)
     Stmt* then = stmt->stmt.if_.then_stmt;
     Stmt* elss = stmt->stmt.if_.else_stmt;
     analyze_if(&stmt->stmt.if_);
-    stmt->always_returns = then->always_returns;
-    if(elss != NULL) stmt->always_returns &= elss->always_returns;
+    if(elss != NULL) stmt->always_returns = then->always_returns & elss->always_returns;
     if(cond->kind == EXPR_CONSTANT)
     {
         if(cond->expr.constant.b)
@@ -271,15 +270,22 @@ static void analyze_result_stmt(Stmt* stmt)
     Expr* val = stmt->stmt.result.val;
     stmt->always_returns = true;
     g_sema.code_is_unreachable = true;
-    if(!analyze_rvalue_args(val, target->type, true)) return;
+    if(!analyze_rvalue_args(val, target->type, true)) goto ERR;
     if(target->type == NULL)
     {
+        Type* ctype = val->type->canonical;
+        if(type_is_int_literal(ctype) || ctype->kind == TYPE_INIT_LIST)
+        {
+            sic_error_at(stmt->loc, "Unable to infer the type of the result.");
+            goto ERR;
+        }
         target->type = val->type;
     }
     else if(!implicit_cast(val, target->type))
-        return;
-
-    stmt->stmt.result.target = target;
+        goto ERR;
+    return;
+ERR:
+    target->type = g_type_invalid;
 }
 
 bool analyze_if(ASTIf* if_)
@@ -506,7 +512,7 @@ bool analyze_declaration(ObjVar* decl)
         }
         else if(type_is_int_literal(rhs_type))
         {
-            sic_error_at(decl->header.loc, "Integer literals do not have an inherent type. Please "
+            sic_error_at(initial_val->loc, "Integer literals do not have an inherent type. Please "
                                            "explicitly define the type in the variable declaration.");
             goto ERR;
         }
@@ -560,44 +566,43 @@ static bool analyze_inferred_declaration(ObjVar* decl)
         sic_error_at(decl->header.loc, "Variable with inferred type must be assigned a value.");
         goto ERR;
     }
+    else if(!analyze_rvalue(initial_val))
+        goto ERR;
 
-    if(decl->type_loc.type->kind == TYPE_INFERRED_ARRAY)
+    if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
     {
-        if(rhs_ctype->kind == TYPE_STATIC_ARRAY)
-        {
-            if(!type_equal(decl->type_loc.type->array.elem_type, rhs_ctype->array.elem_type))
-            {
-                sic_error_at(decl->header.loc, 
-                                "Cannot assign auto-sized array type \'%s\' to "
-                                "incompatible array type \'%s\'.",
-                                type_to_string(decl->type_loc.type),
-                                type_to_string(rhs_type));
-                goto ERR;
-            }
-            decl->type_loc.type = rhs_type;
-        }
-        else if(rhs_type->kind == TYPE_INIT_LIST)
-        {
-            if(initial_val->expr.array_init.size == 0)
-            {
-                sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
-                goto ERR;
-            }
-
-            decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
-            decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
-            decl->type_loc.type->status = STATUS_RESOLVED;
-            if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
-        }
-        else
+        if(!type_equal(decl->type_loc.type->array.elem_type, rhs_ctype->array.elem_type))
         {
             sic_error_at(decl->header.loc, 
-                            "Cannot resolve auto-sized array type \'%s\' to "
-                            "incompatible type \'%s\'.",
+                            "Cannot assign auto-sized array type \'%s\' to "
+                            "incompatible array type \'%s\'.",
                             type_to_string(decl->type_loc.type),
                             type_to_string(rhs_type));
             goto ERR;
         }
+        decl->type_loc.type = rhs_type;
+    }
+    else if(rhs_type->kind == TYPE_INIT_LIST)
+    {
+        if(initial_val->expr.array_init.size == 0)
+        {
+            sic_error_at(decl->header.loc, "Cannot assign auto-sized array type to array literal with length 0.");
+            goto ERR;
+        }
+
+        decl->type_loc.type->kind = TYPE_STATIC_ARRAY;
+        decl->type_loc.type->array.static_len = initial_val->expr.array_init.max + 1;
+        decl->type_loc.type->status = STATUS_RESOLVED;
+        if(!implicit_cast(initial_val, decl->type_loc.type)) return false;
+    }
+    else
+    {
+        sic_error_at(decl->header.loc, 
+                        "Cannot resolve auto-sized array type \'%s\' to "
+                        "incompatible type \'%s\'.",
+                        type_to_string(decl->type_loc.type),
+                        type_to_string(rhs_type));
+        goto ERR;
     }
 
     return true;

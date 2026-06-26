@@ -5,12 +5,13 @@
 static bool analyze_array_access(Expr* expr);
 static bool analyze_array_init_list(Expr* expr, Type* expected_type);
 static bool analyze_binary(Expr* expr, Type* expected_type);
+static bool analyze_constant(Expr* expr, Type* expected_type);
 static bool analyze_call(Expr* expr);
 static bool analyze_ident(Expr* expr);
 static bool analyze_if_expr(Expr* expr, Type* expected_type);
 static bool analyze_range(Expr* expr);
 static bool analyze_struct_init_list(Expr* expr);
-static bool analyze_unary(Expr* expr);
+static bool analyze_unary(Expr* expr, Type* expected_type);
 static bool analyze_unresolved_arrow(Expr* expr);
 static bool analyze_unresolved_dot(Expr* expr, Type* expected_type);
 static bool analyze_unwrap(Expr* expr);
@@ -32,17 +33,17 @@ static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne);
 static bool analyze_eq_ne(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
 static bool analyze_lt_ge(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
 static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind);
-static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs, BinaryOpKind kind);
-static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs);
-static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs);
-static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs);
-static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs);
+static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind, Type* expected_type);
+static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type);
+static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type);
+static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type);
+static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type);
 static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs);
 static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs);
 
 // Unary functions
 static bool analyze_addr_of(Expr* expr, Expr* inner);
-static bool analyze_bit_not(Expr* expr, Expr* inner);
+static bool analyze_bit_not(Expr* expr, Expr* inner, Type* expected_type);
 static bool analyze_deref(Expr* expr, Expr* inner);
 static bool analyze_incdec(Expr* expr, Expr* inner);
 static bool analyze_log_not(Expr* expr, Expr* inner);
@@ -78,7 +79,7 @@ bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
     case EXPR_CAST:
         return analyze_explicit_cast(expr);
     case EXPR_CONSTANT:
-        return true;
+        return analyze_constant(expr, expected_type);
     case EXPR_FUNC_CALL:
         return analyze_call(expr);
     case EXPR_IF:
@@ -95,7 +96,7 @@ bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
         return analyze_unwrap(expr);
     case EXPR_POSTFIX:
     case EXPR_UNARY:
-        return analyze_unary(expr);
+        return analyze_unary(expr, expected_type);
     case EXPR_UNRESOLVED_ARROW:
         return analyze_unresolved_arrow(expr);
     case EXPR_UNRESOLVED_DOT:
@@ -504,13 +505,13 @@ static inline bool analyze_binary(Expr* expr, Type* expected_type)
     case BINARY_SHL:
     case BINARY_LSHR:
     case BINARY_ASHR:
-        return analyze_shift(expr, expected_type, lhs, rhs, kind);
+        return analyze_shift(expr, lhs, rhs, kind, expected_type);
     case BINARY_BIT_OR:
-        return analyze_bit_or(expr, lhs, rhs);
+        return analyze_bit_or(expr, lhs, rhs, expected_type);
     case BINARY_BIT_XOR:
-        return analyze_bit_xor(expr, lhs, rhs);
+        return analyze_bit_xor(expr, lhs, rhs, expected_type);
     case BINARY_BIT_AND:
-        return analyze_bit_and(expr, expected_type, lhs, rhs);
+        return analyze_bit_and(expr, lhs, rhs, expected_type);
     case BINARY_ASSIGN:
         return analyze_assign(expr, lhs, rhs);
     case BINARY_ADD_ASSIGN:
@@ -529,6 +530,19 @@ static inline bool analyze_binary(Expr* expr, Type* expected_type)
         break;
     }
     SIC_UNREACHABLE();
+}
+
+static bool analyze_constant(Expr* expr, Type* expected_type)
+{
+    if(type_is_int_literal(expr->type) && expected_type != NULL && !type_is_int_literal(expected_type) && type_is_integer(expected_type->canonical))
+    {
+        expr->is_evaluated = true;
+        if(can_cast(expr, expected_type, true))
+        {
+            perform_cast(expr, expected_type);
+        }
+    }
+    return true;
 }
 
 static bool analyze_call(Expr* expr)
@@ -797,7 +811,7 @@ NEXT_ENTRY:;
     return valid;
 }
 
-static bool analyze_unary(Expr* expr)
+static bool analyze_unary(Expr* expr, Type* expected_type)
 {
     Expr* inner = expr->expr.unary.inner;
 
@@ -808,7 +822,7 @@ static bool analyze_unary(Expr* expr)
     case UNARY_ADDR_OF:
         return analyze_addr_of(expr, inner);
     case UNARY_BIT_NOT:
-        return analyze_bit_not(expr, inner);
+        return analyze_bit_not(expr, inner, expected_type);
     case UNARY_DEC:
     case UNARY_INC:
         return analyze_incdec(expr, inner);
@@ -1625,7 +1639,7 @@ static bool analyze_logical(Expr* expr, Expr* lhs, Expr* rhs)
 static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
 {
     bool valid = analyze_rvalue(lhs);
-    valid &= analyze_rvalue_args(rhs, type_is_enum(type_remove_aliases(lhs->type)) ? lhs->type : NULL, true);
+    valid &= analyze_rvalue_args(rhs, lhs->type, true);
     if(!valid) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
@@ -1800,7 +1814,7 @@ static bool analyze_le_gt(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind)
     return true;
 }
 
-static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs, BinaryOpKind kind)
+static bool analyze_shift(Expr* expr, Expr* lhs, Expr* rhs, BinaryOpKind kind, Type* expected_type)
 {
     bool valid = true;
     valid &= analyze_rvalue(lhs);
@@ -1900,11 +1914,26 @@ static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs,
             expr = new_expr;
         }
     }
-
-    if(type_is_int_literal(lt))
+    else if(type_is_int_literal(lt))
     {
-        sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
-        return false;
+        if(kind == BINARY_LSHR && expected_type != NULL && lt == g_type_pos_int_lit)
+        {
+            Type* expected_ctype = expected_type->canonical;
+            if(type_is_integer(expected_ctype))
+            {
+                BitSize expected_bitcnt = expected_ctype->builtin.bit_size - type_is_signed(expected_ctype);
+                if(expected_bitcnt >= 128 - i128_clz(lhs->expr.constant.i))
+                {
+                    lhs->type = expected_type;
+                    lt = expected_ctype;
+                }
+            }
+        }
+        else
+        {
+            sic_error_at(expr->loc, "You cannot perform shifts on untyped int literals. Please assign a type first.");
+            return false;
+        }
     }
 
     if(!implicit_cast(rhs, type_to_unsigned(lt))) return false;
@@ -1915,8 +1944,12 @@ static bool analyze_shift(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs,
     return true;
 }
 
-static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs)
+static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type)
 {
+    bool valid = true;
+    valid &= analyze_rvalue_args(lhs, expected_type, true);
+    valid &= analyze_rvalue_args(rhs, expected_type, true);
+    if(!valid) return false;
     Type* lhs_type = lhs->type;
     Type* rhs_type = rhs->type;
     if(!type_is_integer(lhs_type->canonical) || !type_is_integer(rhs_type->canonical))
@@ -1925,6 +1958,8 @@ static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs)
                      type_to_string(lhs_type), type_to_string(rhs_type));
         return false;
     }
+    if(type_is_int_literal(lhs_type) && type_is_int_literal(rhs_type))
+        return true;
 
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
     expr->type = lhs->type;
@@ -1932,12 +1967,9 @@ static bool analyze_bit_op(Expr* expr, Expr* lhs, Expr* rhs)
 
 }
 
-static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs)
+static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_bit_op(expr, lhs, rhs, expected_type)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     // Untyped int literal case
@@ -1947,7 +1979,6 @@ static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs)
         expr->expr.constant.is_bit_int = true;
         return true;
     }
-    if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
@@ -1959,12 +1990,9 @@ static bool analyze_bit_or(Expr* expr, Expr* lhs, Expr* rhs)
     return true;
 }
 
-static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs)
+static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_bit_op(expr, lhs, rhs, expected_type)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     // Untyped int literal case
@@ -1974,7 +2002,6 @@ static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs)
         expr->expr.constant.is_bit_int = true;
         return true;
     }
-    if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
     if(lhs->kind == EXPR_CONSTANT && rhs->kind == EXPR_CONSTANT)
     {
@@ -1985,12 +2012,9 @@ static bool analyze_bit_xor(Expr* expr, Expr* lhs, Expr* rhs)
     expr->is_const_eval = lhs->is_const_eval & rhs->is_const_eval;
     return true;
 }
-static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rhs)
+static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_type)
 {
-    bool valid = true;
-    valid &= analyze_rvalue(lhs);
-    valid &= analyze_rvalue(rhs);
-    if(!valid) return false;
+    if(!analyze_bit_op(expr, lhs, rhs, expected_type)) return false;
     Type* lt = lhs->type->canonical;
     Type* rt = rhs->type->canonical;
     // Untyped int literal case
@@ -2000,7 +2024,6 @@ static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rh
         expr->expr.constant.is_bit_int = true;
         return true;
     }
-    if(!analyze_bit_op(expr, lhs, rhs)) return false;
 
     uint32_t max_lz = 0;
     if(lhs->kind == EXPR_CONSTANT)
@@ -2051,7 +2074,7 @@ static bool analyze_bit_and(Expr* expr, Type* expected_type, Expr* lhs, Expr* rh
 
 static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs)
 {
-    if(!analyze_lvalue(lhs, true)) return false;
+    if(!analyze_lvalue(lhs, true) || !analyze_rvalue_args(lhs, NULL, false)) return false;
     expr->type = lhs->type;
     return implicit_cast(rhs, lhs->type);
 }
@@ -2081,7 +2104,10 @@ static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs)
     new_rhs->expr.binary.rhs = rhs;
     expr->expr.binary.kind = BINARY_ASSIGN;
     expr->expr.binary.rhs = new_rhs;
-    return analyze_assign(expr, lhs, new_rhs);
+    if(!analyze_lvalue(lhs, true) || !analyze_rvalue_args(lhs, NULL, false)) return false;
+    analyze_rvalue_args(rhs, lhs->type, true);
+    expr->type = lhs->type;
+    return implicit_cast(new_rhs, lhs->type);
 }
 
 static bool analyze_addr_of(Expr* expr, Expr* inner)
@@ -2110,9 +2136,9 @@ static bool analyze_addr_of(Expr* expr, Expr* inner)
     return true;
 }
 
-static bool analyze_bit_not(Expr* expr, Expr* inner)
+static bool analyze_bit_not(Expr* expr, Expr* inner, Type* expected_type)
 {
-    if(!analyze_rvalue(inner)) return false;
+    if(!analyze_rvalue_args(inner, expected_type, true)) return false;
     Type* type = inner->type;
     if(!type_is_integer(type->canonical))
     {
