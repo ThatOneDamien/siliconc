@@ -40,6 +40,7 @@ extern Expr* g_bad_expr;
 extern Stmt* g_bad_stmt;
 
 extern Symbol   g_sym_main;
+extern Symbol   g_sym_assert;
 extern Symbol   g_sym_len;
 extern Symbol   g_sym_ptr;
 extern Symbol   g_attr_list[__ATTR_COUNT];

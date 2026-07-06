@@ -238,6 +238,12 @@ static void print_expr_at_depth(const Expr* expr, int depth, const char* name, b
         for(uint32_t i = 0; i < expr->expr.call.args.size; ++i)
             print_expr_at_depth(expr->expr.call.args.data[i], depth + 1, NULL, allow_unresolved);
         return;
+    case EXPR_FUNC_CALL_BUILTIN:
+        printf("Call Builtin ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
+        print_expr_at_depth(expr->expr.call.func_expr, depth + 1, NULL, allow_unresolved);
+        for(uint32_t i = 0; i < expr->expr.call.args.size; ++i)
+            print_expr_at_depth(expr->expr.call.args.data[i], depth + 1, NULL, allow_unresolved);
+        return;
     case EXPR_FUNCTION:
         printf("Function \'%s\' ]\n", expr->expr.function->header.sym);
         return;

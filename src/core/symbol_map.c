@@ -30,6 +30,7 @@ static Symbol sym_map_internal_get(const char* str, uint32_t len, uint32_t hash,
 static SymbolMap s_sym_map;
 
 Symbol g_sym_main;
+Symbol g_sym_assert;
 Symbol g_sym_len;
 Symbol g_sym_ptr;
 Symbol g_attr_list[__ATTR_COUNT];
@@ -53,9 +54,10 @@ void sym_map_init(void)
     }
 
     kind = TOKEN_IDENT;
-    g_sym_main = SYM_ADD("main");
-    g_sym_len  = SYM_ADD("len");
-    g_sym_ptr  = SYM_ADD("ptr");
+    g_sym_main   = SYM_ADD("main");
+    g_sym_assert = SYM_ADD("assert");
+    g_sym_len    = SYM_ADD("len");
+    g_sym_ptr    = SYM_ADD("ptr");
     
     kind = TOKEN_ATTRIBUTE_IDENT;
     static_assert(__ATTR_COUNT == 8, "Add Attributes here");

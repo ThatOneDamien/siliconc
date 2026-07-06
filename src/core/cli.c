@@ -19,6 +19,7 @@ typedef enum
     FLAG_OUT_NAME,
     FLAG_OUT_DIR,
     FLAG_LINK,
+    FLAG_DEBUG,
     __FLAG_COUNT,
 } FlagKind;
 
@@ -133,7 +134,10 @@ HANDLE_FLAG:
             i++;
             da_append(&g_compiler.extra_linker_flags, argv[i]);
             break;
-        default:
+        case FLAG_DEBUG:
+            g_compiler.debug_mode = true;
+            break;
+        case __FLAG_COUNT:
             SIC_UNREACHABLE();
         }
     }
@@ -214,4 +218,5 @@ static const Flag s_flags[__FLAG_COUNT] = {
     [FLAG_OUT_NAME] = { 0, "out-name", "<NAME>", "Set the name of the final build output (executable or library) to NAME."},
     [FLAG_OUT_DIR]  = { 0, "out-dir", "<DIR>", "Place build components in the directory DIR."},
     [FLAG_LINK]     = { 0, "link", "<FLAG>", "Add FLAG to the linker sub-process."},
+    [FLAG_DEBUG]    = { 'd', "debug", "", "Generate debug symbols and add runtime checks (unless turned off)."},
 };

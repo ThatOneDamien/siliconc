@@ -15,6 +15,9 @@ static bool analyze_unary(Expr* expr, Type* expected_type);
 static bool analyze_unresolved_arrow(Expr* expr);
 static bool analyze_unresolved_dot(Expr* expr, Type* expected_type);
 static bool analyze_unwrap(Expr* expr);
+
+static bool analyze_assert(Expr* expr);
+
 static bool analyze_ct_alignof(Expr* expr);
 static bool analyze_ct_offsetof(Expr* expr);
 static bool analyze_ct_sizeof(Expr* expr);
@@ -116,6 +119,7 @@ bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
     case EXPR_CT_TYPE_MIN:
         return analyze_ct_type_min(expr);
     case EXPR_FUNCTION:
+    case EXPR_FUNC_CALL_BUILTIN:
     case EXPR_POINTER_OFFSET:
     case EXPR_MEMBER_ACCESS:
     case EXPR_MEMBER_BUILTIN:
@@ -140,6 +144,7 @@ bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     case EXPR_ARRAY_ACCESS:
         return analyze_rvalue_dispatch(expr->expr.array_access.array_expr, mutate);
     case EXPR_FUNC_CALL:
+    case EXPR_FUNC_CALL_BUILTIN:
         if(expr->type->canonical->kind == TYPE_VOID)
         {
             sic_error_at(expr->loc, "Function call does not return a value.");
@@ -549,6 +554,11 @@ static bool analyze_call(Expr* expr)
 {
     Expr* func_expr = expr->expr.call.func_expr;
     ExprDA* args = &expr->expr.call.args;
+    if(func_expr->kind == EXPR_UNRESOLVED_IDENT && func_expr->expr.unresolved_ident.size == 1 &&
+       func_expr->expr.unresolved_ident.data[0].sym == g_sym_assert)
+    {
+        return analyze_assert(expr);
+    }
     if(!analyze_expr(func_expr)) return false;
     Type* func_type;
 
@@ -1079,6 +1089,32 @@ static bool analyze_unwrap(Expr* expr)
 
     expr->type = inner_ty->optional.base;
     return true;
+}
+
+static bool analyze_assert(Expr* expr)
+{
+    const SymbolLoc func_loc = expr->expr.call.func_expr->expr.unresolved_ident.data[0];
+    const ExprDA args = expr->expr.call.args;
+    if(args.size < 1)
+    {
+        sic_error_at(expr->loc, "Too few arguments passed to function. Expected at least 1, got 0.");
+        return false;
+    }
+    if(args.size > 2)
+    {
+        sic_error_at(expr->loc, "Too many arguments passed to function. Expected at most 2, got %u.", args.size);
+        return false;
+    }
+
+    bool valid = implicit_cast(args.data[0], g_type_bool);
+    if(args.size == 2 && !implicit_cast(args.data[1], type_slice_of(g_type_char)))
+        valid = false;
+
+    expr->kind = EXPR_FUNC_CALL_BUILTIN;
+    expr->expr.call_builtin.args = args;
+    expr->expr.call_builtin.func = func_loc;
+    expr->type = g_type_void;
+    return valid;
 }
 
 static bool analyze_ct_alignof(Expr* expr)

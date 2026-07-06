@@ -144,6 +144,7 @@ static void analyze_expr_stmt(Stmt* stmt)
     {
     case EXPR_INVALID:
     case EXPR_POSTFIX:
+    case EXPR_FUNC_CALL_BUILTIN:
         return;
     case EXPR_BINARY:
         if(expr->expr.binary.kind == BINARY_ASSIGN) return;

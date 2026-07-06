@@ -1972,6 +1972,13 @@ static inline Expr* new_constant(Lexer* l, ConstantKind kind)
 static inline void declare_obj(Lexer* l, Object* global)
 {
     DBG_ASSERT(global != NULL);
+    if(global->sym == g_sym_assert)
+    {
+        sic_error_at(global->loc, "The global symbol 'assert' is reserved.");
+        invalidate_obj(global);
+        return;
+    }
+
     HashMap* map = &l->module->symbol_ns;
     Object* other = hashmap_get(map, global->sym);
 

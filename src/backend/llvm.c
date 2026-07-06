@@ -18,6 +18,8 @@ struct ResultStmtDst
 struct CodegenContext
 {
     ObjFunc*             cur_func;
+    LLVMValueRef         panic_func_ref;
+    LLVMValueRef         assert_func_ref;
 
     LLVMTargetMachineRef target_machine;
     LLVMModuleRef        llvm_module;
@@ -75,6 +77,7 @@ static void     emit_array_init_list(CodegenContext* c, Expr* expr, GenValue* re
 static void     emit_array_initialization(CodegenContext* c, GenValue* lhs, Expr* right, GenValue* result);
 static void     emit_binary(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_call(CodegenContext* c, Expr* expr, GenValue* result);
+static void     emit_call_builtin(CodegenContext* c, Expr* expr, GenValue* result);
 static void     emit_cast(CodegenContext* c, Expr* expr, GenValue* inner, GenValue* result);
 static void     emit_constant(CodegenContext* c, Expr* expr, GenValue* result);
 static LLVMValueRef emit_const_string(const ConstString str, uint32_t desired_len);
@@ -118,6 +121,8 @@ static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
 static LLVMTypeRef       get_llvm_func_type(CodegenContext* c, Type* type);
 static LLVMValueRef      get_var_llvm_ref(CodegenContext* c, ObjVar* var);
 static LLVMValueRef      get_func_llvm_ref(CodegenContext* c, ObjFunc* func);
+static LLVMValueRef      get_panic_ref(CodegenContext* c);
+static LLVMValueRef      get_assert_ref(CodegenContext* c);
 static LLVMTargetRef     get_llvm_target(const char* triple);
 static void              load_rvalue(CodegenContext* c, GenValue* ptr);
 static void              llvm_diag_handler(LLVMDiagnosticInfoRef ref, void *context);
@@ -790,6 +795,9 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
     case EXPR_FUNC_CALL:
         emit_call(c, expr, &result);
         break;
+    case EXPR_FUNC_CALL_BUILTIN:
+        emit_call_builtin(c, expr, &result);
+        break;
     case EXPR_FUNCTION:
         result.value = get_func_llvm_ref(c, expr->expr.function);
         result.kind = GEN_VAL_RVALUE;
@@ -1099,6 +1107,43 @@ static void emit_call(CodegenContext* c, Expr* expr, GenValue* result)
                                    "");
     FREE(args, call->args.size * sizeof(LLVMValueRef));
     result->kind = GEN_VAL_RVALUE;
+}
+
+static void emit_call_builtin(CodegenContext* c, Expr* expr, GenValue* result)
+{
+    const SymbolLoc func = expr->expr.call_builtin.func;
+    const ExprDA args = expr->expr.call_builtin.args;
+    LLVMValueRef* arg_values = NULL;
+    LLVMValueRef func_ref;
+    uint32_t arg_count = 0;
+    bool after_unreachable;
+    
+    if(func.sym == g_sym_assert)
+    {
+        arg_values = MALLOC_STRUCTS(LLVMValueRef, 2);
+        arg_count = 2;
+        arg_values[0] = emit_rvalue(c, args.data[0]).value;
+        if(args.size > 1)
+            arg_values[1] = emit_rvalue(c, args.data[1]).value;
+        else
+        {
+
+        }
+        func_ref = get_assert_ref(c);
+        after_unreachable = true;
+    }
+    else
+    {
+        func_ref = get_panic_ref(c);
+        SIC_UNREACHABLE();
+    }
+
+    result->value = LLVMBuildCall2(c->builder, LLVMGetElementType(LLVMTypeOf(func_ref)), func_ref, arg_values, arg_count, "");
+    if(after_unreachable)
+    {
+        LLVMBuildUnreachable(c->builder);
+        c->cur_block = NULL;
+    }
 }
 
 static void emit_cast(CodegenContext* c, Expr* expr, GenValue* inner, GenValue* result)
@@ -1965,6 +2010,23 @@ static LLVMValueRef get_func_llvm_ref(CodegenContext* c, ObjFunc* func)
     if(header->llvm_ref != NULL && LLVMGetGlobalParent(header->llvm_ref) == c->llvm_module) return header->llvm_ref;
     DBG_ASSERT(func->link_name != NULL);
     return header->llvm_ref = LLVMAddFunction(c->llvm_module, func->link_name, get_llvm_func_type(c, func->func_type));
+}
+
+static LLVMValueRef get_panic_ref(CodegenContext* c)
+{
+    if(c->panic_func_ref != NULL) return c->panic_func_ref;
+    LLVMTypeRef i32 = LLVMInt32TypeInContext(s_context);
+    LLVMTypeRef param_types[5] = { c->slice_type, c->ptr_type, i32, i32, c->ptr_type };
+    LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidTypeInContext(s_context), param_types, 5, false);
+    return c->panic_func_ref = LLVMAddFunction(c->llvm_module, "_SIBuiltinF5panic", func_type);
+}
+
+static LLVMValueRef get_assert_ref(CodegenContext* c)
+{
+    if(c->assert_func_ref != NULL) return c->assert_func_ref;
+    LLVMTypeRef param_types[2] = { LLVMInt8TypeInContext(s_context), c->slice_type };
+    LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidTypeInContext(s_context), param_types, 2, false);
+    return c->assert_func_ref = LLVMAddFunction(c->llvm_module, "_SIBuiltinF6assert", func_type);
 }
 
 static LLVMTargetRef get_llvm_target(const char* triple)

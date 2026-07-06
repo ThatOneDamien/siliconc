@@ -63,6 +63,7 @@ typedef struct Attr             Attr;
 typedef struct ExprAAccess      ExprArrayAccess;
 typedef struct ExprBinary       ExprBinary;
 typedef struct ExprCall         ExprCall;
+typedef struct ExprCallBuiltin  ExprCallBuiltin;
 typedef struct ExprCast         ExprCast;
 typedef struct ExprCond         ExprCond;
 typedef struct ExprConstant     ExprConstant;
@@ -407,6 +408,12 @@ struct ExprCall
     ExprDA args;
 };
 
+struct ExprCallBuiltin
+{
+    SymbolLoc func;
+    ExprDA    args;
+};
+
 struct ExprCast
 {
     Expr* inner;
@@ -548,6 +555,7 @@ struct Expr
         ArrInitList       array_init;
         ExprBinary        binary;
         ExprCall          call;
+        ExprCallBuiltin   call_builtin;
         ExprCast          cast;
         ExprCond          conditional;
         ExprConstant      constant;
@@ -833,6 +841,7 @@ struct CompilerContext
     bool          emit_bc : 1;
     bool          emit_asm : 1;
     bool          werror : 1;
+    bool          debug_mode : 1;
 #ifdef SI_DEBUG
     DebugOutput   debug_output;
 #endif

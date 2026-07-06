@@ -1,0 +1,2 @@
+typedef FILE = void;
+extern fn fprintf(stream: *FILE, format: *const char, ...) int;
