@@ -1,5 +1,5 @@
 #pragma once
-#include "internal.h"
+#include "sicompiler.h"
 
 typedef enum : uint8_t
 {
@@ -29,14 +29,16 @@ struct SemaContext
 extern SemaContext g_sema;
 
 // Top level
+bool analyze_attributes(Object* obj);
 bool analyze_global_var(ObjVar* var);
 bool analyze_function_signature(ObjFunc* function);
-bool analyze_type_obj(Object* type_obj);
+bool analyze_type_obj(ObjType* type_obj);
 bool analyze_enum_underlying(ObjEnum* enum_);
 bool analyze_enum_value(ObjEnum* parent, uint32_t index);
 bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 bool resolve_import(ObjModule* module, ObjImport* import);
 bool type_has_default_value(const Type* type, SourceLoc error_loc, bool silent);
+Object* find_type_member(ObjType* parent, Symbol sym);
 
 // Statements
 void analyze_stmt(Stmt* stmt);
@@ -49,7 +51,8 @@ bool analyze_declaration(ObjVar* decl);
 bool analyze_expr_args(Expr* expr, Type* expected_type);
 bool analyze_expr_dispatch(Expr* expr, Type* expected_type);
 bool analyze_rvalue_dispatch(Expr* expr, bool mutate);
-bool analyze_lvalue_dispatch(Expr* expr, bool will_write);
+bool analyze_lvalue_assign_dispatch(Expr* expr);
+bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref);
 bool analyze_var_rvalue(Expr* expr);
 
 static inline bool analyze_expr(Expr* expr)
@@ -68,10 +71,16 @@ static inline bool analyze_rvalue(Expr* expr)
     return analyze_rvalue_args(expr, NULL, true);
 }
 
-static inline bool analyze_lvalue(Expr* expr, bool will_write)
+static inline bool analyze_lvalue_assign(Expr* expr)
 {
     DBG_ASSERT(expr != NULL);
-    return analyze_expr(expr) && analyze_lvalue_dispatch(expr, will_write);
+    return analyze_expr(expr) && analyze_lvalue_assign_dispatch(expr);
+}
+
+static inline bool analyze_lvalue_addr(Expr* expr, bool is_const_ref)
+{
+    DBG_ASSERT(expr != NULL);
+    return analyze_expr(expr) && analyze_lvalue_addr_dispatch(expr, is_const_ref);
 }
 
 
@@ -87,7 +96,6 @@ bool implicit_cast_vararg(Expr* arg);
 void       push_obj(Object* obj);
 ObjModule* find_module(ObjModule* start, SymbolLoc symloc, bool allow_private);
 Object*    find_obj(const ModulePath* path);
-Object*    find_struct_member(ObjStruct* struct_, Symbol sym);
 uint32_t   push_scope();
 void       pop_scope(uint32_t old);
 void       push_labeled_stmt(Stmt* stmt, SymbolLoc label);
@@ -100,6 +108,16 @@ static inline void expr_copy(Expr* dst, const Expr* src)
     SourceLoc loc = dst->loc;
     *dst = *src;
     dst->loc = loc;
+}
+
+static inline void expr_copy_keep_type(Expr* dst, const Expr* src)
+{
+    if(dst == src) return;
+    Type* t = dst->type;
+    SourceLoc loc = dst->loc;
+    *dst = *src;
+    dst->loc = loc;
+    dst->type = t;
 }
 
 static inline void const_int_correct(Expr* expr)
@@ -140,7 +158,7 @@ static inline Type* flatten_type(Type* type)
         switch(type->kind)
         {
         case TYPE_ALIAS_DISTINCT:
-            type = obj_as_typedef(type->user_def)->alias.type;
+            type = type->typedef_->alias.type;
             continue;
         case TYPE_ENUM_DISTINCT:
         default:
@@ -183,4 +201,18 @@ static inline void convert_to_const_pointer(Expr* expr, Type* to, Int128 value)
 {
     convert_to_constant(expr, to, CONSTANT_POINTER);
     expr->expr.constant.i = value;
+}
+
+static inline void convert_to_const_global_offset(Expr* expr, ObjVar* var, uint64_t offset)
+{
+    convert_to_constant(expr, expr->type, CONSTANT_GLOBAL_OFFSET);
+    expr->expr.constant.global_offset.global = var;
+    expr->expr.constant.global_offset.offset = offset;
+}
+
+static inline void convert_to_const_global_offset_from_other(Expr* expr, Expr* other_global_offset, uint64_t additional_offset)
+{
+    convert_to_const_global_offset(expr, 
+                                   other_global_offset->expr.constant.global_offset.global, 
+                                   other_global_offset->expr.constant.global_offset.offset + additional_offset);
 }

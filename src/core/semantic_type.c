@@ -11,6 +11,11 @@ static bool resolve_single_pointer(Type* pointer, SourceLoc error_loc);
 static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg);
 
+static bool analyze_enum(ObjEnum* enum_);
+static bool analyze_struct(ObjStruct* struct_);
+static bool analyze_typedef(ObjTypedef* typedef_);
+static bool analyze_union(ObjStruct* union_);
+
 // Resolve a type based on flags. If the type is marked as STATUS_RESOLVED, this means
 // it has a known size/layout (i.e. not void, opaque struct/union, inferred array).
 // If it is marked as STATUS_RESOLVING, that means we have resolved names (like UNRESOLVED_USER),
@@ -85,7 +90,7 @@ bool resolve_type(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, cons
     case TYPE_ALIAS_DISTINCT: {
         DBG_ASSERT(type->status == STATUS_RESOLVING);
         if(!analyze_type_obj(type->user_def)) break;
-        Type* alias = obj_as_typedef(type->user_def)->alias.type;
+        Type* alias = type->typedef_->alias.type;
         if(!resolve_type(&alias, flags, error_loc, error_msg)) break;
         type->status = alias->status;
         return true;
@@ -147,15 +152,15 @@ RETRY:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
         // TODO: Let distinct types have default values
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
         // TODO: Let distinct types have default values
-        t = obj_as_enum(t->user_def)->underlying.type;
+        t = t->enum_->underlying.type;
         goto RETRY;
     case TYPE_STRUCT: {
-        const ObjVarDA members = obj_as_struct(t->user_def)->members;
+        const ObjVarDA members = t->struct_->members;
         for(uint32_t i = 0; i < members.size; ++i)
         {
             ObjVar* member = members.data[i];
@@ -319,32 +324,29 @@ static bool resolve_typeof(Type** type_ref, TypeResFlags flags, SourceLoc error_
 static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc error_loc, const char* error_msg)
 {
     Type* user_ty = *type_ref;
-    Object* type_obj = find_obj(&user_ty->unresolved);
-    if(type_obj == NULL) return false;
+    Object* type_header = find_obj(&user_ty->unresolved);
+    if(type_header == NULL) return false;
     TypeQualifiers qualifiers = user_ty->qualifiers;
-    switch(type_obj->kind)
+    ObjType* type_obj = obj_as_type(type_header);
+    user_ty = type_obj->type_ref;
+    switch(type_header->kind)
     {
     case OBJ_INVALID:
         return false;
     case OBJ_BITFIELD:
         SIC_TODO();
     case OBJ_ENUM: { // Enums always have to be resolved
-        ObjEnum* enum_ = obj_as_enum(type_obj);
+        ObjEnum* enum_ = obj_as_enum(type_header);
         if(!analyze_enum_underlying(enum_)) return false;
-        user_ty = enum_->type_ref;
-        user_ty->status = STATUS_RESOLVED;
         break;
     }
     case OBJ_STRUCT:
-        user_ty = obj_as_struct(type_obj)->type_ref;
         if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
         break;
     case OBJ_TYPEDEF:
-        user_ty = obj_as_typedef(type_obj)->type_ref;
         if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
         break;
     case OBJ_UNION:
-        user_ty = obj_as_struct(type_obj)->type_ref;
         if(!resolve_type(&user_ty, flags, error_loc, error_msg)) return false;
         break;
     default:
@@ -354,4 +356,397 @@ static bool resolve_user_def(Type** type_ref, TypeResFlags flags, SourceLoc erro
 
     *type_ref = type_apply_qualifiers(user_ty, qualifiers);
     return true;
+}
+
+bool analyze_type_obj(ObjType* type_obj)
+{
+    DBG_ASSERT(type_obj != NULL);
+    Object* type_header = &type_obj->header;
+    switch(type_header->status)
+    {
+    case STATUS_UNRESOLVED:
+        break;
+    case STATUS_RESOLVING:
+        set_circular_def(type_header);
+        return false;
+    case STATUS_RESOLVED:
+        return !obj_is_bad(type_header);
+    }
+
+    bool prev = g_sema.in_global_init;
+    g_sema.in_global_init = true;
+
+    ObjModule* prev_mod = g_sema.module;
+    g_sema.module = type_header->module;
+
+    bool success;
+
+    switch(type_header->kind)
+    {
+    case OBJ_BITFIELD:
+        SIC_TODO();
+    case OBJ_ENUM:
+        success = analyze_enum(obj_as_enum(type_header));
+        break;
+    case OBJ_STRUCT:
+        success = analyze_struct(obj_as_struct(type_header));
+        break;
+    case OBJ_TYPEDEF:
+        success = analyze_typedef(obj_as_typedef(type_header));
+        break;
+    case OBJ_UNION:
+        success = analyze_union(obj_as_struct(type_header));
+        break;
+    case OBJ_INVALID:
+        success = false;
+        break;
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
+    case OBJ_VAR:
+        SIC_UNREACHABLE();
+    }
+    g_sema.in_global_init = prev;
+    g_sema.module = prev_mod;
+    return success;
+}
+
+bool analyze_enum_underlying(ObjEnum* enum_)
+{
+    Type* const type = enum_->header.type_ref;
+    if(type->status == STATUS_RESOLVED) return !type_is_bad(type);
+    if(!resolve_type(&enum_->underlying.type, TYPE_RES_NORMAL, enum_->underlying.loc, "An enum's underlying type cannot be of type"))
+        goto ERR;
+
+    enum_->underlying.type = enum_->underlying.type->canonical;
+    if(!type_is_integer(enum_->underlying.type))
+    {
+        sic_error_at(enum_->underlying.loc, "Underlying type for enums must be an integer type.");
+        goto ERR;
+    }
+
+    type->status = STATUS_RESOLVED;
+    type->canonical = type->kind == TYPE_ENUM ? enum_->underlying.type : type;
+    return true;
+ERR:
+    type->status = STATUS_RESOLVED;
+    type->kind = TYPE_INVALID;
+    return false;
+}
+
+static bool analyze_enum(ObjEnum* enum_)
+{
+    Object* enum_obj = &enum_->header.header;
+    enum_obj->status = STATUS_RESOLVING;
+    analyze_attributes(enum_obj);
+
+    bool valid = analyze_enum_underlying(enum_);
+
+    DBG_ASSERT(enum_->values.size > 0);
+    TypeKind underlying_kind = enum_->underlying.type->kind;
+    Int128 min_value;
+    Int128 max_value;
+    if(!analyze_enum_value(enum_, 0)) valid = false;
+    min_value = enum_->values.data[0]->const_value;
+    max_value = min_value;
+
+    for(uint32_t i = 1; i < enum_->values.size; ++i)
+    {
+        ObjEnumValue* value = enum_->values.data[i];
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            ObjEnumValue* other = enum_->values.data[j];
+            if(value->header.sym == other->header.sym)
+            {
+                sic_error_redef(&value->header, &other->header, "enum value");
+                valid = false;
+                goto NEXT;
+            }
+        }
+        if(!analyze_enum_value(enum_, i))
+        {
+            valid = false;
+            goto NEXT;
+        }
+        if(i128_cmp(value->const_value, min_value, underlying_kind) < 0)
+        {
+            min_value = value->const_value;
+            enum_->min_idx = i;
+        }
+        else if(i128_cmp(value->const_value, max_value, underlying_kind) > 0)
+        {
+            max_value = value->const_value;
+            enum_->max_idx = i;
+        }
+
+    NEXT:;
+    }
+
+    enum_obj->status = STATUS_RESOLVED;
+
+    if(!valid)
+    {
+        invalidate_obj(enum_obj);
+        return false;
+    }
+    return true;
+}
+
+bool analyze_enum_value(ObjEnum* parent, uint32_t index)
+{
+    DBG_ASSERT(index < parent->values.size);
+    ObjEnumValue* value = parent->values.data[index];
+    switch(value->header.status)
+    {
+    case STATUS_UNRESOLVED:
+        break;
+    case STATUS_RESOLVING:
+        set_circular_def(&value->header);
+        return false;
+    case STATUS_RESOLVED:
+        return !obj_is_bad(&value->header);
+    }
+
+    bool enum_valid = analyze_enum_underlying(parent);
+    Type* underlying = parent->underlying.type;
+    Expr* value_expr = value->raw_value;
+
+    value->header.status = STATUS_RESOLVING;
+
+
+    if(value_expr != NULL) 
+    {
+        ObjEnum* prev = g_sema.cur_enum;
+        g_sema.cur_enum = parent;
+        bool valid = analyze_rvalue(value_expr);
+        g_sema.cur_enum = prev;
+        if(!valid) goto ERR;
+        if(value_expr->kind != EXPR_CONSTANT || value_expr->expr.constant.kind != CONSTANT_INTEGER)
+        {
+            sic_error_at(value->header.loc, "Enum value must be assigned a compile-time constant integer value.");
+            goto ERR;
+        }
+
+        if(!enum_valid) goto ERR;
+        TypeKind from_kind = type_reduce(value_expr->type)->kind;
+        value->const_value = value_expr->expr.constant.i;
+        if(!i128_fits(value->const_value, from_kind, underlying->kind))
+        {
+            sic_error_at(value->header.loc, "Enum value(%s) is not representable by underlying type.",
+                         i128_to_string(value->const_value, type_kind_is_signed(from_kind)));
+            goto ERR;
+        }
+    }
+    else
+    {
+        if(index == 0)
+        {
+            value->const_value = UINT128_MIN;
+        }
+        else if(!analyze_enum_value(parent, index - 1)) goto ERR;
+        else
+        {
+            Int128 last = parent->values.data[index - 1]->const_value;
+            if(i128_cmp(last, int_max(underlying->kind), underlying->kind) >= 0)
+            {
+                sic_error_at(value->header.loc, "Enum value exceeds the maximum of underlying type.");
+                goto ERR;
+            }
+            value->const_value = i128_add64(last, 1);
+        }
+    }
+
+    value->header.status = STATUS_RESOLVED;
+    return true;
+ERR:
+    invalidate_obj(&value->header);
+    return false;
+}
+
+static bool analyze_struct(ObjStruct* struct_)
+{
+    Object* struct_obj = &struct_->header.header;
+    struct_obj->status = STATUS_RESOLVING;
+    analyze_attributes(struct_obj);
+    bool packed = has_builtin_attr(struct_obj, ATTR_PACKED);
+    if(packed)
+        struct_->align = 1;
+    for(uint32_t i = 0; i < struct_->members.size; ++i)
+    {
+        ObjVar* member = struct_->members.data[i];
+        if(!resolve_type(&member->type_loc.type, TYPE_RES_ALLOW_AUTO_ARRAY, member->type_loc.loc, "Struct member cannot have type %s."))
+        {
+            check_circular_def(struct_obj, struct_obj->loc);
+            return false;
+        }
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            Object* other = &struct_->members.data[j]->header;
+            if(member->header.sym == other->sym)
+                sic_error_redef(&member->header, other, "member");
+        }
+        Type* type = member->type_loc.type;
+
+        if(type->visibility < struct_obj->visibility)
+        {
+            // TODO: Make this error print the actual visibility of both.
+            sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
+            goto ERR;
+        }
+
+        ByteSize size;
+        ByteSize align;
+        if(type->kind == TYPE_INFERRED_ARRAY)
+        {
+            if(i != struct_->members.size - 1)
+            {
+                sic_error_at(member->header.loc, "Inferred array is only allowed as the last member of a struct.");
+                goto ERR;
+            }
+            size = 0;
+            align = type_alignment(type->array.elem_type);
+            SIC_TODO_MSG("Inferred array members not working properly.");
+        }
+        else
+        {
+            size = type_size(type);
+            align = type_alignment(type);
+        }
+
+        if(packed)
+        {
+            struct_->size += size;
+        }
+        else
+        {
+            DBG_ASSERT(is_pow_of_2(align));
+            struct_->size = ALIGN_UP(struct_->size, align) + size;
+            struct_->align = MAX(struct_->align, align);
+        }
+    }
+
+    struct_->size = ALIGN_UP(struct_->size, struct_->align);
+    struct_obj->status = STATUS_RESOLVED;
+    struct_->header.type_ref->status = STATUS_RESOLVED;
+    return true;
+
+ERR:
+    invalidate_obj(struct_obj);
+    return false;
+}
+
+static bool analyze_typedef(ObjTypedef* typedef_)
+{
+    Object* typedef_obj = &typedef_->header.header;
+    typedef_obj->status = STATUS_RESOLVING;
+    analyze_attributes(typedef_obj);
+    bool prev = g_sema.type_res_allow_unresolved;
+    g_sema.type_res_allow_unresolved = true;
+    bool success = resolve_type(&typedef_->alias.type, TYPE_RES_ALLOW_VOID, typedef_->alias.loc, "You cannot define a type equal to %s.");
+    g_sema.type_res_allow_unresolved = prev;
+    if(!success)
+    {
+        check_circular_def(typedef_obj, typedef_obj->loc);
+        return false;
+    }
+    typedef_obj->status = STATUS_RESOLVED;
+    Type* type_ref = typedef_->header.type_ref;
+    type_ref->status = STATUS_RESOLVED;
+    type_ref->canonical = type_ref->kind == TYPE_ALIAS ?
+                              typedef_->alias.type->canonical :
+                              type_ref;
+    typedef_->alias.type = type_reduce(typedef_->alias.type);
+    return true;
+}
+
+static bool analyze_union(ObjStruct* union_)
+{
+    Object* union_obj = &union_->header.header;
+    union_obj->status = STATUS_RESOLVING;
+    analyze_attributes(union_obj);
+    uint32_t largest_size = 0;
+
+    for(uint32_t i = 0; i < union_->members.size; ++i)
+    {
+        ObjVar* member = union_->members.data[i];
+        if(!resolve_type(&member->type_loc.type, TYPE_RES_NORMAL, member->type_loc.loc, "Union member cannot have type %s."))
+        {
+            check_circular_def(union_obj, union_obj->loc);
+            return false;
+        }
+        for(uint32_t j = 0; j < i; ++j)
+        {
+            Object* other = &union_->members.data[j]->header;
+            if(member->header.sym == other->sym)
+                sic_error_redef(&member->header, other, "member");
+        }
+        if(member->type_loc.type->visibility < union_obj->visibility)
+        {
+            // TODO: Make this error print the actual visibility of both.
+            sic_error_at(member->header.loc, "Member has type with less visibility than parent.");
+            invalidate_obj(union_obj);
+            return false;
+        }
+        uint32_t next_size = type_size(member->type_loc.type);
+        if(largest_size < next_size)
+        {
+            largest_size = next_size;
+            union_->largest_type = member->type_loc.type;
+        }
+    }
+    union_obj->status = STATUS_RESOLVED;
+    union_->header.type_ref->status = STATUS_RESOLVED;
+
+    return true;
+}
+
+Object* find_type_member(ObjType* parent, Symbol sym)
+{
+    DBG_ASSERT(parent != NULL);
+    DBG_ASSERT(sym != NULL);
+    TypeKind kind = parent->type_ref->kind;
+    if(kind == TYPE_INVALID || kind == TYPE_ALIAS || kind == TYPE_ENUM)
+        return NULL;
+
+    switch(kind)
+    {
+    case TYPE_INVALID:
+    case TYPE_ALIAS:
+        return NULL;
+    case TYPE_ALIAS_DISTINCT:
+        break;
+    case TYPE_ENUM:
+    case TYPE_ENUM_DISTINCT: {
+        ObjEnum* enum_ = (ObjEnum*)parent;
+        const ObjEnumValueDA values = enum_->values;
+        for(uint32_t i = 0; i < values.size; ++i)
+        {
+            if(values.data[i]->header.sym == sym)
+                return &values.data[i]->header;
+        }
+        if(kind == TYPE_ENUM) return NULL;
+        break;
+    }
+    case TYPE_STRUCT:
+    case TYPE_UNION: {
+        ObjStruct* struct_ = (ObjStruct*)parent;
+        for(uint32_t i = 0; i < struct_->members.size; ++i)
+        {
+            if(struct_->members.data[i]->header.sym == sym)
+                return &struct_->members.data[i]->header;
+        }
+        break;
+    }
+    default:
+        SIC_UNREACHABLE();
+    }
+
+    for(uint32_t i = 0; i < parent->methods.size; ++i)
+    {
+        if(parent->methods.data[i]->header.sym == sym)
+            return &parent->methods.data[i]->header;
+    }
+
+    return NULL;
 }

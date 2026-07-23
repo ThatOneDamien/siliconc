@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "utils/file_utils.h"
 
 #include <string.h>
@@ -61,7 +61,7 @@ void process_args(int argc, char* argv[])
 
         if(arg[0] != '-')
         {
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
             if(arg[0] == 'v')
             {
                 while(*(++arg) != '\0')

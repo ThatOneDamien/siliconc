@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "semantics.h"
 
 #define TYPE_DEF(name, type, ...)   \
@@ -39,11 +39,13 @@ static Type name;                       \
 static ObjTypedef obj_name =            \
 {                                       \
     .header = {                         \
-        .kind = OBJ_TYPEDEF,            \
-        .visibility = VIS_PUBLIC,       \
-        .status = STATUS_RESOLVED       \
+        .header = {                     \
+            .kind = OBJ_TYPEDEF,        \
+            .visibility = VIS_PUBLIC,   \
+            .status = STATUS_RESOLVED   \
+        },                              \
+        .type_ref = &name,              \
     },                                  \
-    .type_ref = &name                   \
 };                                      \
 static Type name =                      \
 {                                       \
@@ -83,12 +85,14 @@ TYPE_UR(s_null      , TYPE_NULL);
 static Type s_range;
 static ObjStruct s_range_obj = {
     .header = {
-        .kind = OBJ_STRUCT,
-        .visibility = VIS_PUBLIC,
-        .status = STATUS_RESOLVED,
-        .sym = "Range",
+        .header = {
+            .kind = OBJ_STRUCT,
+            .visibility = VIS_PUBLIC,
+            .status = STATUS_RESOLVED,
+            .sym = "Range",
+        },
+        .type_ref = &s_range,
     },
-    .type_ref = &s_range,
 };
 
 static ObjVar s_range_start_member;
@@ -160,19 +164,19 @@ void builtin_type_init()
     // TODO: Make this platform dependent, as that is the whole point of these types.
     //       For right now I am not doing proper platform detection, so they will always
     //       be the same size.
-    s_iptr_obj.header.sym  = tok_kind_to_str(TOKEN_IPTR);
+    s_iptr_obj.header.header.sym  = tok_kind_to_str(TOKEN_IPTR);
     s_iptr_obj.alias.type  = &s_long;
     s_iptr.canonical       = &s_long;
 
-    s_uptr_obj.header.sym  = tok_kind_to_str(TOKEN_UPTR);
+    s_uptr_obj.header.header.sym  = tok_kind_to_str(TOKEN_UPTR);
     s_uptr_obj.alias.type  = &s_ulong;
     s_uptr.canonical       = &s_ulong;
 
-    s_isize_obj.header.sym = tok_kind_to_str(TOKEN_ISIZE);
+    s_isize_obj.header.header.sym = tok_kind_to_str(TOKEN_ISIZE);
     s_isize_obj.alias.type = &s_long;
     s_isize.canonical      = &s_long;
 
-    s_usize_obj.header.sym = tok_kind_to_str(TOKEN_USIZE);
+    s_usize_obj.header.header.sym = tok_kind_to_str(TOKEN_USIZE);
     s_usize_obj.alias.type = &s_ulong;
     s_usize.canonical      = &s_ulong;
     
@@ -342,10 +346,10 @@ RETRY:
         t = t->canonical;
         goto RETRY;
     case TYPE_ALIAS_DISTINCT:
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM_DISTINCT:
-        t = obj_as_enum(t->user_def)->underlying.type;
+        t = t->enum_->underlying.type;
         goto RETRY;
     default:
         return t;
@@ -357,7 +361,7 @@ Type* type_remove_aliases(Type* t)
     DBG_ASSERT(t != NULL);
     while(t->kind == TYPE_ALIAS)
     {
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
     }
     return t;
 }
@@ -454,15 +458,15 @@ RETRY:
         ty = ty->canonical;
         goto RETRY;
     case TYPE_ALIAS_DISTINCT:
-        ty = obj_as_typedef(ty->user_def)->alias.type;
+        ty = ty->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM_DISTINCT:
-        ty = obj_as_enum(ty->user_def)->underlying.type;
+        ty = ty->enum_->underlying.type;
         goto RETRY;
     case TYPE_STRUCT:
-        return obj_as_struct(ty->user_def)->size;
+        return ty->struct_->size;
     case TYPE_UNION:
-        ty = obj_as_struct(ty->user_def)->largest_type;
+        ty = ty->struct_->largest_type;
         goto RETRY;
     case TYPE_INVALID:
     case TYPE_VOID:
@@ -499,15 +503,15 @@ RETRY:
         ty = ty->canonical;
         goto RETRY;
     case TYPE_ALIAS_DISTINCT:
-        ty = obj_as_typedef(ty->user_def)->alias.type;
+        ty = ty->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM_DISTINCT:
-        ty = obj_as_enum(ty->user_def)->underlying.type;
+        ty = ty->enum_->underlying.type;
         goto RETRY;
     case TYPE_STRUCT:
-        return obj_as_struct(ty->user_def)->align;
+        return ty->struct_->align;
     case TYPE_UNION:
-        ty = obj_as_struct(ty->user_def)->largest_type;
+        ty = ty->struct_->largest_type;
         goto RETRY;
     case TYPE_INVALID:
     case SEMA_ONLY_TYPES:

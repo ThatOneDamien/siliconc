@@ -140,23 +140,6 @@ Object* find_obj(const ModulePath* path)
     return o->kind == OBJ_IMPORT ? obj_as_import(o)->resolved : o;
 }
 
-Object* find_struct_member(ObjStruct* struct_, Symbol sym)
-{
-    for(uint32_t i = 0; i < struct_->members.size; ++i)
-    {
-        Object* member = &struct_->members.data[i]->header;
-        if(member->sym == sym)
-            return member;
-    }
-    for(uint32_t i = 0; i < struct_->methods.size; ++i)
-    {
-        Object* method = &struct_->methods.data[i]->header;
-        if(method->sym == sym)
-            return method;
-    }
-    return NULL;
-}
-
 uint32_t push_scope()
 {
     uint32_t prev = s_obj_stack.top;

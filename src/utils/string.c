@@ -1,5 +1,5 @@
 #include "lib.h"
-#include "../core/internal.h"
+#include "../core/sicompiler.h"
 #include <stdarg.h>
 
 ScratchBuffer g_scratch = {{0}, 0};
@@ -131,7 +131,7 @@ void scratch_append_typename(const Type* type)
             scratch_append_typename(sig->params.data[0]->type_loc.type);
         for(uint32_t i = 1; i < sig->params.size; ++i)
         {
-            scratch_appendc(',');
+            scratch_append(", ");
             scratch_append_typename(sig->params.data[i]->type_loc.type);
         }
         scratch_append(") -> ");
@@ -157,29 +157,29 @@ void scratch_append_typename(const Type* type)
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
         // TODO: Probably needs changing. This isnt a very good way to print the type, but I want to
         // somehow express that it is an alias and not a distinct type.
-        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         scratch_append(" a.k.a (");
         scratch_append_typename(type->canonical);
         scratch_appendc(')');
         return;
     case TYPE_ALIAS_DISTINCT:
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         return;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        scratch_append(obj_as_enum(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         return;
     case TYPE_STRUCT: {
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        Symbol s = type->user_def->header.sym;
         scratch_append(s ? s : "anonymous struct");
         return;
     }
     case TYPE_UNION: {
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        Symbol s = type->user_def->header.sym;
         scratch_append(s ? s : "anonymous union");
         return;
     }

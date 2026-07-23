@@ -102,6 +102,7 @@ static void     emit_br(CodegenContext* c, LLVMBasicBlockRef block);
 static void     emit_cond_br(CodegenContext* c, LLVMValueRef cond, LLVMBasicBlockRef tblock, LLVMBasicBlockRef fblock);
 static void     emit_eq_ne(CodegenContext* c, GenValue* lhs, GenValue* rhs, GenValue* result, bool is_ne);
 static void     emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
+static void     emit_mul(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result);
 
 static void     store_default(CodegenContext* c, GenValue* ptr);
 
@@ -965,7 +966,7 @@ static void emit_binary(CodegenContext* c, Expr* expr, GenValue* result)
     case BINARY_MUL:
         load_rvalue(c, &lhs);
         rhs = emit_rvalue(c, binary->rhs);
-        result->value = LLVMBuildMul(c->builder, lhs.value, rhs.value, "");
+        emit_mul(c, &lhs, &rhs, result);
         return;
     case BINARY_DIV:
         load_rvalue(c, &lhs);
@@ -1259,6 +1260,14 @@ static void emit_constant(CodegenContext* c, Expr* expr, GenValue* result)
         result->value = LLVMConstNull(get_llvm_type(c, result->type));
         return;
     }
+    case CONSTANT_GLOBAL_OFFSET: {
+        ConstGlobalOff* go = &expr->expr.constant.global_offset;
+        DBG_ASSERT(type_is_pointer(result->type));
+        LLVMValueRef index = LLVMConstInt(LLVMInt64TypeInContext(s_context), go->offset, false);
+        result->value = LLVMConstGEP2(LLVMInt8TypeInContext(s_context), go->global->header.llvm_ref, &index, 1);
+        SIC_TODO();
+        // Check this
+    }
     }
     SIC_UNREACHABLE();
 }
@@ -1358,7 +1367,7 @@ static LLVMValueRef emit_const_struct_init_list(CodegenContext* c, Expr* expr)
 {
     Type* struct_type = type_reduce(expr->type);
     StructInitList* list = &expr->expr.struct_init;
-    ObjStruct* struct_ = obj_as_struct(struct_type->user_def);
+    ObjStruct* struct_ = struct_type->struct_;
     LLVMValueRef* values = CALLOC_STRUCTS(LLVMValueRef, struct_->members.size);
     for(uint32_t i = 0; i < list->size; ++i)
     {
@@ -1699,6 +1708,14 @@ static void emit_sub(CodegenContext* c, GenValue* left, GenValue* right, GenValu
         result->value = LLVMBuildSub(c->builder, left->value, right->value, "");
 }
 
+static void emit_mul(CodegenContext* c, GenValue* left, GenValue* right, GenValue* result)
+{
+    if(type_is_float(left->type))
+        result->value = LLVMBuildFMul(c->builder, left->value, right->value, "");
+    else
+        result->value = LLVMBuildMul(c->builder, left->value, right->value, "");
+}
+
 static void store_default(CodegenContext* c, GenValue* ptr)
 {
     // TODO: I am temporarily setting most of the types to zero.
@@ -1944,29 +1961,31 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
         return type->llvm_ref = LLVMStructTypeInContext(s_context, elem_types, 2, false);
     }
     case TYPE_ALIAS_DISTINCT:
-        return type->llvm_ref = get_llvm_type(c, obj_as_typedef(type->user_def)->alias.type);
+        return type->llvm_ref = get_llvm_type(c, type->typedef_->alias.type);
     case TYPE_ENUM_DISTINCT:
-        return type->llvm_ref = get_llvm_type(c, obj_as_enum(type->user_def)->underlying.type);
+        return type->llvm_ref = get_llvm_type(c, type->enum_->underlying.type);
     case TYPE_STRUCT: {
-        ObjStruct* struct_ = obj_as_struct(type->user_def);
-        if(struct_->header.llvm_ref)
-            return type->llvm_ref = struct_->header.llvm_ref;
+        ObjStruct* struct_ = type->struct_;
+        Object* header = &struct_->header.header;
+        if(header->llvm_ref)
+            return type->llvm_ref = header->llvm_ref;
         LLVMTypeRef* elem_types = MALLOC_STRUCTS(LLVMTypeRef, struct_->members.size);
         for(uint32_t i = 0; i < struct_->members.size; ++i)
             elem_types[i] = get_llvm_type(c, struct_->members.data[i]->type_loc.type);
         scratch_clear();
         scratch_append("struct.");
-        scratch_append(struct_->header.sym);
-        struct_->header.llvm_ref = LLVMStructCreateNamed(s_context, scratch_string());
-        LLVMStructSetBody(struct_->header.llvm_ref, elem_types, struct_->members.size, has_builtin_attr(&struct_->header, ATTR_PACKED));
-        return type->llvm_ref = struct_->header.llvm_ref;
+        scratch_append(header->sym);
+        header->llvm_ref = LLVMStructCreateNamed(s_context, scratch_string());
+        LLVMStructSetBody(header->llvm_ref, elem_types, struct_->members.size, has_builtin_attr(header, ATTR_PACKED));
+        return type->llvm_ref = header->llvm_ref;
     }
     case TYPE_UNION: {
-        ObjStruct* union_ = obj_as_struct(type->user_def);
-        if(union_->header.llvm_ref)
-            return type->llvm_ref = union_->header.llvm_ref;
-        union_->header.llvm_ref = get_llvm_type(c, union_->largest_type);
-        return type->llvm_ref = union_->header.llvm_ref;
+        ObjStruct* union_ = type->struct_;
+        Object* header = &union_->header.header;
+        if(header->llvm_ref)
+            return type->llvm_ref = header->llvm_ref;
+        header->llvm_ref = get_llvm_type(c, union_->largest_type);
+        return type->llvm_ref = header->llvm_ref;
     }
     case TYPE_INVALID:
     case TYPE_ALIAS:
@@ -2093,7 +2112,7 @@ static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, UNUSED void *context)
 			return;
 	}
     (void)severity;
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     if(g_compiler.debug_output & DEBUG_CODEGEN)
         printf("[DEBUG] %s\033[0m: %s\n", severity, desc);
 #endif

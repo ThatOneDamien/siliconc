@@ -1,5 +1,5 @@
 #pragma once
-#include "core/internal.h"
+#include "core/sicompiler.h"
 
 #define FILE_NULL ((FileId)0)
 

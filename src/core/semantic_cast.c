@@ -37,7 +37,7 @@ static inline bool can_cast_params(CastParams* const params)
     CastRule rule = get_cast_rule(params->fromc->kind, params->toc->kind);
     if(rule.able == NULL)
     {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
+        CAST_ERROR("Casting from '%s' to '%s' is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
 
@@ -205,7 +205,7 @@ static bool rule_always(UNUSED CastParams* const params) { return true; }
 static bool rule_explicit_only(CastParams* const params)
 {
     if(params->explicit) return true;
-    CAST_ERROR("%s cannot be implicitly converted to %s.",
+    CAST_ERROR("'%s' cannot be implicitly converted to '%s'.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
@@ -219,12 +219,12 @@ static bool rule_int_to_int(CastParams* const params)
         {
             uint32_t min_bits = 128 - i128_clz(i);
             if(params->toc->builtin.bit_size < min_bits)
-                CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
+                CAST_ERROR("Int literal value cannot be represented by type '%s'.", type_to_string(params->to));
             return true;
         }
         if(!i128_fits(i, params->fromc->kind, params->toc->kind))
         {
-            CAST_ERROR("Int literal value cannot be represented by type %s.", type_to_string(params->to));
+            CAST_ERROR("Int literal value cannot be represented by type '%s'.", type_to_string(params->to));
         }
         return true;
     }
@@ -236,7 +236,7 @@ static bool rule_int_to_int(CastParams* const params)
 
     if(type_size(params->fromc) < type_size(params->toc)) return true;
 
-    CAST_ERROR("Narrowing from %s to %s requires explicit cast.",
+    CAST_ERROR("Narrowing from '%s' to '%s' requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
@@ -245,7 +245,7 @@ static bool rule_size_change(CastParams* const params)
     if(params->explicit || type_size(params->fromc) < type_size(params->toc))
         return true;
 
-    CAST_ERROR("Narrowing from %s to %s requires explicit cast.",
+    CAST_ERROR("Narrowing from '%s' to '%s' requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
@@ -264,20 +264,23 @@ static bool rule_ptr_to_ptr(CastParams* const params)
     {
         if(to_voidptr && FLAG_IS_SET(to_base->qualifiers, TYPE_QUAL_CONST))
             return true;
-        CAST_ERROR("Function pointers can only be implicitly cast to *const void.");
+        if(to_kind == TYPE_FUNC_PTR)
+            CAST_ERROR("Incompatable function pointer types '%s' and '%s'.", 
+                       type_to_string(params->from), type_to_string(params->to));
+        goto ERR;
     }
     if(to_kind == TYPE_FUNC_PTR)
     {
         if(from_voidptr && FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST))
             return true;
-        CAST_ERROR("Function pointers can only be implicitly casted to from *const void.");
+        goto ERR;
     }
 
     // Going from *const T to *T is illegal.
     if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && 
        FLAG_IS_NOT_SET(to_base->qualifiers, TYPE_QUAL_CONST))
     {
-        CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
+        CAST_ERROR("Casting from '%s' to '%s' disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
     }
 
@@ -294,8 +297,9 @@ static bool rule_ptr_to_ptr(CastParams* const params)
             return true;
     }
 
+ERR:
     // Otherwise this is a bad conversion.
-    CAST_ERROR("Unable to implicitly cast between pointer types %s and %s.",
+    CAST_ERROR("Unable to implicitly cast between pointer types '%s' and '%s'.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
@@ -305,7 +309,7 @@ static bool rule_arr_to_arr(CastParams* const params)
     // Going from *const T to *T is illegal.
     if(params->fromc->kind != TYPE_SLICE || params->toc->kind != TYPE_SLICE)
     {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
+        CAST_ERROR("Casting from '%s' to '%s' is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
 
@@ -313,7 +317,7 @@ static bool rule_arr_to_arr(CastParams* const params)
     Type* const to_base = params->toc->slice.base;
     if(type_size(from_base) != type_size(to_base))
     {
-        CAST_ERROR("Cannot cast from %s to %s, the base types have different sizes.",
+        CAST_ERROR("Cannot cast from '%s' to '%s', the base types have different sizes.",
                    type_to_string(params->from), type_to_string(params->to));
     }
 
@@ -321,12 +325,12 @@ static bool rule_arr_to_arr(CastParams* const params)
 
     if(FLAG_IS_SET(from_base->qualifiers, TYPE_QUAL_CONST) && FLAG_IS_NOT_SET(to_base->qualifiers, TYPE_QUAL_CONST))
     {
-        CAST_ERROR("Casting from %s to %s disregards 'const' qualifier.", 
+        CAST_ERROR("Casting from '%s' to '%s' disregards 'const' qualifier.", 
                    type_to_string(params->from), type_to_string(params->to));
     }
 
     if(type_equal(from_base, to_base)) return true;
-    CAST_ERROR("Unable to implicitly cast between slice types %s and %s.",
+    CAST_ERROR("Unable to implicitly cast between slice types '%s' and '%s'.",
                type_to_string(params->from), type_to_string(params->to));
 }
 
@@ -336,13 +340,13 @@ static bool rule_str_to_ptr(CastParams* const params)
 
     if(params->fromc->kind != TYPE_STRING_LITERAL)
     {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
+        CAST_ERROR("Casting from '%s' to '%s' is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
     DBG_ASSERT(params->inner->kind == EXPR_CONSTANT && params->inner->expr.constant.kind == CONSTANT_STRING);
     if(params->inner->expr.constant.str.kind != kind)
     {
-        CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
+        CAST_ERROR("String literal's character encoding does not match type '%s'.", type_to_string(params->to));
     }
     return true;
 }
@@ -386,7 +390,7 @@ static bool rule_init_list_to_arr(CastParams* const params)
         {
             if(params->toc->slice.base->canonical->kind != str.kind)
             {
-                CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
+                CAST_ERROR("String literal's character encoding does not match type '%s'.", type_to_string(params->to));
             }
             // TODO: We can make this turn into a constant slice for folding. For right now I don't feel the need to optimize that
             return true;
@@ -395,7 +399,7 @@ static bool rule_init_list_to_arr(CastParams* const params)
         Type* elem_type = params->toc->array.elem_type->canonical;
         if(elem_type->kind != str.kind)
         {
-            CAST_ERROR("String literal's character encoding does not match type %s.", type_to_string(params->to));
+            CAST_ERROR("String literal's character encoding does not match type '%s'.", type_to_string(params->to));
         }
         if(arr_size < str.len)
         {
@@ -407,7 +411,7 @@ static bool rule_init_list_to_arr(CastParams* const params)
 
     if(is_slice || params->inner->kind != EXPR_ARRAY_INIT_LIST)
     {
-        CAST_ERROR("Casting from %s to %s is not allowed.",
+        CAST_ERROR("Casting from '%s' to '%s' is not allowed.",
                    type_to_string(params->from), type_to_string(params->to));
     }
 
@@ -446,7 +450,7 @@ static bool rule_init_list_to_arr(CastParams* const params)
 static bool rule_distinct(CastParams* const params)
 {
     DBG_ASSERT(!params->explicit);
-    CAST_ERROR("Casting from %s to %s requires an explicit cast.",
+    CAST_ERROR("Casting from '%s' to '%s' requires an explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
 }
 

@@ -2,7 +2,7 @@
 #include <float.h>
 
 // Expr kind functions
-static bool analyze_array_access(Expr* expr);
+static bool analyze_array_access(Expr* expr, Type* expected_type);
 static bool analyze_array_init_list(Expr* expr, Type* expected_type);
 static bool analyze_binary(Expr* expr, Type* expected_type);
 static bool analyze_constant(Expr* expr, Type* expected_type);
@@ -45,7 +45,7 @@ static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs);
 static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs);
 
 // Unary functions
-static bool analyze_addr_of(Expr* expr, Expr* inner);
+static bool analyze_addr_of(Expr* expr, Expr* inner, Type* expected_type);
 static bool analyze_bit_not(Expr* expr, Expr* inner, Type* expected_type);
 static bool analyze_deref(Expr* expr, Expr* inner);
 static bool analyze_incdec(Expr* expr, Expr* inner);
@@ -74,7 +74,7 @@ bool analyze_expr_dispatch(Expr* expr, Type* expected_type)
     case EXPR_INVALID:
         return false;
     case EXPR_ARRAY_ACCESS:
-        return analyze_array_access(expr);
+        return analyze_array_access(expr, expected_type);
     case EXPR_ARRAY_INIT_LIST:
         return analyze_array_init_list(expr, expected_type);
     case EXPR_BINARY:
@@ -195,7 +195,7 @@ bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     SIC_UNREACHABLE();
 }
 
-bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
+bool analyze_lvalue_assign_dispatch(Expr* expr)
 {
     switch(expr->kind)
     {
@@ -204,54 +204,43 @@ bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
     case EXPR_ARRAY_ACCESS: {
         ExprArrayAccess* access = &expr->expr.array_access;
         if(access->array_expr->type->canonical->kind != TYPE_STATIC_ARRAY) break;
-        if(!analyze_lvalue_dispatch(access->array_expr, will_write)) return false;
+        if(!analyze_lvalue_assign_dispatch(access->array_expr)) return false;
         expr->is_const_eval = access->array_expr->is_const_eval && access->index_expr->is_const_eval;
         break;
     }
     case EXPR_FUNCTION:
-        if(will_write)
-        {
-            sic_error_at(expr->loc, "Function identifiers are not mutable.");
-            return false;
-        }
-        break;
+        sic_error_at(expr->loc, "Functions are not mutable.");
+        return false;
     case EXPR_MEMBER_ACCESS:
-        if(!analyze_lvalue_dispatch(expr->expr.member_access.parent_expr, will_write)) return false;
+        if(!analyze_lvalue_assign_dispatch(expr->expr.member_access.parent_expr)) return false;
         expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
         break;
     case EXPR_MEMBER_BUILTIN:
-        if(!analyze_lvalue_dispatch(expr->expr.member_builtin.parent_expr, will_write)) return false;
+        if(!analyze_lvalue_assign_dispatch(expr->expr.member_builtin.parent_expr)) return false;
         expr->is_const_eval = expr->expr.member_builtin.parent_expr->is_const_eval;
         break;
     case EXPR_METHOD:
-        sic_error_at(expr->loc, will_write ? "Methods are not mutable." : 
-                                             "You cannot get the address of a method accessed "
-                                             "from an instance. Instead, use '%s.%s'.", 
-                     type_to_string(expr->expr.method_access.parent_expr->type->canonical),
-                     expr->expr.method_access.method->header.sym);
+        sic_error_at(expr->loc, "Methods are not mutable.");
         return false;
     case EXPR_TYPE_IDENT:
-        sic_error_at(expr->loc, "Type identifier not expected or allowed here.");
+        sic_error_at(expr->loc, "Type identifier not expected nor allowed here.");
         return false;
     case EXPR_UNARY:
         if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
         break;
     case EXPR_UNWRAP:
-        if(!analyze_lvalue_dispatch(expr->expr.unwrap, will_write)) goto ERR;
+        if(!analyze_lvalue_assign_dispatch(expr->expr.unwrap)) goto ERR;
         break;
     case EXPR_VAR: {
         ObjVar* var = expr->expr.var;
         if(var->binding_kind == VAR_BINDING_CT_CONST)
         {
-            sic_error_at(expr->loc, "Variables declared with #const %s.", 
-                         will_write ? "cannot be modified" : "have no storage");
+            sic_error_at(expr->loc, "Variables declared with #const cannot be modified.");
             return false;
         }
         if(var->kind == VAR_GLOBAL)
             expr->is_const_eval = true;
         var->written = true;
-        if(!will_write)
-            var->read = true; // For address of we count it as a read and a write because we dont track the pointer
         break;
     }
     default:
@@ -267,7 +256,8 @@ bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
         SIC_UNREACHABLE();
     }
 
-    if(expr->type->kind != TYPE_INVALID && will_write && (expr->type->qualifiers & TYPE_QUAL_CONST))
+    if(expr->type->kind == TYPE_INVALID) return false;
+    if(expr->type->qualifiers & TYPE_QUAL_CONST)
     {
         sic_error_at(expr->loc, "Expression of type \'%s\' cannot be modified.", type_to_string(expr->type));
         return false;
@@ -275,7 +265,102 @@ bool analyze_lvalue_dispatch(Expr* expr, bool will_write)
 
     return true;
 ERR:
-    sic_error_at(expr->loc, will_write ? "Expression is not assignable." : "Expression is not an lvalue.");
+    sic_error_at(expr->loc, "Expression is not an l-value.");
+    return false;
+}
+
+bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
+{
+    switch(expr->kind)
+    {
+    case EXPR_INVALID:
+        return false;
+    case EXPR_ARRAY_ACCESS: {
+        Expr* array_expr = expr->expr.array_access.array_expr;
+        Expr* index_expr = expr->expr.array_access.index_expr;
+        Type* array_type = array_expr->type->canonical;
+        if(array_type->kind == TYPE_STATIC_ARRAY && !analyze_lvalue_addr_dispatch(array_expr, is_const_ref)) 
+            return false;
+        if(index_expr->kind == EXPR_CONSTANT && array_expr->kind == EXPR_CONSTANT)
+        {
+            switch(array_type->kind)
+            {
+            case TYPE_STATIC_ARRAY:
+                if(array_expr->expr.constant.kind == CONSTANT_GLOBAL_OFFSET)
+                {
+                    convert_to_const_global_offset_from_other(expr, array_expr, index_expr->expr.constant.i.lo * type_size(expr->type));
+                }
+                break;
+            case TYPE_POINTER_MULTI_STATIC:
+            case TYPE_POINTER_MULTI_UNKNOWN:
+                if(array_expr->expr.constant.kind == CONSTANT_POINTER)
+                {
+                    convert_to_const_pointer(expr, expr->type, i128_mult64(array_expr->expr.constant.i, index_expr->expr.constant.i.lo * type_size(expr->type)));
+                }
+                break;
+            case TYPE_SLICE:
+                SIC_TODO();
+            default:
+                SIC_UNREACHABLE();
+            }
+        }
+        break;
+    }
+    case EXPR_FUNCTION:
+    case EXPR_METHOD:
+        return true;
+    case EXPR_MEMBER_ACCESS:
+        if(!analyze_lvalue_addr_dispatch(expr->expr.member_access.parent_expr, is_const_ref)) return false;
+        expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
+        break;
+    case EXPR_MEMBER_BUILTIN:
+        if(!analyze_lvalue_addr_dispatch(expr->expr.member_builtin.parent_expr, is_const_ref)) return false;
+        expr->is_const_eval = expr->expr.member_builtin.parent_expr->is_const_eval;
+        break;
+    case EXPR_TYPE_IDENT:
+        sic_error_at(expr->loc, "Type identifier not expected nor allowed here.");
+        return false;
+    case EXPR_UNARY:
+        if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
+        break;
+    case EXPR_UNWRAP: {
+        Expr* inner = expr->expr.unwrap;
+        if(!analyze_lvalue_addr_dispatch(inner, is_const_ref)) goto ERR;
+        if(inner->kind == EXPR_CONSTANT)
+            expr_copy_keep_type(expr, inner); // Unwrapping should always be the same address as the inner
+        break;
+    }
+    case EXPR_VAR: {
+        ObjVar* var = expr->expr.var;
+        if(var->binding_kind == VAR_BINDING_CT_CONST)
+        {
+            sic_error_at(expr->loc, "Variables declared with #const do not have storage. You cannot get its address.");
+            return false;
+        }
+        if(var->kind == VAR_GLOBAL) 
+        {
+            convert_to_const_global_offset(expr, var, 0);
+        }
+        var->written = !is_const_ref;
+        var->read = true;
+        break;
+    }
+    default:
+        goto ERR;
+    case EXPR_UNRESOLVED_ARROW:
+    case EXPR_UNRESOLVED_DOT:
+    case EXPR_UNRESOLVED_IDENT:
+    case EXPR_CT_ALIGNOF:
+    case EXPR_CT_OFFSETOF:
+    case EXPR_CT_SIZEOF:
+    case EXPR_CT_TYPE_MAX:
+    case EXPR_CT_TYPE_MIN:
+        SIC_UNREACHABLE();
+    }
+
+    return true;
+ERR:
+    sic_error_at(expr->loc, "Expression does not have storage, it is not an l-value.");
     return false;
 }
 
@@ -310,7 +395,7 @@ bool analyze_var_rvalue(Expr* expr)
 }
 
 
-static bool analyze_array_access(Expr* expr)
+static bool analyze_array_access(Expr* expr, Type* expected_type)
 {
     Expr* arr_expr = expr->expr.array_access.array_expr;
     Expr* index_expr = expr->expr.array_access.index_expr;
@@ -343,7 +428,7 @@ static bool analyze_array_access(Expr* expr)
         elem_type = type_apply_qualifiers(arr_type->array.elem_type, arr_expr->type->qualifiers);
         bounds_check = arr_type->array.static_len;
         has_bounds_check = true;
-        if(index_is_range && !analyze_lvalue(arr_expr, false)) return false;
+        if(index_is_range && !analyze_lvalue_addr(arr_expr, expected_type)) return false;
         break;
     case TYPE_SLICE:
         elem_type = arr_type->slice.base;
@@ -352,8 +437,8 @@ static bool analyze_array_access(Expr* expr)
         break;
     case TYPE_INIT_LIST:
         sic_error_at(expr->loc, 
-                     "Cannot access element of array literal. Please first assign the array to a const "
-                     "literal or cast it to a typed array (i.e. [*]int), then perform the access.");
+                     "Cannot access element of array literal. Please assign the array to a variable "
+                     "or cast it to a typed array (i.e. [*]int) first, then perform the access.");
         return false;
     default:
         sic_error_at(expr->loc, "Attempted to access element of non-array and non-pointer type \'%s\'",
@@ -663,7 +748,7 @@ static bool analyze_ident(Expr* expr)
                     check_circular_def(&value->header, expr->loc);
                     return false;
                 }
-                convert_to_const_int(expr, g_sema.cur_enum->type_ref, value->const_value);
+                convert_to_const_int(expr, g_sema.cur_enum->header.type_ref, value->const_value);
                 return true;
             }
         }
@@ -691,7 +776,7 @@ static bool analyze_ident(Expr* expr)
     case OBJ_UNION:
         expr->type = g_type_invalid;
         expr->kind = EXPR_TYPE_IDENT;
-        expr->expr.type_ident = ident;
+        expr->expr.type_ident = (ObjType*)ident;
         return true;
     case OBJ_VAR: {
         ObjVar* var = obj_as_var(ident);
@@ -775,7 +860,7 @@ static bool analyze_struct_init_list(Expr* expr)
     }
 
     ObjStruct* struct_ = obj_as_struct(obj);
-    expr->type = struct_->type_ref;
+    expr->type = struct_->header.type_ref;
     if(!resolve_type(&expr->type, TYPE_RES_NORMAL, LOC_NULL, NULL)) return false;
 
     bool valid = true;
@@ -830,7 +915,7 @@ static bool analyze_unary(Expr* expr, Type* expected_type)
     case UNARY_INVALID:
         break;
     case UNARY_ADDR_OF:
-        return analyze_addr_of(expr, inner);
+        return analyze_addr_of(expr, inner, expected_type);
     case UNARY_BIT_NOT:
         return analyze_bit_not(expr, inner, expected_type);
     case UNARY_DEC:
@@ -844,6 +929,25 @@ static bool analyze_unary(Expr* expr, Type* expected_type)
         return analyze_negate(expr, inner);
     }
     SIC_UNREACHABLE();
+}
+
+static bool resolve_method(Expr* expr, ObjType* type_obj)
+{
+    SymbolLoc member = expr->expr.unresolved_access.member;
+    Expr* parent = expr->expr.unresolved_access.parent_expr;
+    const ObjFuncDA methods = type_obj->methods;
+    for(uint32_t i = 0; i < methods.size; ++i)
+    {
+        if(methods.data[i]->header.sym == member.sym)
+        {
+            expr->kind = EXPR_METHOD;
+            expr->expr.method_access.parent_expr = parent;
+            expr->expr.method_access.method = methods.data[i];
+            expr->type = methods.data[i]->func_type;
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool resolve_member(Expr* expr)
@@ -889,8 +993,7 @@ static bool resolve_member(Expr* expr)
         return true;
     case TYPE_STRUCT:
     case TYPE_UNION: {
-        const ObjVarDA members = obj_as_struct(t->user_def)->members;
-        const ObjFuncDA methods = obj_as_struct(t->user_def)->methods;
+        const ObjVarDA members = t->struct_->members;
         for(uint32_t i = 0; i < members.size; ++i)
         {
             if(members.data[i]->header.sym == member.sym)
@@ -903,19 +1006,13 @@ static bool resolve_member(Expr* expr)
                 return true;
             }
         }
-        for(uint32_t i = 0; i < methods.size; ++i)
-        {
-            if(methods.data[i]->header.sym == member.sym)
-            {
-                expr->kind = EXPR_METHOD;
-                expr->expr.method_access.parent_expr = parent;
-                expr->expr.method_access.method = methods.data[i];
-                expr->type = methods.data[i]->func_type;
-                return true;
-            }
-        }
+        if(resolve_method(expr, t->user_def)) return true;
         break;
     }
+    case TYPE_ALIAS_DISTINCT:
+    case TYPE_ENUM_DISTINCT:
+        if(resolve_method(expr, t->user_def)) return true;
+        break;
     case TYPE_VOID:
     case TYPE_NULL:
     case NUMERIC_TYPES:
@@ -923,8 +1020,6 @@ static bool resolve_member(Expr* expr)
     case TYPE_POINTER_MULTI_UNKNOWN:
     case TYPE_FUNC_PTR:
     case TYPE_OPTIONAL:
-    case TYPE_ALIAS_DISTINCT:
-    case TYPE_ENUM_DISTINCT:
     case TYPE_INIT_LIST:
     case TYPE_STRING_LITERAL:
         break;
@@ -971,7 +1066,7 @@ static bool analyze_inferred_dot(Expr* expr, Type* expected_type)
     }
 
     ExprUnresAccess* uaccess = &expr->expr.unresolved_access;
-    ObjEnum* enum_ = obj_as_enum(t->user_def);
+    ObjEnum* enum_ = t->enum_;
     const ObjEnumValueDA values = enum_->values;
     for(uint32_t i = 0; i < values.size; ++i)
         if(values.data[i]->header.sym == uaccess->member.sym)
@@ -981,11 +1076,11 @@ static bool analyze_inferred_dot(Expr* expr, Type* expected_type)
                 check_circular_def(&values.data[i]->header, expr->loc);
                 return false;
             }
-            convert_to_const_int(expr, enum_->type_ref, values.data[i]->const_value);
+            convert_to_const_int(expr, enum_->header.type_ref, values.data[i]->const_value);
             return true;
         }
     sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
-                 enum_->header.sym, uaccess->member.sym);
+                 enum_->header.header.sym, uaccess->member.sym);
     return false;
 }
 
@@ -998,14 +1093,27 @@ static bool analyze_unresolved_dot(Expr* expr, Type* expected_type)
 
     if(parent->kind == EXPR_TYPE_IDENT)
     {
-        Object* type_ident = parent->expr.type_ident;
+        ObjType* type_ident = parent->expr.type_ident;
+        for(uint32_t i = 0; i < type_ident->methods.size; ++i)
+        {
+            ObjFunc* func = type_ident->methods.data[i];
+            if(func->header.sym == uaccess->member.sym)
+            {
+                expr->type = func->func_type;
+                expr->kind = EXPR_FUNCTION;
+                expr->expr.function = func;
+                expr->is_const_eval = true;
+                func->used = true;
+                return true;
+            }
+        }
     RETRY:
-        switch(type_ident->kind)
+        switch(type_ident->header.kind)
         {
         case OBJ_BITFIELD:
             SIC_TODO();
         case OBJ_ENUM: {
-            ObjEnum* enum_ = obj_as_enum(type_ident);
+            ObjEnum* enum_ = obj_as_enum(&type_ident->header);
             const ObjEnumValueDA values = enum_->values;
             for(uint32_t i = 0; i < values.size; ++i)
                 if(values.data[i]->header.sym == uaccess->member.sym)
@@ -1015,16 +1123,16 @@ static bool analyze_unresolved_dot(Expr* expr, Type* expected_type)
                         check_circular_def(&values.data[i]->header, expr->loc);
                         return false;
                     }
-                    convert_to_const_int(expr, enum_->type_ref, values.data[i]->const_value);
+                    convert_to_const_int(expr, enum_->header.type_ref, values.data[i]->const_value);
                     return true;
                 }
             sic_error_at(uaccess->member.loc, "Enum \'%s\' has no value \'%s\'.",
-                         type_ident->sym, uaccess->member.sym);
+                         type_ident->header.sym, uaccess->member.sym);
             return false;
         }
         case OBJ_STRUCT: {
             if(!analyze_type_obj(type_ident)) return false;
-            ObjStruct* struct_ = obj_as_struct(type_ident);
+            ObjStruct* struct_ = (ObjStruct*)type_ident;
             const ObjVarDA members = struct_->members;
             for(uint32_t i = 0; i < members.size; ++i)
                 if(members.data[i]->header.sym == uaccess->member.sym)
@@ -1032,27 +1140,13 @@ static bool analyze_unresolved_dot(Expr* expr, Type* expected_type)
                     sic_error_at(uaccess->member.loc, "Struct member must be accessed with an instance.");
                     return false;
                 }
-            const ObjFuncDA methods = struct_->methods;
-            for(uint32_t i = 0; i < methods.size; ++i)
-            {
-                ObjFunc* func = methods.data[i];
-                if(func->header.sym == uaccess->member.sym)
-                {
-                    expr->type = func->func_type;
-                    expr->kind = EXPR_FUNCTION;
-                    expr->expr.function = func;
-                    expr->is_const_eval = true;
-                    func->used = true;
-                    return true;
-                }
-            }
             sic_error_at(uaccess->member.loc, "Struct \'%s\' has no method \'%s\'.",
-                         type_ident->sym, uaccess->member.sym);
+                         type_ident->header.sym, uaccess->member.sym);
             return false;
         }
         case OBJ_TYPEDEF:
             if(!analyze_type_obj(type_ident)) return false;
-            type_ident = obj_as_typedef(type_ident)->alias.type->user_def;
+            type_ident = ((ObjTypedef*)type_ident)->alias.type->user_def;
             goto RETRY;
         case OBJ_UNION:
             SIC_TODO();
@@ -1123,7 +1217,7 @@ static bool analyze_ct_alignof(Expr* expr)
         return false;
 
     ByteSize align = type_alignment(expr->expr.ct_typearg.type);
-    convert_to_const_int(expr, g_type_usize, i128_from_u64(align));
+    convert_to_const_int(expr, g_type_pos_int_lit, i128_from_u64(align));
     return true;
 }
 
@@ -1132,6 +1226,7 @@ static bool analyze_ct_offsetof(Expr* expr)
     ExprCTOffset* off = &expr->expr.ct_offsetof;
     if(!resolve_type(&off->struct_.type, TYPE_RES_NORMAL, off->struct_.loc, "Cannot get offsetof member with base type %s."))
         return false;
+    SIC_TODO();
     if(off->struct_.type->canonical->kind != TYPE_STRUCT)
     {
 
@@ -1145,7 +1240,7 @@ static bool analyze_ct_sizeof(Expr* expr)
         return false;
     
     uint32_t size = type_size(expr->expr.ct_typearg.type);
-    convert_to_const_int(expr, g_type_usize, i128_from_u64(size));
+    convert_to_const_int(expr, g_type_pos_int_lit, i128_from_u64(size));
     return true;
 }
 
@@ -1181,11 +1276,11 @@ RETRY:
         convert_to_const_float(expr, type, DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = obj_as_enum(t->user_def);
+        ObjEnum* enum_ = t->enum_;
         // This line ensures that the enum has its min and max set.
         if(!analyze_type_obj(&enum_->header)) return false;
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
@@ -1219,11 +1314,11 @@ RETRY:
         convert_to_const_float(expr, type, -DBL_MAX);
         return true;
     case TYPE_ALIAS:
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT: {
-        ObjEnum* enum_ = obj_as_enum(t->user_def);
+        ObjEnum* enum_ = t->enum_;
         // This line ensures that the enum has its min and max set.
         if(!analyze_type_obj(&enum_->header)) return false;
         // FIXME: Figure out what we are doing with enums. Should they be converted to int with type enum,
@@ -1707,7 +1802,6 @@ static bool analyze_comparison(Expr* expr, Expr* lhs, Expr* rhs, bool is_eq_ne)
         if(!type_kind_is_integer(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
     case FLOAT_TYPES:
-        if(!type_kind_is_float(rkind)) break;
         return basic_arith_type_conv(lhs, rhs, expr->loc);
     case TYPE_POINTER_SINGLE:
     case TYPE_POINTER_MULTI_STATIC:
@@ -2110,7 +2204,7 @@ static bool analyze_bit_and(Expr* expr, Expr* lhs, Expr* rhs, Type* expected_typ
 
 static bool analyze_assign(Expr* expr, Expr* lhs, Expr* rhs)
 {
-    if(!analyze_lvalue(lhs, true) || !analyze_rvalue_args(lhs, NULL, false)) return false;
+    if(!analyze_lvalue_assign(lhs) || !analyze_rvalue_args(lhs, NULL, false)) return false;
     expr->type = lhs->type;
     return implicit_cast(rhs, lhs->type);
 }
@@ -2140,16 +2234,20 @@ static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs)
     new_rhs->expr.binary.rhs = rhs;
     expr->expr.binary.kind = BINARY_ASSIGN;
     expr->expr.binary.rhs = new_rhs;
-    if(!analyze_lvalue(lhs, true) || !analyze_rvalue_args(lhs, NULL, false)) return false;
+    if(!analyze_lvalue_assign(lhs) || !analyze_rvalue_args(lhs, NULL, false)) return false;
     analyze_rvalue_args(rhs, lhs->type, true);
     expr->type = lhs->type;
     return implicit_cast(new_rhs, lhs->type);
 }
 
-static bool analyze_addr_of(Expr* expr, Expr* inner)
+static bool analyze_addr_of(Expr* expr, Expr* inner, Type* expected_type)
 {
-    if(!analyze_lvalue(inner, false)) return false;
-    expr->is_const_eval = inner->is_const_eval;
+    if(!analyze_lvalue_addr(inner, expected_type)) return false;
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        expr_copy_keep_type(expr, inner);
+        return true;
+    }
 
     Type* inner_type = inner->type;
     if(inner->kind == EXPR_FUNCTION)
@@ -2223,7 +2321,7 @@ static bool analyze_deref(Expr* expr, Expr* inner)
 
 static bool analyze_incdec(Expr* expr, Expr* inner)
 {
-    if(!analyze_lvalue(inner, true) || !analyze_rvalue_args(inner, NULL, true))
+    if(!analyze_lvalue_assign(inner) || !analyze_rvalue_args(inner, NULL, true))
         return false;
 
     Type* ty = inner->type;
@@ -2374,8 +2472,6 @@ static bool basic_arith_type_conv(Expr* expr1, Expr* expr2, SourceLoc loc)
         Expr* temp = expr1;
         expr1 = expr2;
         expr2 = temp;
-        t1 = t2;
-        k1 = k2;
     }
 
     perform_cast(expr2, expr1->type);
@@ -2406,17 +2502,17 @@ RETRY:
     case POINTER_TYPES:
         convert_to_const_pointer(expr, type, UINT128_MIN);
         return;
-    case TYPE_STATIC_ARRAY:
     case TYPE_ALIAS:
     case TYPE_ALIAS_DISTINCT:
         // TODO: Let distinct types have default values
-        t = obj_as_typedef(t->user_def)->alias.type;
+        t = t->typedef_->alias.type;
         goto RETRY;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
         // TODO: Let distinct types have default values
-        t = obj_as_enum(t->user_def)->underlying.type;
+        t = t->enum_->underlying.type;
         goto RETRY;
+    case TYPE_STATIC_ARRAY:
     case TYPE_STRUCT:
     case TYPE_UNION:
     case TYPE_SLICE:
@@ -2432,3 +2528,4 @@ RETRY:
     }
     SIC_UNREACHABLE();
 }
+

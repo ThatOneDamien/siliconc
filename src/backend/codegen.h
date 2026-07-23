@@ -1,5 +1,5 @@
 #pragma once
-#include "core/internal.h"
+#include "core/sicompiler.h"
 #include "utils/da.h"
 #include "utils/file_utils.h"
 

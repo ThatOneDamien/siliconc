@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "utils/lib.h"
 
 #include <sys/mman.h>

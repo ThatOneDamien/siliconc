@@ -1,5 +1,6 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "backend/codegen.h"
+#include "libgen/libgen.h"
 #include "utils/file_utils.h"
 #include "utils/lib.h"
 
@@ -8,10 +9,17 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-CompilerContext g_compiler = { .top_module = { .header = { .sym = "root" }}};
+CompilerContext g_compiler = { 
+    .version = { 
+        .major = SIC_VERSION_MAJOR, 
+        .minor = SIC_VERSION_MINOR, 
+        .patch = SIC_VERSION_PATCH
+    },
+    .top_module = { .header = { .sym = "root" }}
+};
 static void resolve_dependency_paths(char** crt, char** gcclib);
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
 static void print_debug_stats() 
 {
     if(g_compiler.debug_output & DEBUG_MEMORY)
@@ -19,7 +27,7 @@ static void print_debug_stats()
                 g_global_arena.allocated,
                 g_global_arena.saved); 
 }
-#endif // SI_DEBUG
+#endif // SIC_DEBUG
 
 int main(int argc, char* argv[])
 {
@@ -33,7 +41,7 @@ int main(int argc, char* argv[])
     sym_map_init();
     builtin_type_init();
     atexit(close_tempfiles); // Close all tempfiles opened when we exit for any reason
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     atexit(print_debug_stats);
 #endif
 
@@ -42,7 +50,7 @@ int main(int argc, char* argv[])
 
     parse_source_file(g_compiler.input_file);
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     if(g_compiler.debug_output & DEBUG_PARSER)
     {
         print_module(&g_compiler.top_module, true);
@@ -62,6 +70,8 @@ int main(int argc, char* argv[])
     if(g_warning_cnt > 0)
         fprintf(stderr, "sic: %d warning(s) generated.\n", g_warning_cnt); 
 
+    // generate_meta_file("test.simeta");
+    // decode_meta_file("test.simeta");
     gen_ir();
 
     if(!g_compiler.emit_link)

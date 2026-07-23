@@ -1,5 +1,5 @@
 #include "lib.h"
-#include "../core/internal.h"
+#include "../core/sicompiler.h"
 #include <math.h>
 
 #define HI32(_x) ((uint64_t)(_x) >> 32)

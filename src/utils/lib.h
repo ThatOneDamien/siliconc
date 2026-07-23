@@ -17,17 +17,19 @@
 #define SCRATCH_SIZE (1 << 14)
 #ifdef __GNUC__
     #define UNUSED __attribute__((unused))
+    #define PACKED __attribute__((packed))
     #define FALLTHROUGH __attribute__((fallthrough))
     #define NORETURN __attribute__((noreturn))
     #define PRINTF_FMT(fmt, va_args) __attribute__((format(printf, fmt, va_args)))
 #else
     #define UNUSED
+    #define PACKED
     #define FALLTHROUGH
     #define NORETURN
     #define PRINTF_FMT(fmt, va_args)
 #endif
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     #include <signal.h>
     #define DBG_ERROR(...)                          \
         do                                          \
@@ -196,7 +198,7 @@ static inline void sic_error_redef(Object* redef, Object* orig, const char* kind
     sic_diagnostic_at(DIAG_NOTE, orig->loc, "Previous definition here.");
 }
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     #define SIC_TODO()        sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m Not yet implemented.", __FILE_NAME, __LINE__, __FUNCTION__)
     #define SIC_TODO_MSG(msg) sic_fatal_error("\033[32mTODO: %s:%d(%s)\033[0m %s", __FILE_NAME, __LINE__, __FUNCTION__, msg)
 #else

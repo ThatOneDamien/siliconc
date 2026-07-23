@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "utils/file_utils.h"
 
 #include <string.h>
@@ -10,13 +10,6 @@
 #define next(lex)           do { ++(lex)->pos; } while(0)
 #define backtrack(lex)      do { --(lex)->pos; } while(0)
 #define at_eof(lex)         (peek(lex) == '\0')
-
-typedef struct
-{
-    char*    data;
-    uint32_t size;
-    uint32_t capacity;
-} StringBuilder;
 
 static inline void     skip_invisible(Lexer* l);
 static inline void     extract_identifier(Lexer* l, Token* t);

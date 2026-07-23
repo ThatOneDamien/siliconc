@@ -4,6 +4,10 @@
 #include "utils/da.h"
 #include "utils/lib.h"
 
+#define SIC_VERSION_MAJOR 0
+#define SIC_VERSION_MINOR 1
+#define SIC_VERSION_PATCH 0
+
 extern CompilerContext g_compiler;
 
 // Builtin types (defined in type.c)
@@ -252,6 +256,26 @@ static inline Type* type_to_signed(Type* ty)
     }
 }
 
+static inline bool obj_is_type(const Object* obj)
+{
+    switch(obj->kind)
+    {
+    case OBJ_ENUM_VALUE:
+    case OBJ_FUNC:
+    case OBJ_IMPORT:
+    case OBJ_MODULE:
+    case OBJ_VAR:
+        return false;
+    case OBJ_INVALID:
+    case OBJ_BITFIELD:
+    case OBJ_ENUM:
+    case OBJ_STRUCT:
+    case OBJ_TYPEDEF:
+    case OBJ_UNION:
+        return true;
+    }
+    SIC_UNREACHABLE();
+}
 
 // Bad value checkers
 static inline bool expr_is_bad(const Expr* expr)
@@ -316,6 +340,12 @@ static inline ObjStruct* obj_as_struct(Object* o)
     return (ObjStruct*)o;
 }
 
+static inline ObjType* obj_as_type(Object* o)
+{
+    DBG_ASSERT(obj_is_type(o));
+    return (ObjType*)o;
+}
+
 static inline ObjTypedef* obj_as_typedef(Object* o)
 {
     DBG_ASSERT(o->kind == OBJ_TYPEDEF);
@@ -328,31 +358,11 @@ static inline ObjVar* obj_as_var(Object* o)
     return (ObjVar*)o;
 }
 
-static inline bool obj_is_type(const Object* obj)
-{
-    switch(obj->kind)
-    {
-    case OBJ_ENUM_VALUE:
-    case OBJ_FUNC:
-    case OBJ_IMPORT:
-    case OBJ_MODULE:
-    case OBJ_VAR:
-        return false;
-    case OBJ_INVALID:
-    case OBJ_BITFIELD:
-    case OBJ_ENUM:
-    case OBJ_STRUCT:
-    case OBJ_TYPEDEF:
-    case OBJ_UNION:
-        return true;
-    }
-    SIC_UNREACHABLE();
-}
 
 
 // Debug printing functions
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
 
 void print_token(const Token* tok);
 void print_module(const ObjModule* module, bool allow_unresolved);

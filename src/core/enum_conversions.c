@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 
 static const char* const s_tok_strs[__TOKEN_COUNT] = {
     [TOKEN_IDENT]           = "identifier",

@@ -1,4 +1,4 @@
-#include "core/internal.h"
+#include "core/sicompiler.h"
 #include "file_utils.h"
 
 #include <ctype.h>

@@ -43,12 +43,15 @@ typedef struct Type             Type;
 typedef struct TypeLoc          TypeLoc;
 
 // Dynamic Array Structs
+typedef struct StringBuilder    StringBuilder;
 typedef struct StringDA         StringDA;
+typedef struct RawDataDA        RawDataDA;
 typedef struct ObjectDA         ObjectDA;
 typedef struct ObjEnumValueDA   ObjEnumValueDA;
 typedef struct ObjFuncDA        ObjFuncDA;
 typedef struct ObjImportDA      ObjImportDA;
 typedef struct ObjModuleDA      ObjModuleDA;
+typedef struct ObjTypeDA        ObjTypeDA;
 typedef struct ObjVarDA         ObjVarDA;
 typedef struct ExprDA           ExprDA;
 typedef struct StmtCaseDA       StmtCaseDA;
@@ -66,6 +69,7 @@ typedef struct ExprCall         ExprCall;
 typedef struct ExprCallBuiltin  ExprCallBuiltin;
 typedef struct ExprCast         ExprCast;
 typedef struct ExprCond         ExprCond;
+typedef struct ConstGlobalOff   ConstGlobalOff;
 typedef struct ExprConstant     ExprConstant;
 typedef struct ExprIf           ExprIf;
 typedef struct ArrInitEntry     ArrInitEntry;
@@ -95,6 +99,7 @@ typedef struct Stmt             Stmt;
 // Object Structs (defined symbols)
 typedef struct FuncSignature    FuncSignature;
 typedef struct Object           Object;
+typedef struct ObjType          ObjType;
 typedef struct ObjEnum          ObjEnum;
 typedef struct ObjEnumValue     ObjEnumValue;
 typedef struct ObjFunc          ObjFunc;
@@ -106,6 +111,7 @@ typedef struct ObjVar           ObjVar;
 
 // Compiler-wide important structs
 typedef struct SourceFile       SourceFile;
+typedef union  SicVersion       SicVersion;
 typedef struct CompilerContext  CompilerContext;
 
 struct Int128
@@ -141,7 +147,7 @@ struct MemArena
     uint8_t* base;
     size_t   capacity;
     size_t   allocated;
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     size_t saved;
 #endif
 };
@@ -262,13 +268,16 @@ struct Type
     {
         TypeArray      array;
         TypeBuiltin    builtin;
+        ObjEnum*       enum_;    
         FuncSignature* func_ptr;
         TypeOptional   optional;
         TypePointer    pointer;
         TypeSlice      slice;
+        ObjStruct*     struct_;
+        ObjTypedef*    typedef_;
         Expr*          type_of;
         ModulePath     unresolved;
-        Object*        user_def;
+        ObjType*       user_def;
     };
 };
 
@@ -276,6 +285,20 @@ struct TypeLoc
 {
     Type*     type;
     SourceLoc loc;
+};
+
+struct StringBuilder
+{
+    char*    data;
+    uint32_t size;
+    uint32_t capacity;
+};
+
+struct RawDataDA
+{
+    uint8_t* data;
+    uint32_t size;
+    uint32_t capacity;
 };
 
 struct StringDA
@@ -316,6 +339,13 @@ struct ObjImportDA
 struct ObjModuleDA
 {
     ObjModule** data;
+    uint32_t    capacity;
+    uint32_t    size;
+};
+
+struct ObjTypeDA
+{
+    ObjType**   data;
     uint32_t    capacity;
     uint32_t    size;
 };
@@ -457,6 +487,11 @@ struct StructInitList
     uint64_t         max;
 };
 
+struct ConstGlobalOff
+{
+    ObjVar*  global;
+    uint64_t offset;
+};
 
 struct ExprConstant
 {
@@ -464,10 +499,11 @@ struct ExprConstant
     bool          is_bit_int; // For integer. I put it here to conserve space. This is true for binary, octal, and hex literals
     union
     {
-        Int128        i; // Integer
-        double        f; // Float
-        bool          b; // Bool
-        ConstString   str; // String
+        Int128         i; // Integer
+        double         f; // Float
+        bool           b; // Bool
+        ConstString    str; // String
+        ConstGlobalOff global_offset; // Represents an offset from the address of a global
     };
 };
 
@@ -486,21 +522,21 @@ struct ExprCond
 
 struct ExprMAccess
 {
-    Expr* parent_expr;
+    Expr*    parent_expr;
     ObjVar*  member;
     uint32_t member_idx;
 };
 
 struct ExprMBuiltin
 {
-    Expr* parent_expr;
+    Expr*    parent_expr;
     Symbol   symbol;
     uint32_t member_idx;
 };
 
 struct ExprMethod
 {
-    Expr* parent_expr;
+    Expr*    parent_expr;
     ObjFunc* method;
 };
 
@@ -569,7 +605,7 @@ struct Expr
         StructInitList    struct_init;
         ASTSwitch         switch_;
         ExprDA            tuple;
-        Object*           type_ident;
+        ObjType*          type_ident;
         ExprUnary         unary;
         ExprUnresAccess   unresolved_access;
         ModulePath        unresolved_ident;
@@ -699,11 +735,17 @@ struct Object
     void*         llvm_ref;
 };
 
+struct ObjType
+{
+    Object    header;
+    Type*     type_ref;
+    ObjFuncDA methods;
+};
+
 struct ObjEnum
 {
-    Object         header;
+    ObjType         header;
     ObjEnumValueDA values;
-    Type*          type_ref;
     TypeLoc        underlying;
     uint32_t       min_idx;
     uint32_t       max_idx;
@@ -721,18 +763,18 @@ struct ObjEnumValue
 
 struct ObjFunc
 {
-    Object         header;
-    Symbol         link_name;
-    FuncSignature  signature;
-    SymbolLoc      method_parent;
-    Type*          func_type;
-    Stmt*       body;
-    ByteSize       swap_stmt_align;
-    ByteSize       swap_stmt_size;
-    bool           is_extern;
-    bool           used;
-    bool           is_method;
-    bool           is_static;
+    Object        header;
+    Symbol        link_name;
+    FuncSignature signature;
+    SymbolLoc     method_parent;
+    Type*         func_type;
+    Stmt*         body;
+    ByteSize      swap_stmt_align;
+    ByteSize      swap_stmt_size;
+    bool          is_extern;
+    bool          used;
+    bool          is_method;
+    bool          is_static;
 };
 
 struct ObjImport
@@ -754,19 +796,17 @@ struct ObjModule
     ObjFuncDA   funcs;
     ObjFuncDA   methods;
     ObjImportDA imports;
-    ObjectDA    types;
+    ObjTypeDA   types;
     ObjVarDA    vars;
-    Stmt*    ct_asserts;
+    Stmt*       ct_asserts;
     HashMap     module_ns; // Namespace of modules
     HashMap     symbol_ns; // Namespace of types, functions, variables
 };
 
 struct ObjStruct
 {
-    Object    header;
-    Type*     type_ref;
+    ObjType   header;
     ObjVarDA  members;
-    ObjFuncDA methods;
     union
     {
         struct
@@ -780,23 +820,22 @@ struct ObjStruct
 
 struct ObjTypedef
 {
-    Object  header;
-    Type*   type_ref;
+    ObjType header;
     TypeLoc alias;
 };
 
 struct ObjVar
 {
-    Object          header;
-    Symbol          link_name;
-    TypeLoc         type_loc;
-    Expr*        initial_val;
-    bool            uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
-    bool            written;
-    bool            read;
-    bool            is_extern;
-    VarKind         kind;
-    VarBindingKind  binding_kind;
+    Object         header;
+    Symbol         link_name;
+    TypeLoc        type_loc;
+    Expr*          initial_val;
+    bool           uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
+    bool           written;
+    bool           read;
+    bool           is_extern;
+    VarKind        kind;
+    VarBindingKind binding_kind;
 };
 
 struct SourceFile
@@ -813,8 +852,22 @@ struct SourceFile
     ObjModule*  module;
 };
 
+union SicVersion
+{
+    uint32_t full;
+    struct
+    {
+        uint8_t  major;
+        uint8_t  minor;
+        uint16_t patch;
+    };
+};
+
+static_assert(sizeof(SicVersion) == 4, "SicVersion is of wrong size");
+
 struct CompilerContext
 {
+    const SicVersion version;
     SourceFileDA  sources;
     StringDA      linker_inputs;
     StringDA      extra_linker_flags;
@@ -842,7 +895,7 @@ struct CompilerContext
     bool          emit_asm : 1;
     bool          werror : 1;
     bool          debug_mode : 1;
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     DebugOutput   debug_output;
 #endif
 };

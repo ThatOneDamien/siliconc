@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "sicompiler.h"
 #include "utils/da.h"
 #include "utils/file_utils.h"
 #include "utils/lib.h"
@@ -525,14 +525,15 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(false);
     ObjEnum* enum_ = CALLOC_STRUCT(ObjEnum);
-    enum_->header.sym = peek(l)->sym;
-    enum_->header.loc = peek(l)->loc;
-    enum_->header.visibility = vis;
-    enum_->header.kind = OBJ_ENUM;
-    enum_->header.attrs = attrs;
-    enum_->header.module = l->module;
+    Object* enum_obj = &enum_->header.header;
+    enum_obj->sym = peek(l)->sym;
+    enum_obj->loc = peek(l)->loc;
+    enum_obj->visibility = vis;
+    enum_obj->kind = OBJ_ENUM;
+    enum_obj->attrs = attrs;
+    enum_obj->module = l->module;
 
-    Type* type = enum_->type_ref = CALLOC_STRUCT(Type);
+    Type* type = enum_->header.type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ENUM_DISTINCT : TYPE_ENUM;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
@@ -540,7 +541,7 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     advance(l);
 
     da_append(&l->module->types, &enum_->header);
-    declare_obj(l, &enum_->header);
+    declare_obj(l, enum_obj);
 
     if(try_consume(l, TOKEN_COLON))
     {
@@ -553,8 +554,8 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     if(!consume(l, TOKEN_LBRACE)) goto BAD_PARSE;
     if(try_consume(l, TOKEN_RBRACE))
     {
-        sic_error_at(enum_->header.loc, "Enum declaration is empty.");
-        invalidate_obj(&enum_->header);
+        sic_error_at(enum_obj->loc, "Enum declaration is empty.");
+        invalidate_obj(enum_obj);
         return true;
     }
 
@@ -582,7 +583,7 @@ static bool parse_enum_decl(Lexer* l, Visibility vis, AttrDA attrs)
     da_compact(&enum_->values);
     return true;
 BAD_PARSE:
-    invalidate_obj(&enum_->header);
+    invalidate_obj(enum_obj);
     return false;
 }
 
@@ -590,18 +591,21 @@ static bool parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA att
 {
     advance(l);
     ObjStruct* struct_ = CALLOC_STRUCT(ObjStruct);
+    Object* struct_obj = &struct_->header.header;
     if(!anon)
     {
         EXPECT_IDENT_OR_RET(NULL);
-        struct_->header.sym = peek(l)->sym;
+        struct_obj->sym = peek(l)->sym;
         advance(l);
     }
-    struct_->header.loc = peek_prev(l)->loc;
-    struct_->header.visibility = vis;
-    struct_->header.kind = kind;
-    struct_->header.attrs = attrs;
-    struct_->header.module = l->module;
-    Type* type = struct_->type_ref = CALLOC_STRUCT(Type);
+
+    struct_obj->loc = peek_prev(l)->loc;
+    struct_obj->visibility = vis;
+    struct_obj->kind = kind;
+    struct_obj->attrs = attrs;
+    struct_obj->module = l->module;
+
+    Type* type = struct_->header.type_ref = CALLOC_STRUCT(Type);
     type->kind = kind == OBJ_STRUCT ? TYPE_STRUCT : TYPE_UNION;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
@@ -609,7 +613,7 @@ static bool parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA att
     type->canonical = type;
 
     da_append(&l->module->types, &struct_->header);
-    declare_obj(l, &struct_->header);
+    declare_obj(l, struct_obj);
 
     if(!consume(l, TOKEN_LBRACE))
         goto BAD_PARSE;
@@ -617,8 +621,8 @@ static bool parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA att
     {
         if(kind == OBJ_UNION)
         {
-            sic_error_at(struct_->header.loc, "Union declaration cannot be empty.");
-            invalidate_obj(&struct_->header);
+            sic_error_at(struct_obj->loc, "Union declaration cannot be empty.");
+            invalidate_obj(struct_obj);
         }
         return true;
     }
@@ -643,7 +647,7 @@ static bool parse_struct_decl(Lexer* l, ObjKind kind, Visibility vis, AttrDA att
     if(consume(l, TOKEN_RBRACE))
         return true;
 BAD_PARSE:
-    invalidate_obj(&struct_->header);
+    invalidate_obj(struct_obj);
     return false;
 }
 
@@ -654,14 +658,15 @@ static bool parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
     bool is_distinct = try_consume(l, TOKEN_DISTINCT);
     EXPECT_IDENT_OR_RET(false);
     ObjTypedef* typedef_ = CALLOC_STRUCT(ObjTypedef);
-    typedef_->header.sym = peek(l)->sym;
-    typedef_->header.loc = peek(l)->loc;
-    typedef_->header.visibility = vis;
-    typedef_->header.kind = OBJ_TYPEDEF;
-    typedef_->header.attrs = attrs;
-    typedef_->header.module = l->module;
+    Object* typedef_obj = &typedef_->header.header;
+    typedef_obj->sym = peek(l)->sym;
+    typedef_obj->loc = peek(l)->loc;
+    typedef_obj->visibility = vis;
+    typedef_obj->kind = OBJ_TYPEDEF;
+    typedef_obj->attrs = attrs;
+    typedef_obj->module = l->module;
 
-    Type* type = typedef_->type_ref = CALLOC_STRUCT(Type);
+    Type* type = typedef_->header.type_ref = CALLOC_STRUCT(Type);
     type->kind = is_distinct ? TYPE_ALIAS_DISTINCT : TYPE_ALIAS;
     type->status = STATUS_RESOLVING;
     type->visibility = vis;
@@ -669,12 +674,12 @@ static bool parse_typedef(Lexer* l, Visibility vis, AttrDA attrs)
     advance(l);
 
     da_append(&l->module->types, &typedef_->header);
-    declare_obj(l, &typedef_->header);
+    declare_obj(l, typedef_obj);
 
     if(!consume(l, TOKEN_ASSIGN) || !parse_type(l, &typedef_->alias) ||
        !consume(l, TOKEN_SEMI))
     {
-        invalidate_obj(&typedef_->header);
+        invalidate_obj(typedef_obj);
         return false;
     }
     return true;
@@ -940,12 +945,12 @@ static bool parse_switch(Lexer* l, ASTSwitch* switch_, UNUSED bool is_expr)
         {
         case TOKEN_CASE: 
             advance(l);
-            da_resize(cases, cases->size + 1);
+            da_grow(cases, 1);
             ASSIGN_EXPR_OR_RET(cases->data[cases->size - 1].expr, false);
             break;
         case TOKEN_DEFAULT:
             advance(l);
-            da_resize(cases, cases->size + 1);
+            da_grow(cases, 1);
             break;
         case TOKEN_EOF:
             eof_error(l, TOKEN_RBRACE);
@@ -1868,7 +1873,7 @@ static inline bool expect_ident(Lexer* l)
 
 static inline void advance(Lexer* l)
 {
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
     if(g_compiler.debug_output & DEBUG_LEXER)
         print_token(peek(l));
 #endif

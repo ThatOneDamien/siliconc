@@ -87,6 +87,13 @@
         (da)->size = (new_size);        \
     } while(0)
 
+#define da_grow(da, additional_count)               \
+    do                                              \
+    {                                               \
+        da_resize((da),                             \
+                  (da)->size + (additional_count)); \
+    } while(0)
+
 #define da_compact(da)                                                  \
     do                                                                  \
     {                                                                   \

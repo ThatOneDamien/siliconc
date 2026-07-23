@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 
-#define GLOBAL_ARENA_INIT_SIZE (64ul * 1024ul * 1024ul)
+#define GLOBAL_ARENA_INIT_SIZE (128ul * 1024ul * 1024ul)
 
 extern CompilerContext g_compiler;
 MemArena g_global_arena;
@@ -91,7 +91,7 @@ void* arena_realloc(MemArena* arena, void* ptr, size_t size, uint32_t align, siz
         if(prev_size >= size)
         {
             arena->allocated -= prev_size - size;
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
             arena->saved += prev_size - size;
 #endif
             return ptr;

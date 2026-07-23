@@ -1,4 +1,4 @@
-#include "core/internal.h"
+#include "core/sicompiler.h"
 #include "file_utils.h"
 
 #define HL_RED    "\033[31m"
@@ -7,7 +7,7 @@
 #define HL_BLUE   "\033[34m"
 #define HL_STOP   "\033[0m"
 
-#ifdef SI_DEBUG
+#ifdef SIC_DEBUG
 #define PRINT_DEPTH(depth) do { for(int i = 0; i < (int)(depth); ++i) printf("  "); } while(0)
 
 static const char* s_stmt_type_strs[];
@@ -476,29 +476,29 @@ static inline void scratch_append_debug_typename(const Type* type)
         return;
     case TYPE_ALIAS:
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         scratch_append(" a.k.a (");
         scratch_append_debug_typename(type->canonical);
         scratch_appendc(')');
         return;
     case TYPE_ALIAS_DISTINCT:
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        scratch_append(obj_as_typedef(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         return;
     case TYPE_ENUM:
     case TYPE_ENUM_DISTINCT:
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        scratch_append(obj_as_enum(type->user_def)->header.sym);
+        scratch_append(type->user_def->header.sym);
         return;
     case TYPE_STRUCT: {
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        Symbol s = type->user_def->header.sym;
         scratch_append(s ? s : "anonymous struct");
         return;
     }
     case TYPE_UNION: {
         if(type->qualifiers & TYPE_QUAL_CONST) scratch_append("const ");
-        Symbol s = obj_as_struct(type->user_def)->header.sym;
+        Symbol s = type->user_def->header.sym;
         scratch_append(s ? s : "anonymous union");
         return;
     }
@@ -603,4 +603,4 @@ static const char* s_vis_strs[] = {
     [VIS_PRIVATE]    = "Private",
 };
 
-#endif // SI_DEBUG
+#endif // SIC_DEBUG
