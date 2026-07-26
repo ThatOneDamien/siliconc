@@ -76,8 +76,8 @@ typedef struct ArrInitEntry     ArrInitEntry;
 typedef struct ArrInitList      ArrInitList;
 typedef struct StructInitEntry  StructInitEntry;
 typedef struct StructInitList   StructInitList;
-typedef struct ExprMAccess      ExprMemberAccess;
-typedef struct ExprMBuiltin     ExprMemberBuiltin;
+typedef struct ExprMAccess      ExprMAccess;
+typedef struct ExprMBuiltin     ExprMBuiltin;
 typedef struct ExprMethod       ExprMethod;
 typedef struct ExprPtrOff       ExprPtrOffset;
 typedef struct ExprRange        ExprRange;
@@ -261,6 +261,7 @@ struct Type
     Visibility     visibility;
     TypeQualifiers qualifiers;
     void*          llvm_ref;
+    void*          llvm_debug_ref;
     Type*          cache;
     Type*          canonical;
 
@@ -532,6 +533,7 @@ struct ExprMBuiltin
     Expr*    parent_expr;
     Symbol   symbol;
     uint32_t member_idx;
+    uint32_t member_offset;
 };
 
 struct ExprMethod
@@ -597,8 +599,8 @@ struct Expr
         ExprConstant      constant;
         ObjFunc*          function;
         ExprIf            if_;
-        ExprMemberAccess  member_access;
-        ExprMemberBuiltin member_builtin;
+        ExprMAccess       member_access;
+        ExprMBuiltin      member_builtin;
         ExprMethod        method_access;
         ExprPtrOffset     pointer_offset;
         ExprRange         range;
@@ -791,7 +793,7 @@ struct ObjModule
 {
     Object      header;
     bool        is_inline;
-    ObjModule*  parent;
+    FileId      parent_file;
     ObjModuleDA submodules;
     ObjFuncDA   funcs;
     ObjFuncDA   methods;
@@ -827,7 +829,11 @@ struct ObjTypedef
 struct ObjVar
 {
     Object         header;
-    Symbol         link_name;
+    union
+    {
+        Symbol     link_name;
+        uint32_t   member_offset;
+    };
     TypeLoc        type_loc;
     Expr*          initial_val;
     bool           uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
@@ -842,6 +848,7 @@ struct SourceFile
 {
     const char* abs_path;
     const char* rel_path;
+    const char* file_name;
     const char* src;
     struct
     {

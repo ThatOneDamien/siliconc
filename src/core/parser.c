@@ -407,7 +407,7 @@ static bool parse_module_decl(Lexer* l, Visibility vis)
     new_mod->header.kind = OBJ_MODULE;
     new_mod->header.visibility = vis;
     new_mod->header.module = l->module;
-    new_mod->parent = parent;
+    new_mod->parent_file = parent->parent_file;
 
     da_append(&parent->submodules, new_mod);
     hashmap_put(&parent->module_ns, mod_name, &new_mod->header);

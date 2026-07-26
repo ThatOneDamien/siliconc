@@ -21,7 +21,7 @@ static ObjModuleDA module_path_to_stack(ObjModule* module)
     while(module != NULL)
     {
         da_append(&path, module);
-        module = module->parent;
+        module = module->header.module;
     }
     return path;
 }
@@ -42,7 +42,7 @@ void scratch_append_module_path(const ObjModule* module)
     while(module != NULL && module != &g_compiler.top_module)
     {
         da_append(&path, module);
-        module = module->parent;
+        module = module->header.module;
     }
 
     if(path.size > 0)

@@ -68,6 +68,8 @@ FileId source_file_add_or_get(const char* path, ObjModule* module)
     file->abs_path = str_dup(abs_path);
     file->rel_path = is_abs ? file->abs_path : normalize_rel_path(file->abs_path);
     file->module   = module;
+    get_name_and_ext(file->abs_path, &file->file_name, NULL, NULL);
+    module->parent_file = id;
 
     int fd = open(abs_path, O_RDONLY);
 
@@ -139,10 +141,10 @@ FileId find_and_open_module_path(ObjModule* module)
     memcpy(path_one, base_path, len);
     ObjModuleDA stack = {0};
     ObjModule* temp = module;
-    while(temp->parent != NULL)
+    while(temp->header.module != NULL)
     {
         da_append(&stack, temp);
-        temp = temp->parent;
+        temp = temp->header.module;
     }
 
     for(uint32_t i = stack.size - 1; i < stack.size; --i)
@@ -287,7 +289,8 @@ static void get_name_and_ext(const char* path, const char** name,
     }
 
     *name = file_name;
-    *ext = file_ext;
+    if(ext != NULL)
+        *ext = file_ext;
     if(end != NULL)
         *end = file_end;
 }

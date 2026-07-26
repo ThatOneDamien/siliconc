@@ -18,7 +18,7 @@ static const char* s_vis_strs[];
 static void print_stmt_at_depth(const Stmt* stmt, int depth, const char* name, bool allow_unresolved);
 static void print_expr_at_depth(const Expr* expr, int depth, const char* name, bool allow_unresolved);
 static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolved);
-static void print_constant(const Expr* expr, bool allow_unresolved);
+static void print_constant(const Expr* expr, int depth, bool allow_unresolved);
 static inline const char* debug_type_to_str(Type* type, bool allow_unresolved);
 static inline void scratch_append_debug_typename(const Type* type);
 
@@ -230,7 +230,7 @@ static void print_expr_at_depth(const Expr* expr, int depth, const char* name, b
         print_expr_at_depth(expr->expr.cast.inner, depth + 1, NULL, allow_unresolved);
         return;
     case EXPR_CONSTANT:
-        print_constant(expr, allow_unresolved);
+        print_constant(expr, depth, allow_unresolved);
         return;
     case EXPR_FUNC_CALL:
         printf("Call ] (Type: %s)\n", debug_type_to_str(expr->type, allow_unresolved));
@@ -355,7 +355,7 @@ static void print_declaration(const ObjVar* decl, int depth, bool allow_unresolv
     }
 }
 
-static void print_constant(const Expr* expr, bool allow_unresolved)
+static void print_constant(const Expr* expr, int depth, bool allow_unresolved)
 {
     const ExprConstant* constant = &expr->expr.constant;
     const char* type_str = debug_type_to_str(expr->type, allow_unresolved);
@@ -386,6 +386,13 @@ static void print_constant(const Expr* expr, bool allow_unresolved)
         return;
     case CONSTANT_NULL:
         printf("Constant null ] (Type: %s)\n", type_str);
+        return;
+    case CONSTANT_GLOBAL_OFFSET:
+        printf("Constant Global Offset ] (Type: %s)\n", type_str);
+        PRINT_DEPTH(depth + 1);
+        printf("global: %s\n", constant->global_offset.global->header.sym);
+        PRINT_DEPTH(depth + 1);
+        printf("offset: %lu\n", constant->global_offset.offset);
         return;
     }
     SIC_UNREACHABLE();

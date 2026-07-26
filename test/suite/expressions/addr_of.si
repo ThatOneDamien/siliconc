@@ -8,7 +8,7 @@ fn test() void
 {
     var _a: int = 0;
     const _b: *int = &_a;
-    const _c: *int = &(0); // #error: Expression is not an lvalue 
+    const _c: *int = &(0); // #error: Expression does not have storage 
     
     var _d: TestStruct;
     const _e: *int = &_d.a;

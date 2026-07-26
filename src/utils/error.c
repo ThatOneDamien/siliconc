@@ -22,7 +22,7 @@ static const char* const DIAG_NAME[] = {
     [DIAG_FATAL]   = "Fatal Error",
 };
 
-LineCol loc_get_col_line(const SourceLoc loc)
+LineCol loc_get_line_col(const SourceLoc loc)
 {
     SourceFile* file = file_from_id(loc.file);
     uint32_t lo = 0;
@@ -78,7 +78,7 @@ void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message,
     if(g_compiler.werror && diag == DIAG_WARNING)
         diag = DIAG_ERROR;
     SourceFile* file = file_from_id(loc.file);
-    LineCol source_lc = loc_get_col_line(loc);
+    LineCol source_lc = loc_get_line_col(loc);
     const char* const color = color_str(diag);
     const char* const reset = reset_color_str();
 
@@ -118,7 +118,7 @@ void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under
     SourceFile* file = file_from_id(loc.file);
     loc.start += loc.len - 1;
     loc.len = 1;
-    LineCol source_lc = loc_get_col_line(loc);
+    LineCol source_lc = loc_get_line_col(loc);
     const char* const reset = reset_color_str();
 
     fprintf(stderr, "%s:%u:%u: %s%s:%s ",
@@ -155,7 +155,7 @@ void sic_error_upto(SourceLoc loc, const char* message)
 {
     DBG_ASSERT(message != NULL);
     SourceFile* file = file_from_id(loc.file);
-    LineCol source_lc = loc_get_col_line(loc);
+    LineCol source_lc = loc_get_line_col(loc);
     const char* const color = color_str(DIAG_ERROR);
     const char* const reset = reset_color_str();
 

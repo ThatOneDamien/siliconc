@@ -616,12 +616,14 @@ static bool analyze_struct(ObjStruct* struct_)
 
         if(packed)
         {
+            member->member_offset = struct_->size;
             struct_->size += size;
         }
         else
         {
             DBG_ASSERT(is_pow_of_2(align));
-            struct_->size = ALIGN_UP(struct_->size, align) + size;
+            member->member_offset = ALIGN_UP(struct_->size, align);
+            struct_->size = member->member_offset + size;
             struct_->align = MAX(struct_->align, align);
         }
     }
@@ -694,6 +696,7 @@ static bool analyze_union(ObjStruct* union_)
             largest_size = next_size;
             union_->largest_type = member->type_loc.type;
         }
+        member->member_offset = 0;
     }
     union_obj->status = STATUS_RESOLVED;
     union_->header.type_ref->status = STATUS_RESOLVED;

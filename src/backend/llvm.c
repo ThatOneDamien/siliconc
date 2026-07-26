@@ -4,6 +4,7 @@
 #include <llvm-c/Core.h>
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
+#include <llvm-c/DebugInfo.h>
 
 typedef struct CodegenContext CodegenContext;
 typedef struct GenValue       GenValue;
@@ -32,6 +33,10 @@ struct CodegenContext
     LLVMTypeRef          slice_type;
 
     ResultStmtDst        cur_result_stmt_dst;
+
+    LLVMDIBuilderRef     di_builder;
+    LLVMMetadataRef      di_cur_file;
+    LLVMMetadataRef      di_cur_scope;
 };
 
 typedef enum
@@ -119,6 +124,7 @@ static void              append_old_basic_block(CodegenContext* c, LLVMBasicBloc
 static void              use_basic_block(CodegenContext* c, LLVMBasicBlockRef block);
 static LLVMValueRef      get_llvm_const_int(CodegenContext* c, Int128 val, Type* type);
 static LLVMTypeRef       get_llvm_type(CodegenContext* c, Type* type);
+static LLVMMetadataRef   get_llvm_debug_info_type(CodegenContext* c, Type* type);
 static LLVMTypeRef       get_llvm_func_type(CodegenContext* c, Type* type);
 static LLVMValueRef      get_var_llvm_ref(CodegenContext* c, ObjVar* var);
 static LLVMValueRef      get_func_llvm_ref(CodegenContext* c, ObjFunc* func);
@@ -149,6 +155,7 @@ void llvm_initialize()
     s_context = LLVMContextCreate();
     LLVMContextSetDiagnosticHandler(s_context, llvm_diag_handler, NULL);
     s_initialized = true;
+    LLVMEnablePrettyStackTrace();
 }
 
 void llvm_codegen()
@@ -183,6 +190,11 @@ void llvm_codegen()
     LLVMSetModuleDataLayout(c.llvm_module, LLVMCreateTargetDataLayout(c.target_machine));
     LLVMSetTarget(c.llvm_module, target_triple);
 
+    if(g_compiler.debug_mode)
+    {
+        c.di_builder = LLVMCreateDIBuilder(c.llvm_module);
+    }
+
     for(uint32_t i = 0; i < g_compiler.sources.size; ++i)
         gen_source_file(&c, g_compiler.sources.data + i);
 
@@ -190,6 +202,8 @@ void llvm_codegen()
         emit_main(&c);
     
 
+    LLVMDIBuilderFinalize(c.di_builder);
+    LLVMDisposeDIBuilder(c.di_builder);
     LLVMDisposeBuilder(c.builder);
 
     scratch_clear();
@@ -242,12 +256,42 @@ END:
 // go along with the build system which will take a WHILE to make.
 static void gen_source_file(CodegenContext* c, SourceFile* file)
 {
+    if(g_compiler.debug_mode)
+    {
+        c->di_cur_file = LLVMDIBuilderCreateFile(c->di_builder, 
+                                                 file->file_name, strlen(file->file_name), 
+                                                 file->abs_path, (uintptr_t)file->file_name - (uintptr_t)file->abs_path);
+    }
     gen_module(c, file->module);
 
 }
 
 static void gen_module(CodegenContext* c, ObjModule* module)
 {
+    LLVMMetadataRef prev = c->di_cur_scope;
+    if(g_compiler.debug_mode)
+    {
+        if(module != &g_compiler.top_module)
+            c->di_cur_scope = LLVMDIBuilderCreateNameSpace(c->di_builder, prev, module->header.sym, strlen(module->header.sym), true);
+        else
+        {
+            c->di_cur_scope = LLVMDIBuilderCreateCompileUnit(c->di_builder, 
+                                                             LLVMDWARFSourceLanguageC, 
+                                                             c->di_cur_file, 
+                                                             "sic", 3, 
+                                                             false, 
+                                                             "", 0, 
+                                                             0,
+                                                             "", 0,
+                                                             LLVMDWARFEmissionFull,
+                                                             0,
+                                                             false,
+                                                             false,
+                                                             "", 0,
+                                                             "", 0);
+        }
+    }
+
     for(uint32_t i = 0; i < module->methods.size; ++i)
         get_func_llvm_ref(c, module->methods.data[i]);
 
@@ -275,6 +319,7 @@ static void gen_module(CodegenContext* c, ObjModule* module)
         if(mod->is_inline)
             gen_module(c, mod);
     }
+    c->di_cur_scope = prev;
 }
 
 static void emit_global_var(CodegenContext* c, ObjVar* global)
@@ -299,8 +344,21 @@ static void emit_global_var(CodegenContext* c, ObjVar* global)
 static void emit_function_body(CodegenContext* c, ObjFunc* func)
 {
     DBG_ASSERT(func->header.llvm_ref != NULL);
-    if(func->body == NULL)
-        return;
+    LLVMMetadataRef prev = c->di_cur_scope;
+    if(g_compiler.debug_mode)
+    {
+        LineCol lc = loc_get_line_col(func->header.loc);
+        c->di_cur_scope = LLVMDIBuilderCreateFunction(c->di_builder, 
+                                                      prev, 
+                                                      func->header.sym, strlen(func->header.sym), 
+                                                      func->link_name, strlen(func->link_name),
+                                                      c->di_cur_file,
+                                                      lc.line, get_llvm_debug_info_type(c, func->func_type), false, !func->is_extern, lc.line, 0, false);
+        LLVMSetSubprogram(func->header.llvm_ref, c->di_cur_scope);
+    }
+
+    if(func->body == NULL) goto END;
+
     c->cur_func = func;
     append_new_basic_block(c, "");
     c->alloca_ref = LLVMBuildAlloca(c->builder, LLVMInt32TypeInContext(s_context), ".alloca_ptr");
@@ -345,6 +403,11 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
         putc('\n', stderr);
         sic_fatal_error("Failed.");
     }
+
+END:
+    if(g_compiler.debug_mode)
+        LLVMDIBuilderFinalizeSubprogram(c->di_builder, c->di_cur_scope);
+    c->di_cur_scope = prev;
 }
 
 static void emit_main(CodegenContext* c)
@@ -769,6 +832,12 @@ static void emit_while(CodegenContext* c, Stmt* stmt)
 static GenValue emit_expr(CodegenContext* c, Expr* expr)
 {
     DBG_ASSERT(expr->type != NULL);
+    if(g_compiler.debug_mode)
+    {
+        LineCol lc = loc_get_line_col(expr->loc);
+        LLVMMetadataRef loc = LLVMDIBuilderCreateDebugLocation(s_context, lc.line, lc.col, c->di_cur_scope, NULL);
+        LLVMSetCurrentDebugLocation2(c->builder, loc);
+    }
     GenValue result = {0};
     result.type = type_reduce(expr->type);
     result.alignment = type_alignment(result.type);
@@ -1261,12 +1330,18 @@ static void emit_constant(CodegenContext* c, Expr* expr, GenValue* result)
         return;
     }
     case CONSTANT_GLOBAL_OFFSET: {
+        result->kind = GEN_VAL_ADDRESS;
         ConstGlobalOff* go = &expr->expr.constant.global_offset;
-        DBG_ASSERT(type_is_pointer(result->type));
-        LLVMValueRef index = LLVMConstInt(LLVMInt64TypeInContext(s_context), go->offset, false);
-        result->value = LLVMConstGEP2(LLVMInt8TypeInContext(s_context), go->global->header.llvm_ref, &index, 1);
-        SIC_TODO();
-        // Check this
+        if(go->offset > 0)
+        {
+            LLVMValueRef index = LLVMConstInt(LLVMInt64TypeInContext(s_context), go->offset, false);
+            result->value = LLVMConstGEP2(LLVMInt8TypeInContext(s_context), go->global->header.llvm_ref, &index, 1);
+        }
+        else
+        {
+            result->value = go->global->header.llvm_ref;
+        }
+        return;
     }
     }
     SIC_UNREACHABLE();
@@ -1996,6 +2071,16 @@ static LLVMTypeRef get_llvm_type(CodegenContext* c, Type* type)
     SIC_UNREACHABLE();
 }
 
+static LLVMMetadataRef get_llvm_debug_info_type(CodegenContext* c, Type* type)
+{
+    (void)c;
+    switch(type->kind)
+    {
+    default:
+        SIC_TODO();
+    }
+}
+
 static LLVMTypeRef get_llvm_func_type(CodegenContext* c, Type* type)
 {
     type = type_reduce(type);
@@ -2047,6 +2132,7 @@ static LLVMValueRef get_assert_ref(CodegenContext* c)
     LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidTypeInContext(s_context), param_types, 2, false);
     return c->assert_func_ref = LLVMAddFunction(c->llvm_module, "_SIBuiltinF6assert", func_type);
 }
+
 
 static LLVMTargetRef get_llvm_target(const char* triple)
 {

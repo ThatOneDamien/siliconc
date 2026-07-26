@@ -616,8 +616,8 @@ static void analyze_swap(Stmt* stmt)
 {
     Expr* left = stmt->stmt.swap.left;
     Expr* right = stmt->stmt.swap.right;
-    analyze_lvalue(left, true);
-    analyze_lvalue(right, true);
+    analyze_lvalue_assign(left);
+    analyze_lvalue_assign(right);
     if(!analyze_rvalue_args(left, NULL, false) || !analyze_rvalue_args(right, NULL, false))
         return;
 

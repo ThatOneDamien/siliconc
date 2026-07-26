@@ -132,7 +132,7 @@ void   global_arenas_init(void);
 extern int g_error_cnt;
 extern int g_warning_cnt;
 
-LineCol loc_get_col_line(const SourceLoc loc);
+LineCol loc_get_line_col(const SourceLoc loc);
 void sic_diagnosticv(DiagnosticType diag, const char* message, va_list va);
 void sic_diagnostic_atv(DiagnosticType diag, SourceLoc loc, const char* message, va_list va);
 void sic_diagnostic_afterv(DiagnosticType diag, SourceLoc loc, const char* under, const char* message, va_list va);

@@ -290,45 +290,68 @@ bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
                 {
                     convert_to_const_global_offset_from_other(expr, array_expr, index_expr->expr.constant.i.lo * type_size(expr->type));
                 }
-                break;
+                return true;
             case TYPE_POINTER_MULTI_STATIC:
             case TYPE_POINTER_MULTI_UNKNOWN:
                 if(array_expr->expr.constant.kind == CONSTANT_POINTER)
                 {
                     convert_to_const_pointer(expr, expr->type, i128_mult64(array_expr->expr.constant.i, index_expr->expr.constant.i.lo * type_size(expr->type)));
                 }
-                break;
+                return true;
             case TYPE_SLICE:
                 SIC_TODO();
             default:
                 SIC_UNREACHABLE();
             }
         }
-        break;
+        return true;
     }
     case EXPR_FUNCTION:
-    case EXPR_METHOD:
         return true;
-    case EXPR_MEMBER_ACCESS:
-        if(!analyze_lvalue_addr_dispatch(expr->expr.member_access.parent_expr, is_const_ref)) return false;
-        expr->is_const_eval = expr->expr.member_access.parent_expr->is_const_eval;
-        break;
+    case EXPR_METHOD:
+        sic_error_at(expr->loc, 
+                     "Cannot get the address of a method called from an instance. "
+                     "Please reference it statically e.g. (&%s.%s).", 
+                     type_to_string(expr->expr.method_access.parent_expr->type->canonical), 
+                     expr->expr.method_access.method->header.sym);
+        return false;
+    case EXPR_MEMBER_ACCESS: {
+        Expr* parent = expr->expr.member_access.parent_expr;
+        if(!analyze_lvalue_addr_dispatch(parent, is_const_ref)) return false;
+        if(parent->kind == EXPR_CONSTANT)
+        {
+            uint32_t offset = expr->expr.member_access.member->member_offset;
+            if(parent->expr.constant.kind == CONSTANT_POINTER)
+            {
+                convert_to_const_pointer(expr, expr->type, i128_add64(parent->expr.constant.i, offset));
+            }
+            else if(parent->expr.constant.kind == CONSTANT_GLOBAL_OFFSET)
+            {
+                convert_to_const_global_offset_from_other(expr, parent, offset);
+            }
+        }
+        return true;
+    }
     case EXPR_MEMBER_BUILTIN:
         if(!analyze_lvalue_addr_dispatch(expr->expr.member_builtin.parent_expr, is_const_ref)) return false;
         expr->is_const_eval = expr->expr.member_builtin.parent_expr->is_const_eval;
-        break;
+        return true;
     case EXPR_TYPE_IDENT:
         sic_error_at(expr->loc, "Type identifier not expected nor allowed here.");
         return false;
-    case EXPR_UNARY:
+    case EXPR_UNARY: {
+        Expr* inner = expr->expr.unary.inner;
         if(expr->expr.unary.kind != UNARY_DEREF) goto ERR;
-        break;
+        if(inner->kind == EXPR_CONSTANT)
+            expr_copy_keep_type(expr, inner);
+        return true;
+    }
     case EXPR_UNWRAP: {
         Expr* inner = expr->expr.unwrap;
         if(!analyze_lvalue_addr_dispatch(inner, is_const_ref)) goto ERR;
         if(inner->kind == EXPR_CONSTANT)
             expr_copy_keep_type(expr, inner); // Unwrapping should always be the same address as the inner
-        break;
+        return true;
     }
     case EXPR_VAR: {
         ObjVar* var = expr->expr.var;
@@ -343,7 +366,7 @@ bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
         }
         var->written = !is_const_ref;
         var->read = true;
-        break;
+        return true;
     }
     default:
         goto ERR;
@@ -358,7 +381,6 @@ bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
         SIC_UNREACHABLE();
     }
 
-    return true;
 ERR:
     sic_error_at(expr->loc, "Expression does not have storage, it is not an l-value.");
     return false;
@@ -2242,17 +2264,27 @@ static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs)
 
 static bool analyze_addr_of(Expr* expr, Expr* inner, Type* expected_type)
 {
-    if(!analyze_lvalue_addr(inner, expected_type)) return false;
-    if(inner->kind == EXPR_CONSTANT)
+    bool is_const_ref;
+    if(expected_type != NULL)
     {
-        expr_copy_keep_type(expr, inner);
-        return true;
+        Type* ect = expected_type->canonical;
+        is_const_ref = ect->kind == TYPE_FUNC_PTR || (type_is_pointer(ect) && (ect->pointer.base->qualifiers & TYPE_QUAL_CONST));
     }
+    else
+        is_const_ref = false;
+
+    if(!analyze_lvalue_addr(inner, is_const_ref)) return false;
 
     Type* inner_type = inner->type;
     if(inner->kind == EXPR_FUNCTION)
     {
         expr->type = inner_type;
+        expr->is_const_eval = true;
+        return true;
+    }
+    if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_DEREF)
+    {
+        expr_copy(expr, inner->expr.unary.inner);
         return true;
     }
 
@@ -2266,6 +2298,11 @@ static bool analyze_addr_of(Expr* expr, Expr* inner, Type* expected_type)
     else
     {
         expr->type = type_pointer_to_single(inner->type);
+    }
+
+    if(inner->kind == EXPR_CONSTANT)
+    {
+        expr_copy_keep_type(expr, inner);
     }
     return true;
 }
@@ -2316,7 +2353,14 @@ static bool analyze_deref(Expr* expr, Expr* inner)
     }
 
     expr->type = ctype->pointer.base;
-    return resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s.");
+    if(!resolve_type(&expr->type, TYPE_RES_NORMAL, expr->loc, "Cannot dereference pointer to type %s."))
+        return false;
+
+    if(inner->kind == EXPR_UNARY && inner->expr.unary.kind == UNARY_ADDR_OF)
+    {
+        expr_copy(expr, inner->expr.unary.inner);
+    }
+    return true;
 }
 
 static bool analyze_incdec(Expr* expr, Expr* inner)
