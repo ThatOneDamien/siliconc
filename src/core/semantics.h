@@ -77,10 +77,19 @@ static inline bool analyze_lvalue_assign(Expr* expr)
     return analyze_expr(expr) && analyze_lvalue_assign_dispatch(expr);
 }
 
-static inline bool analyze_lvalue_addr(Expr* expr, bool is_const_ref)
+static inline bool analyze_lvalue_addr(Expr* expr, Type* expected_type)
 {
     DBG_ASSERT(expr != NULL);
-    return analyze_expr(expr) && analyze_lvalue_addr_dispatch(expr, is_const_ref);
+    if(!analyze_expr(expr)) return false;
+    bool is_const_ref;
+    if(expected_type != NULL)
+    {
+        Type* ect = expected_type->canonical;
+        is_const_ref = ect->kind == TYPE_FUNC_PTR || (type_is_pointer(ect) && (ect->pointer.base->qualifiers & TYPE_QUAL_CONST));
+    }
+    else
+        is_const_ref = false;
+    return analyze_lvalue_addr_dispatch(expr, is_const_ref);
 }
 
 

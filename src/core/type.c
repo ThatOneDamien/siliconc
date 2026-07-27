@@ -186,7 +186,7 @@ void builtin_type_init()
 
     s_range_obj.members.data[0] = &s_range_start_member;
     s_range_obj.members.data[1] = &s_range_end_member;
-    s_range_obj.size = type_size(g_type_usize) * 2;
+    s_range_obj.size = type_byte_size(g_type_usize) * 2;
     s_range_obj.align = type_alignment(g_type_usize);
 
     TokenKind temp = TOKEN_IDENT;
@@ -425,7 +425,7 @@ bool type_equal(const Type* t1, const Type* t2)
     SIC_UNREACHABLE();
 }
 
-ByteSize type_size(const Type* ty)
+ByteSize type_byte_size(const Type* ty)
 {
     // TODO: Make this simpler, or better yet, cache the size/alignment of types somewhere else.
     DBG_ASSERT(ty != NULL);
@@ -444,14 +444,14 @@ RETRY:
     case TYPE_FUNC_PTR:
         return g_compiler.target.ptr_size;
     case TYPE_STATIC_ARRAY:
-        return type_size(ty->array.elem_type) * ty->array.static_len;
+        return type_byte_size(ty->array.elem_type) * ty->array.static_len;
     case TYPE_SLICE:
-        return ALIGN_UP(g_compiler.target.ptr_size + type_size(g_type_usize), type_alignment(ty));
+        return ALIGN_UP(g_compiler.target.ptr_size + type_byte_size(g_type_usize), type_alignment(ty));
     case TYPE_OPTIONAL: {
         Type* elem_ty = ty->optional.base->canonical;
         return type_is_pointer(elem_ty) ? 
                     g_compiler.target.ptr_size : 
-                    ALIGN_UP(type_size(elem_ty) + type_size(g_type_bool), type_alignment(elem_ty));
+                    ALIGN_UP(type_byte_size(elem_ty) + type_byte_size(g_type_bool), type_alignment(elem_ty));
     }
     case TYPE_ALIAS:
     case TYPE_ENUM:

@@ -288,14 +288,14 @@ bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
             case TYPE_STATIC_ARRAY:
                 if(array_expr->expr.constant.kind == CONSTANT_GLOBAL_OFFSET)
                 {
-                    convert_to_const_global_offset_from_other(expr, array_expr, index_expr->expr.constant.i.lo * type_size(expr->type));
+                    convert_to_const_global_offset_from_other(expr, array_expr, index_expr->expr.constant.i.lo * type_byte_size(expr->type));
                 }
                 return true;
             case TYPE_POINTER_MULTI_STATIC:
             case TYPE_POINTER_MULTI_UNKNOWN:
                 if(array_expr->expr.constant.kind == CONSTANT_POINTER)
                 {
-                    convert_to_const_pointer(expr, expr->type, i128_mult64(array_expr->expr.constant.i, index_expr->expr.constant.i.lo * type_size(expr->type)));
+                    convert_to_const_pointer(expr, expr->type, i128_mult64(array_expr->expr.constant.i, index_expr->expr.constant.i.lo * type_byte_size(expr->type)));
                 }
                 return true;
             case TYPE_SLICE:
@@ -366,6 +366,7 @@ bool analyze_lvalue_addr_dispatch(Expr* expr, bool is_const_ref)
         }
         var->written = !is_const_ref;
         var->read = true;
+        var->addressed = true;
         return true;
     }
     default:
@@ -450,7 +451,11 @@ static bool analyze_array_access(Expr* expr, Type* expected_type)
         elem_type = type_apply_qualifiers(arr_type->array.elem_type, arr_expr->type->qualifiers);
         bounds_check = arr_type->array.static_len;
         has_bounds_check = true;
-        if(index_is_range && !analyze_lvalue_addr(arr_expr, expected_type)) return false;
+        if(index_is_range)
+        {
+            if(!analyze_lvalue_addr(arr_expr, expected_type)) return false;
+
+        }
         break;
     case TYPE_SLICE:
         elem_type = arr_type->slice.base;
@@ -1261,7 +1266,7 @@ static bool analyze_ct_sizeof(Expr* expr)
     if(!resolve_type(&expr->expr.ct_typearg.type, TYPE_RES_NORMAL, expr->expr.ct_typearg.loc, "Cannot get size of type %s."))
         return false;
     
-    uint32_t size = type_size(expr->expr.ct_typearg.type);
+    uint32_t size = type_byte_size(expr->expr.ct_typearg.type);
     convert_to_const_int(expr, g_type_pos_int_lit, i128_from_u64(size));
     return true;
 }
@@ -1387,7 +1392,7 @@ static bool analyze_pointer_arith(Expr* expr, Expr* pointer, Expr* offset, Binar
     expr->type = pointer->type;
     if(pointer->kind == EXPR_CONSTANT && offset->kind == EXPR_CONSTANT)
     {
-        Int128 actual_val_to_add = i128_mult64(offset->expr.constant.i, type_size(inner_type));
+        Int128 actual_val_to_add = i128_mult64(offset->expr.constant.i, type_byte_size(inner_type));
         DBG_ASSERT(expr->kind == EXPR_BINARY);
         if(kind == BINARY_SUB)
             actual_val_to_add = i128_neg(actual_val_to_add);
@@ -2264,16 +2269,7 @@ static bool analyze_op_assign(Expr* expr, Expr* lhs, Expr* rhs)
 
 static bool analyze_addr_of(Expr* expr, Expr* inner, Type* expected_type)
 {
-    bool is_const_ref;
-    if(expected_type != NULL)
-    {
-        Type* ect = expected_type->canonical;
-        is_const_ref = ect->kind == TYPE_FUNC_PTR || (type_is_pointer(ect) && (ect->pointer.base->qualifiers & TYPE_QUAL_CONST));
-    }
-    else
-        is_const_ref = false;
-
-    if(!analyze_lvalue_addr(inner, is_const_ref)) return false;
+    if(!analyze_lvalue_addr(inner, expected_type)) return false;
 
     Type* inner_type = inner->type;
     if(inner->kind == EXPR_FUNCTION)

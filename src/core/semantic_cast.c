@@ -234,7 +234,7 @@ static bool rule_int_to_int(CastParams* const params)
         CAST_ERROR("Casting between signed and unsigned integers requires explicit cast.");
     }
 
-    if(type_size(params->fromc) < type_size(params->toc)) return true;
+    if(type_byte_size(params->fromc) < type_byte_size(params->toc)) return true;
 
     CAST_ERROR("Narrowing from '%s' to '%s' requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
@@ -242,7 +242,7 @@ static bool rule_int_to_int(CastParams* const params)
 
 static bool rule_size_change(CastParams* const params)
 {
-    if(params->explicit || type_size(params->fromc) < type_size(params->toc))
+    if(params->explicit || type_byte_size(params->fromc) < type_byte_size(params->toc))
         return true;
 
     CAST_ERROR("Narrowing from '%s' to '%s' requires explicit cast.",
@@ -315,7 +315,7 @@ static bool rule_arr_to_arr(CastParams* const params)
 
     Type* const from_base = params->fromc->slice.base;
     Type* const to_base = params->toc->slice.base;
-    if(type_size(from_base) != type_size(to_base))
+    if(type_byte_size(from_base) != type_byte_size(to_base))
     {
         CAST_ERROR("Cannot cast from '%s' to '%s', the base types have different sizes.",
                    type_to_string(params->from), type_to_string(params->to));
@@ -574,7 +574,7 @@ static void cast_float_to_float(CastParams* const params)
 
     Expr* const cast = get_cast_or_create(params);
     cast->is_const_eval = params->inner->is_const_eval;
-    cast->expr.cast.kind = type_size(params->fromc) < type_size(params->toc) ? CAST_FLOAT_WIDEN : CAST_FLOAT_TRUNCATE;
+    cast->expr.cast.kind = type_byte_size(params->fromc) < type_byte_size(params->toc) ? CAST_FLOAT_WIDEN : CAST_FLOAT_TRUNCATE;
 }
 
 static void cast_float_to_bool(CastParams* const params)

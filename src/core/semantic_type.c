@@ -610,7 +610,7 @@ static bool analyze_struct(ObjStruct* struct_)
         }
         else
         {
-            size = type_size(type);
+            size = type_byte_size(type);
             align = type_alignment(type);
         }
 
@@ -690,7 +690,7 @@ static bool analyze_union(ObjStruct* union_)
             invalidate_obj(union_obj);
             return false;
         }
-        uint32_t next_size = type_size(member->type_loc.type);
+        uint32_t next_size = type_byte_size(member->type_loc.type);
         if(largest_size < next_size)
         {
             largest_size = next_size;

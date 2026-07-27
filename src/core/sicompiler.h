@@ -133,7 +133,7 @@ Type*       type_optional_of(Type* elem_ty);
 Type*       type_reduce(Type* t);
 Type*       type_remove_aliases(Type* t);
 bool        type_equal(const Type* t1, const Type* t2);
-ByteSize    type_size(const Type* ty);
+ByteSize    type_byte_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
 const char* type_to_string(const Type* type);
 bool type_kind_is_signed(TypeKind kind);
@@ -209,7 +209,7 @@ static inline bool type_is_pointer(const Type* ty) { return type_kind_is_pointer
 static inline bool type_is_aggregate(const Type* ty) { return type_kind_is_aggregate(ty->kind); }
 static inline bool type_is_trivially_copyable(const Type* ty)
 {
-    return type_size(ty) <= 16;
+    return type_byte_size(ty) <= 16;
 }
 
 static inline Type* type_to_unsigned(Type* ty)

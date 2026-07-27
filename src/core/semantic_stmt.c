@@ -631,7 +631,7 @@ static void analyze_swap(Stmt* stmt)
     if(!type_is_trivially_copyable(left->type))
     {
         ObjFunc* const func = g_sema.cur_func;
-        func->swap_stmt_size = MAX(func->swap_stmt_size, type_size(left->type));
+        func->swap_stmt_size = MAX(func->swap_stmt_size, type_byte_size(left->type));
         func->swap_stmt_align = MAX(func->swap_stmt_align, type_alignment(left->type));
     }
 }

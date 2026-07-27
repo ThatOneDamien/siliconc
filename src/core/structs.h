@@ -722,6 +722,7 @@ struct FuncSignature
     TypeLoc  ret_type;
     ObjVarDA params;
     void*    llvm_ref;
+    void*    llvm_debug_ref;
     bool     is_var_arg;
 };
 
@@ -839,6 +840,7 @@ struct ObjVar
     bool           uninitialized; // If this is true we have something like int a = void; By default, variables are initialized
     bool           written;
     bool           read;
+    bool           addressed;
     bool           is_extern;
     VarKind        kind;
     VarBindingKind binding_kind;
