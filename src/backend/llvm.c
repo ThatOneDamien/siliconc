@@ -1,4 +1,5 @@
 #include "codegen-internal.h"
+#include "llvm.h"
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/Core.h>
@@ -383,8 +384,16 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
         ObjVar* param = params.data[i];
         if(param->header.sym)
         {
-            emit_var_alloca(c, param);
-            emit_llvm_store(c, LLVMGetParam(func->header.llvm_ref, i), param->header.llvm_ref, type_alignment(param->type_loc.type));
+            LLVMValueRef value = LLVMGetParam(func->header.llvm_ref, i);
+            if(param->addressed)
+            {
+                emit_var_alloca(c, param);
+                emit_llvm_store(c, value, param->header.llvm_ref, type_alignment(param->type_loc.type));
+            }
+            else
+            {
+                param->header.llvm_ref = value;
+            }
         }
     }
 
@@ -408,7 +417,7 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
     {
         LLVMDumpModule(c->llvm_module);
         putc('\n', stderr);
-        sic_fatal_error("Failed.");
+        sic_fatal_error("Failed to verify LLVM function.");
     }
 
 END:
@@ -580,22 +589,32 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
 {
     if(decl->binding_kind == VAR_BINDING_CT_CONST) return;
     DBG_ASSERT(decl->kind == VAR_LOCAL);
-    emit_var_alloca(c, decl);
-    GenValue var;
-    var.type = type_reduce(decl->type_loc.type);
-    var.value = decl->header.llvm_ref;
-    var.kind = GEN_VAL_ADDRESS;
-    var.alignment = type_alignment(var.type);
-    if(!decl->uninitialized)
+    if(decl->binding_kind == VAR_BINDING_RT_CONST && !decl->addressed)
     {
-        GenValue temp;
-        if(decl->initial_val)
+        // FIXME: I believe this actually causes issues with cases where
+        // non-const arrays are not duplicated but instead simply referenced.
+        GenValue rhs = emit_rvalue(c, decl->initial_val);
+        decl->header.llvm_ref = rhs.value;
+    }
+    else
+    {
+        emit_var_alloca(c, decl);
+        if(decl->uninitialized)
         {
-            emit_assign(c, &var, decl->initial_val, &temp);
-        }
-        else
-        {
-            store_default(c, &var);
+            GenValue temp;
+            GenValue var;
+            var.type = type_reduce(decl->type_loc.type);
+            var.value = decl->header.llvm_ref;
+            var.kind = GEN_VAL_ADDRESS;
+            var.alignment = type_alignment(var.type);
+            if(decl->initial_val)
+            {
+                emit_assign(c, &var, decl->initial_val, &temp);
+            }
+            else
+            {
+                store_default(c, &var);
+            }
         }
     }
 }
@@ -922,10 +941,13 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
     case EXPR_UNWRAP:
         emit_unwrap(c, expr, &result);
         break;
-    case EXPR_VAR:
-        result.value = get_var_llvm_ref(c, expr->expr.var);
-        result.kind = GEN_VAL_ADDRESS;
+    case EXPR_VAR: {
+        ObjVar* var = expr->expr.var;
+        result.value = get_var_llvm_ref(c, var);
+        bool is_const_no_addr = var->kind != VAR_GLOBAL && var->binding_kind == VAR_BINDING_RT_CONST && !var->addressed;
+        result.kind = is_const_no_addr ? GEN_VAL_RVALUE : GEN_VAL_ADDRESS;
         break;
+    }
     case SEMA_ONLY_EXPRS:
     case EXPR_METHOD:
         SIC_UNREACHABLE();
@@ -1953,15 +1975,15 @@ static void use_basic_block(CodegenContext* c, LLVMBasicBlockRef block)
 static LLVMValueRef get_llvm_const_int(CodegenContext* c, Int128 val, Type* type)
 {
     type = type_reduce(type);
-	switch (type->kind)
-	{
-		case TYPE_INT128:
-		case TYPE_UINT128:
-		{
+    switch (type->kind)
+    {
+        case TYPE_INT128:
+        case TYPE_UINT128:
+        {
             DBG_ASSERT(!type_is_int_literal(type));
-			uint64_t words[2] = { val.lo, val.hi };
-			return LLVMConstIntOfArbitraryPrecision(get_llvm_type(c, type), 2, words);
-		}
+            uint64_t words[2] = { val.lo, val.hi };
+            return LLVMConstIntOfArbitraryPrecision(get_llvm_type(c, type), 2, words);
+        }
         case TYPE_BOOL:
         case TYPE_CHAR:
         case TYPE_CHAR16:
@@ -1974,10 +1996,10 @@ static LLVMValueRef get_llvm_const_int(CodegenContext* c, Int128 val, Type* type
         case TYPE_UINT:
         case TYPE_LONG:
         case TYPE_ULONG:
-			return LLVMConstInt(get_llvm_type(c, type), val.lo, false);
+            return LLVMConstInt(get_llvm_type(c, type), val.lo, false);
         default:
             SIC_UNREACHABLE();
-	}
+    }
 }
 
 static void emit_llvm_ir(CodegenContext* c, const char* out_path)
@@ -2086,14 +2108,39 @@ static LLVMMetadataRef get_llvm_debug_info_type(CodegenContext* c, Type* type)
     DBG_ASSERT(g_compiler.debug_mode);
     if(type->llvm_debug_ref != NULL) return type->llvm_debug_ref;
     const char* type_str;
+    BitSize size = type_bit_size(type);
     switch(type->kind)
     {
     case TYPE_VOID:
         return NULL;
+    case TYPE_BOOL:
+        type_str = type_to_string(type);
+        return type->llvm_debug_ref = LLVMDIBuilderCreateBasicType(c->di_builder, 
+                                                                   type_str, 
+                                                                   strlen(type_str), size, 
+                                                                   SI_DW_ATE_BOOLEAN,
+                                                                   LLVMDIFlagZero);
     case INT_TYPES:
         type_str = type_to_string(type);
-        return type->llvm_debug_ref = LLVMDIBuilderCreateBasicType(c->di_builder, type_str, strlen(type_str), type_byte_size(type) * 8, 0, 0);
+        return type->llvm_debug_ref = LLVMDIBuilderCreateBasicType(c->di_builder, 
+                                                                   type_str, 
+                                                                   strlen(type_str), size, 
+                                                                   type_is_unsigned(type) ? SI_DW_ATE_UNSIGNED : SI_DW_ATE_SIGNED,
+                                                                   LLVMDIFlagZero);
     case FLOAT_TYPES:
+        type_str = type_to_string(type);
+        return type->llvm_debug_ref = LLVMDIBuilderCreateBasicType(c->di_builder, 
+                                                                   type_str, 
+                                                                   strlen(type_str), size, 
+                                                                   SI_DW_ATE_FLOAT,
+                                                                   LLVMDIFlagZero);
+    case CHAR_TYPES:
+        type_str = type_to_string(type);
+        return type->llvm_debug_ref = LLVMDIBuilderCreateBasicType(c->di_builder, 
+                                                                   type_str, 
+                                                                   strlen(type_str), size, 
+                                                                   SI_DW_ATE_UNSIGNED_CHAR,
+                                                                   LLVMDIFlagZero);
     default:
         SIC_TODO();
     }
@@ -2216,29 +2263,29 @@ static void load_rvalue(CodegenContext* c, GenValue* ptr)
 
 static void llvm_diag_handler(LLVMDiagnosticInfoRef ref, UNUSED void *context)
 {
-	char *desc = LLVMGetDiagInfoDescription(ref);
-	const char *severity;
-	switch (LLVMGetDiagInfoSeverity(ref))
-	{
-		case LLVMDSError:
-			sic_fatal_error("LLVM Error: %s", desc);
-		case LLVMDSWarning:
-			severity = "\033[33mLLVM Warning";
-			break;
-		case LLVMDSRemark:
-			severity = "\033[35mLLVM Remark";
-			break;
-		case LLVMDSNote:
-			severity = "\033[36mLLVM Note";
-			break;
-		default:
+    char *desc = LLVMGetDiagInfoDescription(ref);
+    const char *severity;
+    switch (LLVMGetDiagInfoSeverity(ref))
+    {
+        case LLVMDSError:
+            sic_fatal_error("LLVM Error: %s", desc);
+        case LLVMDSWarning:
+            severity = "\033[33mLLVM Warning";
+            break;
+        case LLVMDSRemark:
+            severity = "\033[35mLLVM Remark";
+            break;
+        case LLVMDSNote:
+            severity = "\033[36mLLVM Note";
+            break;
+        default:
             LLVMDisposeMessage(desc);
-			return;
-	}
+            return;
+    }
     (void)severity;
 #ifdef SIC_DEBUG
     if(g_compiler.debug_output & DEBUG_CODEGEN)
         printf("[DEBUG] %s\033[0m: %s\n", severity, desc);
 #endif
-	LLVMDisposeMessage(desc);
+    LLVMDisposeMessage(desc);
 }

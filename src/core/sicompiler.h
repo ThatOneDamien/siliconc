@@ -134,6 +134,7 @@ Type*       type_reduce(Type* t);
 Type*       type_remove_aliases(Type* t);
 bool        type_equal(const Type* t1, const Type* t2);
 ByteSize    type_byte_size(const Type* ty);
+BitSize     type_bit_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
 const char* type_to_string(const Type* type);
 bool type_kind_is_signed(TypeKind kind);

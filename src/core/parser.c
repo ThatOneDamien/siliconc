@@ -1096,7 +1096,7 @@ static Stmt* parse_for(Lexer* l)
     var->header.visibility = VIS_PUBLIC;
     var->header.kind = OBJ_VAR;
     var->kind = VAR_LOCAL;
-    var->binding_kind = VAR_BINDING_RT_CONST;
+    var->binding_kind = VAR_BINDING_MUTABLE;
     advance(l);
 
     CONSUME_OR_RET(TOKEN_IN, BAD_STMT);
@@ -2054,9 +2054,9 @@ static ExprParseRule expr_rules[__TOKEN_COUNT] = {
     [TOKEN_TRUE]            = { parse_bool_literal, NULL, PREC_NONE },
 
     [TOKEN_CT_ALIGNOF]      = { parse_ct_typearg, NULL, PREC_NONE },
-	[TOKEN_CT_OFFSETOF]     = { parse_ct_offsetof, NULL, PREC_NONE },
-	[TOKEN_CT_SIZEOF]       = { parse_ct_typearg, NULL, PREC_NONE },
-	[TOKEN_CT_TYPE_EQUAL]   = { parse_ct_type_equal, NULL, PREC_NONE },
-	[TOKEN_CT_TYPE_MAX]     = { parse_ct_typearg, NULL, PREC_NONE },
-	[TOKEN_CT_TYPE_MIN]     = { parse_ct_typearg, NULL, PREC_NONE },
+    [TOKEN_CT_OFFSETOF]     = { parse_ct_offsetof, NULL, PREC_NONE },
+    [TOKEN_CT_SIZEOF]       = { parse_ct_typearg, NULL, PREC_NONE },
+    [TOKEN_CT_TYPE_EQUAL]   = { parse_ct_type_equal, NULL, PREC_NONE },
+    [TOKEN_CT_TYPE_MAX]     = { parse_ct_typearg, NULL, PREC_NONE },
+    [TOKEN_CT_TYPE_MIN]     = { parse_ct_typearg, NULL, PREC_NONE },
 };

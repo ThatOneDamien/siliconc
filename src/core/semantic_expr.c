@@ -166,6 +166,8 @@ bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
         return false;
     case EXPR_VAR:
         return analyze_var_rvalue(expr);
+    case EXPR_UNWRAP:
+        return analyze_rvalue_dispatch(expr->expr.unwrap, mutate);
     case EXPR_ARRAY_INIT_LIST:
     case EXPR_BINARY:
     case EXPR_CAST:
@@ -179,7 +181,6 @@ bool analyze_rvalue_dispatch(Expr* expr, bool mutate)
     case EXPR_STRUCT_INIT_LIST:
     case EXPR_SWITCH:
     case EXPR_UNARY:
-    case EXPR_UNWRAP:
         return true;
     case EXPR_UNRESOLVED_ARROW:
     case EXPR_UNRESOLVED_DOT:

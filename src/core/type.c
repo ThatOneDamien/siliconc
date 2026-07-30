@@ -476,6 +476,13 @@ RETRY:
     SIC_UNREACHABLE();
 }
 
+BitSize type_bit_size(const Type* ty)
+{
+    // TODO: Make this properly calculate it if the byte size is different or if this is a bitstruct.
+    const Type* reduced = type_reduce((Type*)ty);
+    return ty->kind == TYPE_BOOL ? 1 : (type_byte_size(reduced) * 8);
+}
+
 ByteSize type_alignment(const Type* ty)
 {
     DBG_ASSERT(ty != NULL);
