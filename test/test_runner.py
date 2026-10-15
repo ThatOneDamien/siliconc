@@ -36,14 +36,144 @@ class ExpectedDiag:
 class TestResult:
     timeout: bool
 
+@dataclass(frozen=True)
+class CheckDirective:
+    kind: str
+    pattern: str
+    line_nr: int
+
+CHECK_RE = re.compile(r'^\s*//\s*(CHECK(?:-NEXT|-NOT|-LABEL)?):\s*(.*?)\s*$')
+TOKEN_RE = re.compile(r'\{\{(.*?)\}\}|\[\[([A-Za-z_]\w*)(?::(.*?))?\]\]')
+
+def squash(s: str):
+    return re.sub(r'\s+', ' ', s).strip()
+
+SHORTHANDS = {
+    'VAL': r'%[0-9A-Za-z_.]+',     # local value / label name
+    'GLOBAL': r'@[0-9A-Za-z_.]+',  # global / function name
+    'INT': r'-?\d+',
+}
+
+def expand(expr: str):
+    # Only known names are replaced, so a regex like `foo$` is untouched.
+    return re.sub(r'\$([A-Z]+)', lambda m: SHORTHANDS.get(m.group(1), m.group(0)), expr)
+
+def compile_pattern(pattern: str, variables: dict[str, str]):
+    parts: list[str] = []
+    defined: list[str] = []
+    pos = 0
+
+    def literal(text: str):
+        if text:
+            parts.append(re.escape(re.sub(r'\s+', ' ', text)))
+
+    for m in TOKEN_RE.finditer(pattern):
+        literal(pattern[pos:m.start()])
+        pos = m.end()
+        if m.group(1) is not None:
+            parts.append(expand(m.group(1)))
+        else:
+            name, expr = m.group(2), m.group(3)
+            if expr is not None:
+                if expr == '':
+                    expr = SHORTHANDS['VAL']
+                parts.append(f'(?P<{name}>{expand(expr)})')
+                defined.append(name)
+            elif name in variables:
+                parts.append(re.escape(variables[name]))
+            else:
+                raise ValueError(f'use of undefined variable [[{name}]]')
+    literal(pattern[pos:])
+    return re.compile(''.join(parts)), defined
+
+def run_checks(directives: list[CheckDirective], ir_text: str):
+    lines = [squash(l) for l in ir_text.splitlines()]
+    variables: dict[str, str] = {}
+    errors: list[str] = []
+
+    def find(d: CheckDirective, start: int, end: int):
+        regex, defined = compile_pattern(d.pattern, variables)
+        for idx in range(start, end):
+            m = regex.search(lines[idx])
+            if m:
+                for name in defined:
+                    variables[name] = m.group(name)
+                return idx
+        return None
+
+    def describe(d: CheckDirective):
+        return f'line {d.line_nr}: {d.kind}: {d.pattern}'
+
+    def run_block(checks: list[CheckDirective], pos: int, end: int, has_prior: bool):
+        nots: list[CheckDirective] = []
+        for d in checks:
+            if d.kind == 'CHECK-NOT':
+                nots.append(d)
+                continue
+            if d.kind == 'CHECK-NEXT':
+                if not has_prior:
+                    errors.append(f'{describe(d)} has no preceding match')
+                    return
+                idx = find(d, pos, min(pos + 1, end))
+                if idx is None:
+                    errors.append(f'{describe(d)} did not match the immediately following line')
+                    return
+            else:
+                idx = find(d, pos, end)
+                if idx is None:
+                    errors.append(f'{describe(d)} found no match')
+                    return
+            for n in nots:
+                bad = find(n, pos, idx)
+                if bad is not None:
+                    errors.append(f'{describe(n)} matched IR line: {lines[bad]}')
+            nots = []
+            pos = idx + 1
+            has_prior = True
+        for n in nots:
+            bad = find(n, pos, end)
+            if bad is not None:
+                errors.append(f'{describe(n)} matched IR line: {lines[bad]}')
+
+    groups: list[tuple[CheckDirective | None, list[CheckDirective]]] = [(None, [])]
+    for d in directives:
+        if d.kind == 'CHECK-LABEL':
+            groups.append((d, []))
+        else:
+            groups[-1][1].append(d)
+
+    try:
+        starts = [0]
+        cursor = 0
+        for label, _ in groups[1:]:
+            assert label is not None
+            idx = find(label, cursor, len(lines))
+            if idx is None:
+                errors.append(f'{describe(label)} found no match')
+                return errors
+            starts.append(idx)
+            cursor = idx + 1
+
+        ends = starts[1:] + [len(lines)]
+        for i, (label, checks) in enumerate(groups):
+            pos = starts[i] + (1 if label is not None else 0)
+            run_block(checks, pos, ends[i], label is not None)
+    except (ValueError, re.error) as e:
+        errors.append(f'invalid pattern: {e}')
+
+    return errors
 
 class TestMeta:
     name: str
     expected: list[ExpectedDiag]
+    checks: list[CheckDirective]
+    ir_path: str
 
     def __init__(self, name: str):
         self.name = name
         self.expected = []
+        self.checks = []
+        self.ir_path = ''
 
     def find_diag(self, kind: DiagKind, message: str, line_nr: int):
         for diag in self.expected:
@@ -51,6 +181,23 @@ class TestMeta:
                 self.expected.remove(diag)
                 return True
 
+        return False
+
+    def check_ir(self):
+        try:
+            with open(self.ir_path, 'r', encoding='utf-8') as f:
+                ir_text = f.read()
+        except OSError:
+            self.print_fail('Compiler did not produce an IR file.')
+            return False
+
+        errors = run_checks(self.checks, ir_text)
+        if not errors:
+            return True
+
+        self.print_fail('IR checks failed')
+        for e in errors:
+            print(f'        {e}')
         return False
 
     def check_result(self, proc_res: subprocess.CompletedProcess[str]):
@@ -92,6 +239,8 @@ class TestMeta:
                 return False
             elif expected_count == 0 and proc_res.returncode != 0:
                 self.print_fail(f'Compiler exited with nonzero exit code({proc_res.returncode}) despite no errors.')
+                return False
+            if self.checks and not self.check_ir():
                 return False
             print(color_str(f'[PASS] {self.name}', StatusColor.PASS))
             return True
@@ -141,6 +290,7 @@ class TestRunner:
 
     def run_test_file(self, test_path: str):
         test = parse_test_file(test_path, self.test_root)
+        test.ir_path = str(pathlib.Path(self.tmpdir) / 'test.ll')
         self.test_count += 1
         cmd = [self.compiler_path, test_path, '--out-name', 'test', '--emit', 'ir', '--out-dir', self.tmpdir]
         try:
@@ -191,6 +341,10 @@ def parse_test_file(test_path: str, test_root: str):
                     test.expected.append(
                         ExpectedDiag(kind=DiagKind.NOTE, message=message, line_nr=i + (2 if line.startswith('// #') else 1))
                     )
+
+            cm = CHECK_RE.match(lines[i])
+            if cm:
+                test.checks.append(CheckDirective(kind=cm.group(1), pattern=cm.group(2), line_nr=i + 1))
             i += 1
 
     return test

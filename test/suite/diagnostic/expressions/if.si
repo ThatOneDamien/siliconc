@@ -6,3 +6,9 @@ fn test(cond: bool) int
         => 2;
     };
 }
+
+fn test2(cond: bool) int
+{
+    return if cond => 1 else => 2;
+}
+

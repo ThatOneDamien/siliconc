@@ -385,15 +385,15 @@ static void emit_function_body(CodegenContext* c, ObjFunc* func)
         if(param->header.sym)
         {
             LLVMValueRef value = LLVMGetParam(func->header.llvm_ref, i);
-            if(param->addressed)
-            {
+            // if(param->addressed)
+            // {
                 emit_var_alloca(c, param);
                 emit_llvm_store(c, value, param->header.llvm_ref, type_alignment(param->type_loc.type));
-            }
-            else
-            {
-                param->header.llvm_ref = value;
-            }
+            // }
+            // else
+            // {
+            //     param->header.llvm_ref = value;
+            // }
         }
     }
 
@@ -589,17 +589,17 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
 {
     if(decl->binding_kind == VAR_BINDING_CT_CONST) return;
     DBG_ASSERT(decl->kind == VAR_LOCAL);
-    if(decl->binding_kind == VAR_BINDING_RT_CONST && !decl->addressed)
-    {
-        // FIXME: I believe this actually causes issues with cases where
-        // non-const arrays are not duplicated but instead simply referenced.
-        GenValue rhs = emit_rvalue(c, decl->initial_val);
-        decl->header.llvm_ref = rhs.value;
-    }
-    else
-    {
+    // if(decl->binding_kind == VAR_BINDING_RT_CONST && !decl->addressed)
+    // {
+    //     // FIXME: I believe this actually causes issues with cases where
+    //     // non-const arrays are not duplicated but instead simply referenced.
+    //     GenValue rhs = emit_rvalue(c, decl->initial_val);
+    //     decl->header.llvm_ref = rhs.value;
+    // }
+    // else
+    // {
         emit_var_alloca(c, decl);
-        if(decl->uninitialized)
+        if(!decl->uninitialized)
         {
             GenValue temp;
             GenValue var;
@@ -616,7 +616,7 @@ static void emit_declaration(CodegenContext* c, ObjVar* decl)
                 store_default(c, &var);
             }
         }
-    }
+    // }
 }
 
 static void emit_for(CodegenContext* c, Stmt* stmt)
@@ -944,8 +944,9 @@ static GenValue emit_expr(CodegenContext* c, Expr* expr)
     case EXPR_VAR: {
         ObjVar* var = expr->expr.var;
         result.value = get_var_llvm_ref(c, var);
-        bool is_const_no_addr = var->kind != VAR_GLOBAL && var->binding_kind == VAR_BINDING_RT_CONST && !var->addressed;
-        result.kind = is_const_no_addr ? GEN_VAL_RVALUE : GEN_VAL_ADDRESS;
+        result.kind = GEN_VAL_ADDRESS;
+        // bool is_const_no_addr = var->kind != VAR_GLOBAL && var->binding_kind == VAR_BINDING_RT_CONST && !var->addressed;
+        // result.kind = is_const_no_addr ? GEN_VAL_RVALUE : GEN_VAL_ADDRESS;
         break;
     }
     case SEMA_ONLY_EXPRS:
