@@ -23,10 +23,17 @@ typedef enum
     __FLAG_COUNT,
 } FlagKind;
 
+typedef struct
+{
+    const char* name;
+    Warnings warning;
+} WarningOption;
+
 static void process_emit(char* arg);
 static NORETURN void print_help(void);
 
 static const Flag s_flags[__FLAG_COUNT];
+static const WarningOption s_warning_options[1];
 
 void process_args(int argc, char* argv[])
 {
@@ -80,6 +87,19 @@ void process_args(int argc, char* argv[])
                 continue;
             }
 #endif
+            if(arg[0] == 'W')
+            {
+                ++arg;
+                for(size_t j = 0; j < array_length(s_warning_options); ++j)
+                {
+                    if(strcmp(arg, s_warning_options[j].name) == 0)
+                    {
+                        g_compiler.disabled_warnings |= s_warning_options[j].warning;
+                        break;
+                    }
+                }
+                continue;
+            }
             for(FlagKind j = 0; j < __FLAG_COUNT; ++j)
             {
                 if(s_flags[j].short_name != 0 && arg[0] == s_flags[j].short_name)
@@ -219,4 +239,8 @@ static const Flag s_flags[__FLAG_COUNT] = {
     [FLAG_OUT_DIR]  = { 0, "out-dir", "<DIR>", "Place build components in the directory DIR."},
     [FLAG_LINK]     = { 0, "link", "<FLAG>", "Add FLAG to the linker sub-process."},
     [FLAG_DEBUG]    = { 'd', "debug", "", "Generate debug symbols and add runtime checks (unless turned off)."},
+};
+
+static const WarningOption s_warning_options[] = {
+    { "no-usage", WARN_USAGE},
 };

@@ -1,30 +1,735 @@
-fn test() void {
-    var a: uint = 1;
-    var b: uint = 1;
-    var c: uint = 2;
-    a = b + c;
-    b = a + c;
-    c = a + b;
+struct Point
+{
+    x: int,
+    y: int,
 }
 
+var g_sum: int = 1 + 2;
+var g: int = 7;
 
-// CHECK-LABEL: define void @_SIF4test()
-// CHECK: [[A:]] = alloca i32
+// CHECK: {{$GLOBAL}} = {{.*}}global i32 3
+// CHECK: {{$GLOBAL}} = {{.*}}global i32 7
+
+fn add_ubyte() void
+{
+    var a: ubyte = 1;
+    var b: ubyte = 2;
+    var c: ubyte = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_ubyte)}}()
+// CHECK:      [[A:]] = alloca i8
+// CHECK-NEXT: [[B:]] = alloca i8
+// CHECK-NEXT: [[C:]] = alloca i8
+// CHECK:      store i8 1, ptr [[A]]
+// CHECK-NEXT: store i8 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i8, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i8, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i8 [[A1]], [[B1]]
+// CHECK-NEXT: store i8 [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn add_short() void
+{
+    var a: short = 1;
+    var b: short = 2;
+    var c: short = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_short)}}()
+// CHECK:      [[A:]] = alloca i16
+// CHECK-NEXT: [[B:]] = alloca i16
+// CHECK-NEXT: [[C:]] = alloca i16
+// CHECK:      store i16 1, ptr [[A]]
+// CHECK-NEXT: store i16 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i16, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i16, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i16 [[A1]], [[B1]]
+// CHECK-NEXT: store i16 [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn add_uint() void
+{
+    var a: uint = 1;
+    var b: uint = 2;
+    var c: uint = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_uint)}}()
+// CHECK:      [[A:]] = alloca i32
 // CHECK-NEXT: [[B:]] = alloca i32
 // CHECK-NEXT: [[C:]] = alloca i32
-// CHECK: store i32 1, ptr [[A]]
-// CHECK-NEXT: store i32 1, ptr [[B]]
-// CHECK-NEXT: store i32 2, ptr [[C]]
-// CHECK: [[B1:]] = load i32, ptr [[B]]
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK-NEXT: store i32 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[B1]]
+// CHECK-NEXT: store i32 [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn add_long() void
+{
+    var a: long = 1;
+    var b: long = 2;
+    var c: long = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_long)}}()
+// CHECK:      [[A:]] = alloca i64
+// CHECK-NEXT: [[B:]] = alloca i64
+// CHECK-NEXT: [[C:]] = alloca i64
+// CHECK:      store i64 1, ptr [[A]]
+// CHECK-NEXT: store i64 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i64, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i64, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i64 [[A1]], [[B1]]
+// CHECK-NEXT: store i64 [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn add_ulong() void
+{
+    var a: ulong = 1;
+    var b: ulong = 2;
+    var c: ulong = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_ulong)}}()
+// CHECK:      [[A:]] = alloca i64
+// CHECK-NEXT: [[B:]] = alloca i64
+// CHECK-NEXT: [[C:]] = alloca i64
+// CHECK:      store i64 1, ptr [[A]]
+// CHECK-NEXT: store i64 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i64, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i64, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i64 [[A1]], [[B1]]
+// CHECK-NEXT: store i64 [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn widen_signed() void
+{
+    var x: long = 1;
+    var y: int = 2;
+    var r: long = x + y;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_signed)}}()
+// CHECK:      [[X:]] = alloca i64
+// CHECK-NEXT: [[Y:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i64
+// CHECK:      store i64 1, ptr [[X]]
+// CHECK-NEXT: store i32 2, ptr [[Y]]
+// CHECK:      [[X1:]] = load i64, ptr [[X]]
+// CHECK-NEXT: [[Y1:]] = load i32, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = sext i32 [[Y1]] to i64
+// CHECK-NEXT: [[S:]] = add i64 [[X1]], [[Y2]]
+// CHECK-NEXT: store i64 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn widen_signed_swapped() void
+{
+    var x: long = 1;
+    var y: int = 2;
+    var r: long = y + x;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_signed_swapped)}}()
+// CHECK:      [[X:]] = alloca i64
+// CHECK-NEXT: [[Y:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i64
+// CHECK:      store i64 1, ptr [[X]]
+// CHECK-NEXT: store i32 2, ptr [[Y]]
+// CHECK:      [[Y1:]] = load i32, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = sext i32 [[Y1]] to i64
+// CHECK-NEXT: [[X1:]] = load i64, ptr [[X]]
+// CHECK-NEXT: [[S:]] = add i64 [[Y2]], [[X1]]
+// CHECK-NEXT: store i64 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn widen_unsigned() void
+{
+    var x: ulong = 1;
+    var y: uint = 2;
+    var r: ulong = x + y;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_unsigned)}}()
+// CHECK:      [[X:]] = alloca i64
+// CHECK-NEXT: [[Y:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i64
+// CHECK:      store i64 1, ptr [[X]]
+// CHECK-NEXT: store i32 2, ptr [[Y]]
+// CHECK:      [[X1:]] = load i64, ptr [[X]]
+// CHECK-NEXT: [[Y1:]] = load i32, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = zext i32 [[Y1]] to i64
+// CHECK-NEXT: [[S:]] = add i64 [[X1]], [[Y2]]
+// CHECK-NEXT: store i64 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn widen_unsigned_swapped() void
+{
+    var x: ulong = 1;
+    var y: uint = 2;
+    var r: ulong = y + x;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_unsigned_swapped)}}()
+// CHECK:      [[X:]] = alloca i64
+// CHECK-NEXT: [[Y:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i64
+// CHECK:      store i64 1, ptr [[X]]
+// CHECK-NEXT: store i32 2, ptr [[Y]]
+// CHECK:      [[Y1:]] = load i32, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = zext i32 [[Y1]] to i64
+// CHECK-NEXT: [[X1:]] = load i64, ptr [[X]]
+// CHECK-NEXT: [[S:]] = add i64 [[Y2]], [[X1]]
+// CHECK-NEXT: store i64 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn add_float() void
+{
+    var a: float = 1.0;
+    var b: float = 2.0;
+    var c: float = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_float)}}()
+// CHECK:      [[A:]] = alloca float
+// CHECK-NEXT: [[B:]] = alloca float
+// CHECK-NEXT: [[C:]] = alloca float
+// CHECK:      store float 1.000000e+00, ptr [[A]]
+// CHECK-NEXT: store float 2.000000e+00, ptr [[B]]
+// CHECK:      [[A1:]] = load float, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load float, ptr [[B]]
+// CHECK-NEXT: [[S:]] = fadd float [[A1]], [[B1]]
+// CHECK-NEXT: store float [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn add_double() void
+{
+    var a: double = 1.0;
+    var b: double = 2.0;
+    var c: double = a + b;
+}
+
+// CHECK-LABEL: define void {{$FN(add_double)}}()
+// CHECK:      [[A:]] = alloca double
+// CHECK-NEXT: [[B:]] = alloca double
+// CHECK-NEXT: [[C:]] = alloca double
+// CHECK:      store double 1.000000e+00, ptr [[A]]
+// CHECK-NEXT: store double 2.000000e+00, ptr [[B]]
+// CHECK:      [[A1:]] = load double, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load double, ptr [[B]]
+// CHECK-NEXT: [[S:]] = fadd double [[A1]], [[B1]]
+// CHECK-NEXT: store double [[S]], ptr [[C]]
+// CHECK-NEXT: ret void
+
+fn widen_float() void
+{
+    var x: double = 1.0;
+    var y: float = 2.0;
+    var r: double = x + y;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_float)}}()
+// CHECK:      [[X:]] = alloca double
+// CHECK-NEXT: [[Y:]] = alloca float
+// CHECK-NEXT: [[R:]] = alloca double
+// CHECK:      store double 1.000000e+00, ptr [[X]]
+// CHECK-NEXT: store float 2.000000e+00, ptr [[Y]]
+// CHECK:      [[X1:]] = load double, ptr [[X]]
+// CHECK-NEXT: [[Y1:]] = load float, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = fpext float [[Y1]] to double
+// CHECK-NEXT: [[S:]] = fadd double [[X1]], [[Y2]]
+// CHECK-NEXT: store double [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn widen_float_swapped() void
+{
+    var x: double = 1.0;
+    var y: float = 2.0;
+    var r: double = y + x;
+}
+
+// CHECK-LABEL: define void {{$FN(widen_float_swapped)}}()
+// CHECK:      [[X:]] = alloca double
+// CHECK-NEXT: [[Y:]] = alloca float
+// CHECK-NEXT: [[R:]] = alloca double
+// CHECK:      store double 1.000000e+00, ptr [[X]]
+// CHECK-NEXT: store float 2.000000e+00, ptr [[Y]]
+// CHECK:      [[Y1:]] = load float, ptr [[Y]]
+// CHECK-NEXT: [[Y2:]] = fpext float [[Y1]] to double
+// CHECK-NEXT: [[X1:]] = load double, ptr [[X]]
+// CHECK-NEXT: [[S:]] = fadd double [[Y2]], [[X1]]
+// CHECK-NEXT: store double [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn ptr_ulong() void
+{
+    var x: int = 0;
+    var n: ulong = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_ulong)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[N:]] = alloca i64
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store i64 1, ptr [[N]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[N1:]] = load i64, ptr [[N]]
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 [[N1]]
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn ptr_long() void
+{
+    var x: int = 0;
+    var n: long = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_long)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[N:]] = alloca i64
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store i64 1, ptr [[N]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[N1:]] = load i64, ptr [[N]]
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 [[N1]]
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn ptr_ubyte() void
+{
+    var x: int = 0;
+    var n: ubyte = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_ubyte)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[N:]] = alloca i8
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store i8 1, ptr [[N]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[N1:]] = load i8, ptr [[N]]
+// CHECK-NEXT: [[N2:]] = zext i8 [[N1]] to i64
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 [[N2]]
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn ptr_short() void
+{
+    var x: int = 0;
+    var n: short = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_short)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[N:]] = alloca i16
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store i16 1, ptr [[N]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[N1:]] = load i16, ptr [[N]]
+// CHECK-NEXT: [[N2:]] = sext i16 [[N1]] to i64
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 [[N2]]
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn ptr_commuted() void
+{
+    var x: int = 0;
+    var n: uint = 1;
+    var p: *int = &x;
+    p = n + p;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_commuted)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[N:]] = alloca i32
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store i32 1, ptr [[N]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK: [[P1:]] = load ptr, ptr [[P]]
+// CHECK:      [[N1:]] = load i32, ptr [[N]]
+// CHECK-NEXT: [[N2:]] = zext i32 [[N1]] to i64
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 [[N2]]
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn ptr_literal() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    p = p + 1;
+}
+
+// CHECK-LABEL: define void {{$FN(ptr_literal)}}()
+// CHECK:      [[X:]] = alloca i32
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK:      store i32 0, ptr [[X]]
+// CHECK-NEXT: store ptr [[X]], ptr [[P]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[P2:]] = getelementptr i32, ptr [[P1]], i64 1
+// CHECK-NEXT: store ptr [[P2]], ptr [[P]]
+// CHECK-NEXT: ret void
+
+fn lit_right() void
+{
+    var a: int = 1;
+    var r: int = a + 1;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_right)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], 1
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn lit_left() void
+{
+    var a: int = 1;
+    var r: int = 1 + a;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_left)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[S:]] = add i32 1, [[A1]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn lit_negative() void
+{
+    var a: int = 1;
+    var r: int = a + -1;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_negative)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], -1
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn lit_both() void
+{
+    var r: int = 1 + 2;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_both)}}()
+// CHECK:      [[R:]] = alloca i32
+// CHECK-NOT:  add
+// CHECK:      store i32 3, ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn lit_float() void
+{
+    var a: float = 1.0;
+    var r: float = a + 1.5;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_float)}}()
+// CHECK:      [[A:]] = alloca float
+// CHECK-NEXT: [[R:]] = alloca float
+// CHECK:      store float 1.000000e+00, ptr [[A]]
+// CHECK:      [[A1:]] = load float, ptr [[A]]
+// CHECK-NEXT: [[S:]] = fadd float [[A1]], 1.500000e+00
+// CHECK-NEXT: store float [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn lit_adapt() void
+{
+    var a: ubyte = 1;
+    var r: ubyte = a + 1;
+}
+
+// CHECK-LABEL: define void {{$FN(lit_adapt)}}()
+// CHECK:      [[A:]] = alloca i8
+// CHECK-NEXT: [[R:]] = alloca i8
+// CHECK:      store i8 1, ptr [[A]]
+// CHECK:      [[A1:]] = load i8, ptr [[A]]
+// CHECK-NEXT: [[S:]] = add i8 [[A1]], 1
+// CHECK-NEXT: store i8 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn chain() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a + b + c;
+}
+
+// CHECK-LABEL: define void {{$FN(chain)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK-NEXT: [[C:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK-NEXT: store i32 2, ptr [[B]]
+// CHECK-NEXT: store i32 3, ptr [[C]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S1:]] = add i32 [[A1]], [[B1]]
 // CHECK-NEXT: [[C1:]] = load i32, ptr [[C]]
-// CHECK-NEXT: [[S1:]] = add i32 [[B1]], [[C1]]
-// CHECK-NEXT: store i32 [[S1]], ptr [[A]]
-// CHECK-NEXT: [[A2:]] = load i32, ptr [[A]]
-// CHECK-NEXT: [[C2:]] = load i32, ptr [[C]]
-// CHECK-NEXT: [[S2:]] = add i32 [[A2]], [[C2]]
-// CHECK-NEXT: store i32 [[S2]], ptr [[B]]
-// CHECK-NEXT: [[A3:]] = load i32, ptr [[A]]
-// CHECK-NEXT: [[B3:]] = load i32, ptr [[B]]
-// CHECK-NEXT: [[S3:]] = add i32 [[A3]], [[B3]]
-// CHECK-NEXT: store i32 [[S3]], ptr [[C]]
+// CHECK-NEXT: [[S2:]] = add i32 [[S1]], [[C1]]
+// CHECK-NEXT: store i32 [[S2]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn precedence() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a + b * c;
+}
+
+// CHECK-LABEL: define void {{$FN(precedence)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK-NEXT: [[C:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 3, ptr [[C]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[C1:]] = load i32, ptr [[C]]
+// CHECK-NEXT: [[M:]] = mul i32 [[B1]], [[C1]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[M]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn precedence_left() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a * b + c;
+}
+
+// CHECK-LABEL: define void {{$FN(precedence_left)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK-NEXT: [[C:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 3, ptr [[C]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[M:]] = mul i32 [[A1]], [[B1]]
+// CHECK-NEXT: [[C1:]] = load i32, ptr [[C]]
+// CHECK-NEXT: [[S:]] = add i32 [[M]], [[C1]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn f() int
+{
+    return 1;
+}
+
+// CHECK-LABEL: define i32 {{$FN(f)}}()
+// CHECK: ret i32
+
+fn h() int
+{
+    return 2;
+}
+
+// CHECK-LABEL: define i32 {{$FN(h)}}()
+// CHECK: ret i32
+
+fn call_order() void
+{
+    var r: int = f() + h();
+}
+
+// CHECK-LABEL: define void {{$FN(call_order)}}()
+// CHECK:      [[R:]] = alloca i32
+// CHECK:      [[F:]] = call i32 {{$FN(f)}}()
+// CHECK-NEXT: [[H:]] = call i32 {{$FN(h)}}()
+// CHECK-NEXT: [[S:]] = add i32 [[F]], [[H]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn use_struct() void
+{
+    var s: Point;
+    s.x = 1;
+    s.y = 2;
+    var r: int = s.x + s.y;
+}
+
+// CHECK-LABEL: define void {{$FN(use_struct)}}()
+// CHECK:      [[S:]] = alloca {{.*}}
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[S]]
+// CHECK:      [[PY:]] = getelementptr {{.*}}, ptr [[S]], i32 0, i32 1
+// CHECK-NEXT: store i32 2, ptr [[PY]]
+// CHECK-NEXT: [[X:]] = load i32, ptr [[S]]
+// CHECK-NEXT: [[PY2:]] = getelementptr {{.*}}, ptr [[S]], i32 0, i32 1
+// CHECK-NEXT: [[Y:]] = load i32, ptr [[PY2]]
+// CHECK-NEXT: [[SUM:]] = add i32 [[X]], [[Y]]
+// CHECK-NEXT: store i32 [[SUM]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn use_array() void
+{
+    var arr: [4]int;
+    arr[0] = 1;
+    arr[1] = 2;
+    var r: int = arr[0] + arr[1];
+}
+
+// CHECK-LABEL: define void {{$FN(use_array)}}()
+// CHECK:      [[ARR:]] = alloca [4 x i32]
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 2, ptr {{$VAL}}
+// CHECK:      [[E0:]] = getelementptr i32, ptr [[ARR]], i64 0
+// CHECK-NEXT: [[V0:]] = load i32, ptr [[E0]]
+// CHECK-NEXT: [[E1:]] = getelementptr i32, ptr [[ARR]], i64 1
+// CHECK-NEXT: [[V1:]] = load i32, ptr [[E1]]
+// CHECK-NEXT: [[S:]] = add i32 [[V0]], [[V1]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn use_deref() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var p: *int = &a;
+    var q: *int = &b;
+    var r: int = *p + *q;
+}
+
+// CHECK-LABEL: define void {{$FN(use_deref)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK-NEXT: [[P:]] = alloca ptr
+// CHECK-NEXT: [[Q:]] = alloca ptr
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store ptr [[B]], ptr [[Q]]
+// CHECK:      [[P1:]] = load ptr, ptr [[P]]
+// CHECK-NEXT: [[PV:]] = load i32, ptr [[P1]]
+// CHECK-NEXT: [[Q1:]] = load ptr, ptr [[Q]]
+// CHECK-NEXT: [[QV:]] = load i32, ptr [[Q1]]
+// CHECK-NEXT: [[S:]] = add i32 [[PV]], [[QV]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn use_global() void
+{
+    var a: int = 1;
+    var r: int = g + a;
+}
+
+// CHECK-LABEL: define void {{$FN(use_global)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 1, ptr [[A]]
+// CHECK:      [[G1:]] = load i32, ptr {{$GLOBAL}}
+// CHECK-NEXT: [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[S:]] = add i32 [[G1]], [[A1]]
+// CHECK-NEXT: store i32 [[S]], ptr [[R]]
+// CHECK-NEXT: ret void
+
+fn take(x: int) void
+{
+}
+
+// CHECK-LABEL: define void {{$FN(take)}}(i32 {{.*}})
+
+fn arg_ctx() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    take(a + b);
+}
+
+// CHECK-LABEL: define void {{$FN(arg_ctx)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK:      store i32 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[B1]]
+// CHECK-NEXT: call void {{$FN(take)}}(i32 [[S]])
+// CHECK-NEXT: ret void
+
+fn ret_ctx() int
+{
+    var a: int = 1;
+    var b: int = 2;
+    return a + b;
+}
+
+// CHECK-LABEL: define i32 {{$FN(ret_ctx)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK:      store i32 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[B1]]
+// CHECK:      ret i32
+
+fn cond_ctx() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    if a + b > 0
+    {
+        a = 0;
+    }
+}
+
+// CHECK-LABEL: define void {{$FN(cond_ctx)}}()
+// CHECK:      [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK:      store i32 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[B1]]
+// CHECK-NEXT: [[C:]] = icmp sgt i32 [[S]], 0
+// CHECK-NEXT: br i1 [[C]], label {{$VAL}}, label {{$VAL}}
+
+fn index_ctx() void
+{
+    var arr: [4]int;
+    var a: uint = 1;
+    var b: uint = 2;
+    var r: int = arr[a + b];
+}
+
+// CHECK-LABEL: define void {{$FN(index_ctx)}}()
+// CHECK:      [[ARR:]] = alloca [4 x i32]
+// CHECK-NEXT: [[A:]] = alloca i32
+// CHECK-NEXT: [[B:]] = alloca i32
+// CHECK-NEXT: [[R:]] = alloca i32
+// CHECK:      store i32 2, ptr [[B]]
+// CHECK:      [[A1:]] = load i32, ptr [[A]]
+// CHECK-NEXT: [[B1:]] = load i32, ptr [[B]]
+// CHECK-NEXT: [[S:]] = add i32 [[A1]], [[B1]]
+// CHECK-NEXT: [[SX:]] = zext i32 [[S]] to i64
+// CHECK-NEXT: [[E:]] = getelementptr i32, ptr [[ARR]], i64 [[SX]]
+// CHECK-NEXT: [[V:]] = load i32, ptr [[E]]
+// CHECK-NEXT: store i32 [[V]], ptr [[R]]
 // CHECK-NEXT: ret void

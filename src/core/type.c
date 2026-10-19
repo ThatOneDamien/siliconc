@@ -558,3 +558,68 @@ bool type_kind_is_signed(TypeKind kind)
         SIC_UNREACHABLE();
     }
 }
+
+Type* type_of_shared_int_repr(TypeKind l_int_kind, TypeKind r_int_kind)
+{
+    /*
+     This function heavily depends on this being the enum layout of the type kinds.
+     TYPE_BYTE
+     TYPE_UBYTE
+     TYPE_SHORT
+     TYPE_USHORT
+     TYPE_INT
+     TYPE_UINT
+     TYPE_LONG
+     TYPE_ULONG
+     TYPE_INT128
+     TYPE_UINT128
+    */
+
+    DBG_ASSERT(type_kind_is_integer(l_int_kind) && type_kind_is_integer(r_int_kind));
+    if(r_int_kind > l_int_kind)
+    {
+        TypeKind temp = r_int_kind;
+        r_int_kind = l_int_kind;
+        l_int_kind = temp;
+    }
+    bool l_signed = type_kind_is_signed(l_int_kind);
+    bool r_signed = type_kind_is_signed(r_int_kind);
+
+    TypeKind final_kind;
+    if(l_signed || !r_signed)
+    {
+        final_kind = l_int_kind;
+    }
+    else
+    {
+        if(l_int_kind == TYPE_UINT128)
+            return NULL;
+        final_kind = l_int_kind + 1; // Hack using the layout printed above. Basically the next highest signed integer type.
+    }
+
+    switch(final_kind)
+    {
+    case TYPE_BYTE:
+        return g_type_byte;
+    case TYPE_UBYTE:
+        return g_type_ubyte;
+    case TYPE_SHORT:
+        return g_type_short;
+    case TYPE_USHORT:
+        return g_type_ushort;
+    case TYPE_INT:
+        return g_type_int;
+    case TYPE_UINT:
+        return g_type_uint;
+    case TYPE_LONG:
+        return g_type_long;
+    case TYPE_ULONG:
+        return g_type_ulong;
+    case TYPE_INT128:
+        return g_type_int128;
+    case TYPE_UINT128:
+        return g_type_uint128;
+    default:
+        SIC_UNREACHABLE();
+    }
+}

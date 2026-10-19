@@ -7,6 +7,7 @@
 #define SIC_VERSION_MAJOR 0
 #define SIC_VERSION_MINOR 1
 #define SIC_VERSION_PATCH 0
+#define array_length(array) (sizeof(array) / sizeof(array[0]))
 
 extern CompilerContext g_compiler;
 
@@ -138,6 +139,7 @@ BitSize     type_bit_size(const Type* ty);
 ByteSize    type_alignment(const Type* ty);
 const char* type_to_string(const Type* type);
 bool type_kind_is_signed(TypeKind kind);
+Type* type_of_shared_int_repr(TypeKind l_int_kind, TypeKind r_int_kind);
 
 static inline bool type_kind_is_integer(TypeKind kind)
 {

@@ -1,0 +1,241 @@
+struct Point
+{
+    x: int,
+    y: int,
+}
+
+const g_prod: int = 3 * 2;
+const g: int = 7;
+
+fn int_bool() void
+{
+    const a: int = 1;
+    const b: bool = true;
+    const r: int = a * b; // #error: operand types
+}
+
+fn bool_bool() void
+{
+    var a: bool = true;
+    var b: bool = false;
+    var r: bool = a * b; // #error: operand types
+}
+
+fn ptr_int() void
+{
+    var x: int = 0;
+    var n: int = 2;
+    var p: *int = &x;
+    var r: *int = p * n; // #error: operand types
+}
+
+fn ptr_ptr() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    var q: *int = &x;
+    var r: *int = p * q; // #error: operand types
+}
+
+fn float_ptr() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    var f: float = 1.0;
+    var r: float = f * p; // #error: operand types
+}
+
+fn const_overflow() void
+{
+    var x: ubyte = 16 * 16; // #error: cannot be represented
+}
+
+fn mul_ubyte() void
+{
+    var a: ubyte = 3;
+    var b: ubyte = 2;
+    var c: ubyte = a * b;
+}
+
+fn mul_short() void
+{
+    var a: short = 3;
+    var b: short = 2;
+    var c: short = a * b;
+}
+
+fn mul_long() void
+{
+    var a: long = 3;
+    var b: long = 2;
+    var c: long = a * b;
+}
+
+fn mul_float() void
+{
+    var a: float = 3.0;
+    var b: float = 2.0;
+    var c: float = a * b;
+}
+
+fn mul_double() void
+{
+    var a: double = 3.0;
+    var b: double = 2.0;
+    var c: double = a * b;
+}
+
+fn widen_signed() void
+{
+    var x: long = 3;
+    var y: int = 2;
+    var r: long = x * y;
+}
+
+fn widen_signed_swapped() void
+{
+    var x: long = 3;
+    var y: int = 2;
+    var r: long = y * x;
+}
+
+fn widen_unsigned() void
+{
+    var x: ulong = 3;
+    var y: uint = 2;
+    var r: ulong = x * y;
+}
+
+fn widen_float() void
+{
+    var x: double = 3.0;
+    var y: float = 2.0;
+    var r: double = x * y;
+}
+
+fn widen_both() void
+{
+    var s: short = 3;
+    var u: ubyte = 2;
+    var r: int = s * u;
+}
+
+fn lit_right() void
+{
+    var a: int = 3;
+    var r: int = a * 2;
+}
+
+fn lit_left() void
+{
+    var a: int = 3;
+    var r: int = 2 * a;
+}
+
+fn lit_both() void
+{
+    var r: int = 2 * 3;
+}
+
+fn lit_float() void
+{
+    var a: float = 3.0;
+    var r: float = a * 1.5;
+}
+
+fn chain() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a * b * c;
+}
+
+fn grouped() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a * (b * c);
+}
+
+fn precedence() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a + b * c;
+}
+
+fn precedence_left() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a * b + c;
+}
+
+fn f() int
+{
+    return 1;
+}
+
+fn h() int
+{
+    return 2;
+}
+
+fn call_order() void
+{
+    var r: int = f() * h();
+}
+
+fn use_struct() void
+{
+    var s: Point;
+    s.x = 1;
+    s.y = 2;
+    var r: int = s.x * s.y;
+}
+
+fn use_array() void
+{
+    var arr: [4]int;
+    arr[0] = 1;
+    arr[1] = 2;
+    var r: int = arr[0] * arr[1];
+}
+
+fn use_deref() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var p: *int = &a;
+    var q: *int = &b;
+    var r: int = *p * *q;
+}
+
+fn use_global() void
+{
+    var a: int = 1;
+    var r: int = g * a;
+}
+
+fn take(x: int) void
+{
+}
+
+fn arg_ctx() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    take(a * b);
+}
+
+fn index_ctx() void
+{
+    var arr: [4]int;
+    var a: uint = 2;
+    var b: uint = 1;
+    var r: int = arr[a * b];
+}

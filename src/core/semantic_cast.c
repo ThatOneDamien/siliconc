@@ -229,15 +229,26 @@ static bool rule_int_to_int(CastParams* const params)
         return true;
     }
 
-    if(type_is_signed(params->fromc) != type_is_signed(params->toc))
+    ByteSize from_sz = type_byte_size(params->fromc);
+    ByteSize to_sz = type_byte_size(params->toc);
+
+    if(from_sz < to_sz)
     {
-        CAST_ERROR("Casting between signed and unsigned integers requires explicit cast.");
+        if(type_is_signed(params->toc) || type_is_unsigned(params->fromc)) return true;
+        goto SIGNED_INFO;
+    }
+    if(from_sz == to_sz && type_is_signed(params->fromc) != type_is_signed(params->toc))
+    {
+        goto SIGNED_INFO;
     }
 
-    if(type_byte_size(params->fromc) < type_byte_size(params->toc)) return true;
 
     CAST_ERROR("Narrowing from '%s' to '%s' requires explicit cast.",
                type_to_string(params->from), type_to_string(params->to));
+SIGNED_INFO:
+    CAST_ERROR("Possible loss of sign information going from '%s' to '%s' requires explicit cast.",
+               type_to_string(params->from), type_to_string(params->to));
+
 }
 
 static bool rule_size_change(CastParams* const params)

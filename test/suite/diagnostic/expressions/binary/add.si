@@ -1,0 +1,323 @@
+struct Point
+{
+    x: int,
+    y: int,
+}
+
+const g_sum: int = 1 + 2;
+const g: int = 7;
+
+fn int_bool() void
+{
+    const a: int = 1;
+    const b: bool = true;
+    const r: int = a + b; // #error: operand types
+}
+
+fn bool_bool() void
+{
+    var a: bool = true;
+    var b: bool = false;
+    var r: bool = a + b; // #error: operand types
+}
+
+fn ptr_ptr() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    var q: *int = &x;
+    var r: *int = p + q; // #error: operand types
+}
+
+fn float_ptr() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    var f: float = 1.0;
+    var r: float = f + p; // #error: operand types
+    r = p + f; // #error: operand types
+}
+
+fn const_overflow() void
+{
+    var x: ubyte = 255 + 1; // #error: cannot be represented 
+}
+
+fn add_ubyte() void
+{
+    var a: ubyte = 1;
+    var b: ubyte = 2;
+    var c: ubyte = a + b;
+}
+
+fn add_short() void
+{
+    var a: short = 1;
+    var b: short = 2;
+    var c: short = a + b;
+}
+
+fn add_uint() void
+{
+    var a: uint = 1;
+    var b: uint = 2;
+    var c: uint = a + b;
+}
+
+fn add_long() void
+{
+    var a: long = 1;
+    var b: long = 2;
+    var c: long = a + b;
+}
+
+fn add_ulong() void
+{
+    var a: ulong = 1;
+    var b: ulong = 2;
+    var c: ulong = a + b;
+}
+
+fn widen_signed() void
+{
+    var x: long = 1;
+    var y: int = 2;
+    var r: long = x + y;
+}
+
+fn widen_signed_swapped() void
+{
+    var x: long = 1;
+    var y: int = 2;
+    var r: long = y + x;
+}
+
+fn widen_unsigned() void
+{
+    var x: ulong = 1;
+    var y: uint = 2;
+    var r: ulong = x + y;
+}
+
+fn widen_unsigned_swapped() void
+{
+    var x: ulong = 1;
+    var y: uint = 2;
+    var r: ulong = y + x;
+}
+
+fn add_float() void
+{
+    var a: float = 1.0;
+    var b: float = 2.0;
+    var c: float = a + b;
+}
+
+fn add_double() void
+{
+    var a: double = 1.0;
+    var b: double = 2.0;
+    var c: double = a + b;
+}
+
+fn widen_float() void
+{
+    var x: double = 1.0;
+    var y: float = 2.0;
+    var r: double = x + y;
+}
+
+fn widen_float_swapped() void
+{
+    var x: double = 1.0;
+    var y: float = 2.0;
+    var r: double = y + x;
+}
+
+fn ptr_ulong() void
+{
+    var x: int = 0;
+    var n: ulong = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+fn ptr_long() void
+{
+    var x: int = 0;
+    var n: long = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+fn ptr_ubyte() void
+{
+    var x: int = 0;
+    var n: ubyte = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+fn ptr_short() void
+{
+    var x: int = 0;
+    var n: short = 1;
+    var p: *int = &x;
+    p = p + n;
+}
+
+fn ptr_commuted() void
+{
+    var x: int = 0;
+    var n: uint = 1;
+    var p: *int = &x;
+    p = n + p;
+}
+
+fn ptr_literal() void
+{
+    var x: int = 0;
+    var p: *int = &x;
+    p = p + 1;
+}
+
+fn lit_right() void
+{
+    var a: int = 1;
+    var r: int = a + 1;
+}
+
+fn lit_left() void
+{
+    var a: int = 1;
+    var r: int = 1 + a;
+}
+
+fn lit_negative() void
+{
+    var a: int = 1;
+    var r: int = a + -1;
+}
+
+fn lit_both() void
+{
+    var r: int = 1 + 2;
+}
+
+fn lit_float() void
+{
+    var a: float = 1.0;
+    var r: float = a + 1.5;
+}
+
+fn lit_adapt() void
+{
+    var a: ubyte = 1;
+    var r: ubyte = a + 1;
+}
+
+fn chain() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a + b + c;
+}
+
+fn precedence() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a + b * c;
+}
+
+fn precedence_left() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var c: int = 3;
+    var r: int = a * b + c;
+}
+
+fn f() int
+{
+    return 1;
+}
+
+fn h() int
+{
+    return 2;
+}
+
+fn call_order() void
+{
+    var r: int = f() + h();
+}
+
+fn use_struct() void
+{
+    var s: Point;
+    s.x = 1;
+    s.y = 2;
+    var r: int = s.x + s.y;
+}
+
+fn use_array() void
+{
+    var arr: [4]int;
+    arr[0] = 1;
+    arr[1] = 2;
+    var r: int = arr[0] + arr[1];
+}
+
+fn use_deref() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    var p: *int = &a;
+    var q: *int = &b;
+    var r: int = *p + *q;
+}
+
+fn use_global() void
+{
+    var a: int = 1;
+    var r: int = g + a;
+}
+
+fn take(x: int) void
+{
+}
+
+fn arg_ctx() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    take(a + b);
+}
+
+fn ret_ctx() int
+{
+    var a: int = 1;
+    var b: int = 2;
+    return a + b;
+}
+
+fn cond_ctx() void
+{
+    var a: int = 1;
+    var b: int = 2;
+    if a + b > 0
+    {
+        a = 0;
+    }
+}
+
+fn index_ctx() void
+{
+    var arr: [4]int;
+    var a: uint = 1;
+    var b: uint = 2;
+    var r: int = arr[a + b];
+}

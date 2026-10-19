@@ -159,7 +159,7 @@ FileId find_and_open_module_path(ObjModule* module)
         len += next_len;
         path_one[len++] = '/';
     }
-    FREE(stack.data, stack.capacity * sizeof(ObjModule*));
+    FREE_STRUCTS(stack.data, ObjModule*, stack.capacity);
     memcpy(path_two, path_one, len);
     strcpy(path_two + len - 1, ".si");
     strcpy(path_one + len, "mod.si");

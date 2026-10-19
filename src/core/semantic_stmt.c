@@ -533,16 +533,16 @@ bool analyze_declaration(ObjVar* decl)
             if(decl->binding_kind != VAR_BINDING_MUTABLE)
             {
                 sic_error_at(decl->header.loc, "Variables marked const or #const must always have an initialized value.");
-                goto ERR;
+                return false;
             }
             else if(!decl->uninitialized && !type_has_default_value(decl->type_loc.type, decl->header.loc, false))
             {
-                goto ERR;
+                return false;
             }
         }
     }
     else if(!implicit_cast(initial_val, decl->type_loc.type))
-        goto ERR;
+        return false;
 
     if(decl->binding_kind == VAR_BINDING_RT_CONST)
         decl->type_loc.type = type_apply_qualifiers(decl->type_loc.type, TYPE_QUAL_CONST);

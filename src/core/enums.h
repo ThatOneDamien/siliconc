@@ -533,6 +533,13 @@ typedef enum : uint8_t
 } VarKind;
 
 
+typedef enum : uint64_t
+{
+    WARN_NONE = 0,
+    WARN_USAGE = (1 << 0),
+} Warnings;
+
+
 #define CHAR_TYPES            \
             TYPE_CHAR:        \
             case TYPE_CHAR16: \

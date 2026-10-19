@@ -896,6 +896,7 @@ struct CompilerContext
     } target;
     IRTarget      ir_kind;
 
+    Warnings      disabled_warnings;
     bool          stderr_is_tty : 1;
     bool          emit_link : 1;
     bool          emit_obj : 1;

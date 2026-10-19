@@ -1390,13 +1390,34 @@ static bool analyze_pointer_arith(Expr* expr, Expr* pointer, Expr* offset, Binar
 
     if(!implicit_cast(offset, type_is_unsigned(offset_type) ? g_type_uptr : g_type_iptr)) return false;
 
+    // For subtraction, negate the offset
+    if(kind == BINARY_SUB)
+    {
+        if(offset->kind == EXPR_CONSTANT)
+        {
+            Int128 i = offset->expr.constant.i;
+            if(type_is_int_literal(offset->type))
+                offset->type = i128_is_neg(i) ? g_type_pos_int_lit : g_type_neg_int_lit;
+            offset->expr.constant.i = i128_neg(i);
+        }
+        else
+        {
+            Expr* new_neg = MALLOC_STRUCT(Expr);
+            new_neg->kind = EXPR_UNARY;
+            new_neg->loc = offset->loc;
+            new_neg->expr.unary.kind = UNARY_NEG;
+            new_neg->expr.unary.inner = offset;
+            if(!analyze_rvalue(new_neg))
+                SIC_UNREACHABLE();
+            offset = new_neg;
+        }
+    }
+
     expr->type = pointer->type;
     if(pointer->kind == EXPR_CONSTANT && offset->kind == EXPR_CONSTANT)
     {
         Int128 actual_val_to_add = i128_mult64(offset->expr.constant.i, type_byte_size(inner_type));
         DBG_ASSERT(expr->kind == EXPR_BINARY);
-        if(kind == BINARY_SUB)
-            actual_val_to_add = i128_neg(actual_val_to_add);
         convert_to_const_pointer(expr, expr->type, i128_add(pointer->expr.constant.i, actual_val_to_add));
         return true;
     }
@@ -1503,6 +1524,28 @@ static bool analyze_add(Expr* expr, Expr* lhs, Expr* rhs)
     return true;
 }
 
+static bool analyze_pointer_diff(Expr* expr, Expr* lhs, Expr* rhs)
+{
+    Type* lt = lhs->type->canonical;
+    Type* rt = rhs->type->canonical;
+    if(lt->kind == TYPE_FUNC_PTR || rt->kind == TYPE_FUNC_PTR)
+    {
+        sic_error_at(expr->loc, "Cannot perform pointer-arithmetic on function pointers.");
+        return false;
+    }
+
+    Type* lhs_pointee = lt->pointer.base;
+    Type* rhs_pointee = rt->pointer.base;
+    if(!type_equal(lhs_pointee, rhs_pointee))
+    {
+        sic_error_at(expr->loc, "Cannot get the difference between expressions of different pointer types.");
+        return false;
+    }
+
+    expr->type = g_type_isize;
+    return true;
+}
+
 static bool analyze_sub(Expr* expr, Expr* lhs, Expr* rhs)
 {
     bool valid = true;
@@ -1547,9 +1590,9 @@ static bool analyze_sub(Expr* expr, Expr* lhs, Expr* rhs)
         else 
         {
             if(lt == g_type_neg_int_lit)
-                expr->type = i128_scmp(l, r) < 0 ? lt : rt;
+                expr->type = i128_scmp(l, r) >= 0 ? g_type_pos_int_lit: g_type_neg_int_lit;
             else
-                expr->type = i128_ucmp(l, r) >= 0 ? lt : rt;
+                expr->type = i128_ucmp(l, r) >= 0 ? g_type_pos_int_lit: g_type_neg_int_lit;
         }
         convert_to_const_int(expr, expr->type, value);
         expr->expr.constant.is_bit_int = is_bit_int;
@@ -1557,7 +1600,11 @@ static bool analyze_sub(Expr* expr, Expr* lhs, Expr* rhs)
     }
 
     if(type_is_pointer(lt))
-        return analyze_pointer_arith(expr, lhs, rhs, BINARY_SUB);
+    {
+        return type_is_pointer(rt) ? 
+                analyze_pointer_diff(expr, lhs, rhs) : 
+                analyze_pointer_arith(expr, lhs, rhs, BINARY_SUB);
+    }
 
     if(!basic_arith_type_conv(lhs, rhs, expr->loc)) return false;
 
@@ -2504,23 +2551,27 @@ static bool basic_arith_type_conv(Expr* expr1, Expr* expr2, SourceLoc loc)
             t2 = expr2->type;
             k2 = t2->kind;
         }
-        else if(t1_signed != t2_signed)
-            goto INT_ERR;
+        Type* shared_type = type_of_shared_int_repr(k1, k2);
+        if(shared_type == NULL) goto INT_ERR;
+        perform_cast(expr1, shared_type);
+        perform_cast(expr2, shared_type);
     }
-
-    if(k1 < k2)
+    else
     {
-        Expr* temp = expr1;
-        expr1 = expr2;
-        expr2 = temp;
-    }
+        if(k1 < k2)
+        {
+            Expr* temp = expr1;
+            expr1 = expr2;
+            expr2 = temp;
+        }
 
-    perform_cast(expr2, expr1->type);
+        perform_cast(expr2, expr1->type);
+    }
     DBG_ASSERT(type_equal(expr1->type, expr2->type));
     return true;
 
 INT_ERR:
-    sic_error_at(loc, "You cannot combine signed and unsigned integer types.");
+    sic_error_at(loc, "No promotion type exists to allow for mutual representation of integer operands.");
     return false;
 }
 
